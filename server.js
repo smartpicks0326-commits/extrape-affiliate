@@ -79,7 +79,11 @@ async function loginToExtraPe() {
   if (btn) btn.click();
   });
 
-  await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 });
+  // Wait for dashboard to load instead of page navigation
+  await page.waitForFunction(
+    () => !window.location.href.includes('/login'),
+    { timeout: 20000 }
+  );
 
   if (page.url().includes('login')) {
     throw new Error('Login failed - check your ExtraPe credentials.');
