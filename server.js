@@ -53,6 +53,7 @@ async function getBrowser() {
 }
 
 async function loginToExtraPe() {
+  async function loginToExtraPe() {
   const br = await getBrowser();
   page = await br.newPage();
   await page.setUserAgent(
@@ -62,13 +63,19 @@ async function loginToExtraPe() {
   console.log('🔑 Logging into ExtraPe...');
   await page.goto('https://extrape.com/login', { waitUntil: 'networkidle2', timeout: 30000 });
 
-  await page.waitForSelector('input[type="email"], input[name="email"]', { timeout: 10000 });
-  await page.type('input[type="email"], input[name="email"]', EXTRAPE_EMAIL, { delay: 50 });
-  await page.type('input[type="password"], input[name="password"]', EXTRAPE_PASSWORD, { delay: 50 });
+  // ── STEP 1: Enter email/phone and click Continue ──
+  await page.waitForSelector('input[name="emailorphone"]', { timeout: 10000 });
+  await page.type('input[name="emailorphone"]', EXTRAPE_EMAIL, { delay: 50 });
+
+  await page.click('button[type="submit"]'); // "Continue" button
+
+  // ── STEP 2: Wait for password field and enter password ──
+  await page.waitForSelector('input[name="password"]', { timeout: 10000 });
+  await page.type('input[name="password"]', EXTRAPE_PASSWORD, { delay: 50 });
 
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 }),
-    page.click('button[type="submit"], input[type="submit"]'),
+    page.click('button[type="submit"]'), // "Submit" button
   ]);
 
   if (page.url().includes('login')) {
@@ -76,9 +83,8 @@ async function loginToExtraPe() {
   }
 
   isLoggedIn = true;
-  console.log('✅ Logged into ExtraPe');
+  console.log('✅ Logged into ExtraPe successfully');
 }
-
 async function generateAffiliateLink(productUrl, storeName) {
   if (!isLoggedIn || !page) await loginToExtraPe();
 
