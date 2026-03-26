@@ -64,15 +64,22 @@ async function loginToExtraPe() {
 
   await page.waitForSelector('input[name="emailorphone"]', { timeout: 10000 });
   await page.type('input[name="emailorphone"]', EXTRAPE_EMAIL, { delay: 50 });
-  await page.click('button[type="submit"]');
+  await page.evaluate(() => {
+  const buttons = Array.from(document.querySelectorAll('button'));
+  const btn = buttons.find(b => b.textContent.trim() === 'Continue');
+  if (btn) btn.click();
+  });
 
   await page.waitForSelector('input[name="password"]', { timeout: 10000 });
   await page.type('input[name="password"]', EXTRAPE_PASSWORD, { delay: 50 });
 
-  await Promise.all([
-    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 }),
-    page.click('button[type="submit"]'),
-  ]);
+  await page.evaluate(() => {
+  const buttons = Array.from(document.querySelectorAll('button'));
+  const btn = buttons.find(b => b.textContent.trim() === 'Submit');
+  if (btn) btn.click();
+  });
+
+  await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 });
 
   if (page.url().includes('login')) {
     throw new Error('Login failed - check your ExtraPe credentials.');
@@ -101,7 +108,11 @@ async function generateAffiliateLink(productUrl, storeName) {
     await page.click(inputSel, { clickCount: 3 });
     await page.type(inputSel, productUrl, { delay: 30 });
 
-    await page.click('button[type="submit"]');
+    await page.evaluate(() => {
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const btn = buttons.find(b => b.textContent.trim() === 'Submit');
+    if (btn) btn.click();
+    });
 
     await page.waitForSelector(
       '.affiliate-link, .short-link, input.result-link, [data-affiliate-link], .earning-link',
