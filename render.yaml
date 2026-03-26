@@ -2,5 +2,5 @@ services:
   - type: web
     name: extrape-affiliate
     env: node
-    buildCommand: apt-get update && apt-get install -y chromium-browser && npm install
+    buildCommand: npm install
     startCommand: npm start
