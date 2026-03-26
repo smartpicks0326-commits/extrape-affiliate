@@ -3,4 +3,4 @@ services:
     name: extrape-affiliate
     env: node
     buildCommand: npm install
-    startCommand: npm start
+    startCommand: sleep 3 && node server.js
