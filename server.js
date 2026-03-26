@@ -62,34 +62,34 @@ async function loginToExtraPe() {
   console.log('Logging into ExtraPe...');
   await page.goto('https://extrape.com/login', { waitUntil: 'networkidle2', timeout: 30000 });
 
+  // Step 1: Enter email
   await page.waitForSelector('input[name="emailorphone"]', { timeout: 10000 });
   await page.type('input[name="emailorphone"]', EXTRAPE_EMAIL, { delay: 50 });
+
+  // Click Continue
   await page.evaluate(() => {
-  const buttons = Array.from(document.querySelectorAll('button'));
-  const btn = buttons.find(b => b.textContent.trim() === 'Continue');
-  if (btn) btn.click();
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const btn = buttons.find(b => b.textContent.trim() === 'Continue');
+    if (btn) btn.click();
   });
 
-  // Wait for page to transition then look for password
+  // Step 2: Wait for password field
   await page.waitForTimeout(2000);
   await page.waitForSelector('input[name="password"]', { timeout: 15000 });
   await page.type('input[name="password"]', EXTRAPE_PASSWORD, { delay: 50 });
 
+  // Click Submit
   await page.evaluate(() => {
-  const buttons = Array.from(document.querySelectorAll('button'));
-  const btn = buttons.find(b => b.textContent.trim() === 'Submit');
-  if (btn) btn.click();
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const btn = buttons.find(b => b.textContent.trim() === 'Submit');
+    if (btn) btn.click();
   });
 
-  // Wait for dashboard to load instead of page navigation
+  // Wait for URL to change away from login (SPA - no full navigation)
   await page.waitForFunction(
     () => !window.location.href.includes('/login'),
     { timeout: 20000 }
   );
-
-  if (page.url().includes('login')) {
-    throw new Error('Login failed - check your ExtraPe credentials.');
-  }
 
   isLoggedIn = true;
   console.log('Logged into ExtraPe successfully');
