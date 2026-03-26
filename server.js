@@ -70,7 +70,9 @@ async function loginToExtraPe() {
   if (btn) btn.click();
   });
 
-  await page.waitForSelector('input[name="password"]', { timeout: 10000 });
+  // Wait for page to transition then look for password
+  await page.waitForTimeout(2000);
+  await page.waitForSelector('input[name="password"]', { timeout: 15000 });
   await page.type('input[name="password"]', EXTRAPE_PASSWORD, { delay: 50 });
 
   await page.evaluate(() => {
