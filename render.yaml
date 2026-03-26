@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: extrape-affiliate
+    env: node
+    buildCommand: apt-get install -y google-chrome-stable && npm install
+    startCommand: npm start
