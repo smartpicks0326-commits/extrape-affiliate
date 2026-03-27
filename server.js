@@ -119,45 +119,46 @@ async function loginToExtraPe() {
   console.log('Navigating to ExtraPe login...');
   await page.goto('https://extrape.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForTimeout(8000);
-  await screenshot(page, '1_login_page');
 
-  // Step 1: Fill email using React-compatible setter
+  // Step 1: Type email character by character (React recognises this properly)
   await page.waitForSelector('input[name="emailorphone"]', { timeout: 10000 });
-  await page.evaluate((email) => {
-    const input = document.querySelector('input[name="emailorphone"]');
-    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    nativeInputValueSetter.call(input, email);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-  }, EXTRAPE_EMAIL);
+  await page.click('input[name="emailorphone"]');
+  await page.type('input[name="emailorphone"]', EXTRAPE_EMAIL, { delay: 100 });
   console.log('Typed email');
   await page.waitForTimeout(1000);
 
-  // Step 2: Press Enter to submit email
-  await page.focus('input[name="emailorphone"]');
-  await page.keyboard.press('Enter');
-  console.log('Pressed Enter on email');
-  await page.waitForTimeout(5000);
+  // Step 2: Click exact Continue button via real element handle
+  const continueBtn = await page.evaluateHandle(() => {
+    return Array.from(document.querySelectorAll('button'))
+      .find(b => b.textContent.trim() === 'Continue');
+  });
+  await continueBtn.asElement().click();
+  console.log('Clicked Continue');
+  await page.waitForTimeout(6000);
   await screenshot(page, '3_after_continue');
 
-  // Step 3: Fill password using React-compatible setter
+  const inputs2 = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('input')).map(i => ({
+      type: i.type, name: i.name, placeholder: i.placeholder
+    }))
+  );
+  console.log('Inputs after Continue:', JSON.stringify(inputs2));
+
+  // Step 3: Type password character by character
   await page.waitForSelector('input[name="password"]', { timeout: 15000 });
-  await page.evaluate((pass) => {
-    const input = document.querySelector('input[name="password"]');
-    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    nativeInputValueSetter.call(input, pass);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-  }, EXTRAPE_PASSWORD);
+  await page.click('input[name="password"]');
+  await page.type('input[name="password"]', EXTRAPE_PASSWORD, { delay: 100 });
   console.log('Typed password');
   await page.waitForTimeout(1000);
 
-  // Step 4: Press Enter to submit password
-  await page.focus('input[name="password"]');
-  await page.keyboard.press('Enter');
-  console.log('Pressed Enter on password');
-  await page.waitForTimeout(5000);
-  await screenshot(page, '5_after_submit');
+  // Step 4: Click Submit via real element handle
+  const submitBtn = await page.evaluateHandle(() => {
+    return Array.from(document.querySelectorAll('button'))
+      .find(b => b.textContent.trim() === 'Submit');
+  });
+  await submitBtn.asElement().click();
+  console.log('Clicked Submit');
+  await page.waitForTimeout(6000);
 
   await page.waitForFunction(
     () => !document.querySelector('input[name="password"]'),
