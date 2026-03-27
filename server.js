@@ -112,10 +112,15 @@ async function loginToExtraPe() {
   );
   console.log('Buttons before Continue:', JSON.stringify(btns));
 
-  // ── Step 2: Click EXACT "Continue" (not "Continue via Google") ──
-  await clickButtonExact(page, 'Continue');
-  await page.waitForTimeout(5000);
-  await screenshot(page, '3_after_continue');
+  // ── Step 2: Click Continue using real mouse click ──
+const continueBtn = await page.evaluateHandle(() => {
+  const buttons = Array.from(document.querySelectorAll('button'));
+  return buttons.find(b => b.textContent.trim() === 'Continue');
+});
+await continueBtn.asElement().click();
+console.log('Clicked Continue via real mouse click');
+await page.waitForTimeout(5000);
+await screenshot(page, '3_after_continue');
 
   const inputs2 = await page.evaluate(() =>
     Array.from(document.querySelectorAll('input')).map(i => ({
