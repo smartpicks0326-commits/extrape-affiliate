@@ -120,29 +120,32 @@ async function loginToExtraPe() {
   await page.goto('https://extrape.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForTimeout(8000);
 
-  // Step 1: Type email character by character (React recognises this properly)
+  // Step 1: Type email using keyboard simulation
   await page.waitForSelector('input[name="emailorphone"]', { timeout: 10000 });
-  await page.click('input[name="emailorphone"]');
-  await page.type('input[name="emailorphone"]', EXTRAPE_EMAIL, { delay: 100 });
-  console.log('Typed email');
+  await page.evaluate(() => {
+    document.querySelector('input[name="emailorphone"]').focus();
+  });
+  await page.waitForTimeout(500);
+  await page.keyboard.type(EXTRAPE_EMAIL, { delay: 100 });
+  console.log('Typed email:', EXTRAPE_EMAIL);
   await page.waitForTimeout(1000);
 
-  // Step 2: Click exact Continue button via real element handle
-  const continueBtn = await page.evaluateHandle(() => {
-    return Array.from(document.querySelectorAll('button'))
+  // Verify email was typed
+  const emailVal = await page.$eval('input[name="emailorphone"]', el => el.value);
+  console.log('Email field value:', emailVal);
+
+  // Step 2: Click Continue using dispatchEvent for full React compatibility
+  await page.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('button'))
       .find(b => b.textContent.trim() === 'Continue');
+    if (!btn) throw new Error('Continue button not found');
+    ['mousedown', 'mouseup', 'click'].forEach(type => {
+      btn.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
+    });
   });
-  await continueBtn.asElement().click();
-  console.log('Clicked Continue');
+  console.log('Clicked Continue via MouseEvent');
   await page.waitForTimeout(6000);
   await screenshot(page, '3_after_continue');
-
-  const inputs2 = await page.evaluate(() =>
-    Array.from(document.querySelectorAll('input')).map(i => ({
-      type: i.type, name: i.name, placeholder: i.placeholder
-    }))
-  );
-  console.log('Inputs after Continue:', JSON.stringify(inputs2));
 
   // Step 3: Type password character by character
   await page.waitForSelector('input[name="password"]', { timeout: 15000 });
