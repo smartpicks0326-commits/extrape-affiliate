@@ -132,10 +132,24 @@ async function loginToExtraPe() {
   console.log('Typed email into: ' + emailSel);
   await screenshot(page, '2_email_typed');
 
-  // ── Step 2: Click Continue ──
-  await clickButtonByText(page, 'Continue');
-  await page.waitForTimeout(3000);
-  await screenshot(page, '3_after_continue');
+  // ── Step 2: Log all buttons then click Continue ──
+const allButtons = await page.evaluate(() =>
+  Array.from(document.querySelectorAll('button')).map(b => ({
+    text: b.textContent.trim(),
+    inner: b.innerHTML.substring(0, 100)
+  }))
+);
+console.log('Buttons on login page:', JSON.stringify(allButtons));
+
+// Click using JS directly on first button found
+await page.evaluate(() => {
+  const buttons = Array.from(document.querySelectorAll('button'));
+  if (buttons.length > 0) buttons[0].click();
+});
+
+console.log('Clicked first button on page');
+await page.waitForTimeout(3000);
+await screenshot(page, '3_after_continue');
 
   // Log inputs again after clicking continue
   const inputs2 = await page.evaluate(() =>
