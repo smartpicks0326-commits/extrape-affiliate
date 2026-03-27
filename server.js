@@ -103,7 +103,7 @@ async function loginToExtraPe() {
   });
 
   // Extra wait for React to render
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(8000);
   await screenshot(page, '1_login_page');
 
   // Log all inputs found on page for debugging
@@ -363,7 +363,4 @@ app.get('/', (req, res) => res.send('Smart Pick Deals backend running'));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log('Server on port ' + PORT);
-  if (EXTRAPE_EMAIL && EXTRAPE_PASSWORD) {
-    loginToExtraPe().catch(err => console.warn('Pre-login failed:', err.message));
-  }
 });
