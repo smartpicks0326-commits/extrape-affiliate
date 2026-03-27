@@ -157,17 +157,9 @@ async function generateAffiliateLink(productUrl, storeName) {
     });
     await page.waitForTimeout(6000);
     await screenshot(page, '6_converter');
-
-    // Log page content to verify we're on the right page
-    const pageText = await page.evaluate(() => document.body.innerText);
-    console.log('Converter page text:', pageText.substring(0, 300));
-
-    // Wait longer for React to render textarea
-    await page.waitForSelector('textarea', { timeout: 20000 });
-
-    // Log page content to verify we're on the right page
-    const pageText = await page.evaluate(() => document.body.innerText);
-    console.log('Converter page text:', pageText.substring(0, 300));
+// Log page content to verify we're on the right page
+    const converterPageText = await page.evaluate(() => document.body.innerText);
+    console.log('Converter page text:', converterPageText.substring(0, 300));
 
     // Wait longer for React to render textarea
     await page.waitForSelector('textarea', { timeout: 20000 });
