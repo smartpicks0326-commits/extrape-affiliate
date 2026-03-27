@@ -144,7 +144,14 @@ async function loginToExtraPe() {
     });
   });
   console.log('Clicked Continue via MouseEvent');
-  await page.waitForTimeout(6000);
+  await page.waitForTimeout(2000);
+  await screenshot(page, '2b_immediately_after_continue');
+
+  // Check what appeared on page after Continue
+  const pageText = await page.evaluate(() => document.body.innerText);
+  console.log('Page text after Continue:', pageText.substring(0, 300));
+
+  await page.waitForTimeout(4000);
   await screenshot(page, '3_after_continue');
 
   // Step 3: Type password character by character
@@ -296,7 +303,17 @@ app.get('/status/:id', (req, res) => {
   return res.json(status);
 });
 
-app.get('/', (req, res) => res.send('Smart Pick Deals backend running'));
+const fs = require('fs');
+app.get('/screenshot/:name', (req, res) => {
+  const path = '/tmp/debug_' + req.params.name + '.png';
+  if (fs.existsSync(path)) {
+    res.setHeader('Content-Type', 'image/png');
+    fs.createReadStream(path).pipe(res);
+  } else {
+    res.status(404).send('Screenshot not found: ' + path);
+  }
+});
 
+app.get('/', (req, res) => res.send('Smart Pick Deals backend running'));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('Server on port ' + PORT));
