@@ -141,10 +141,11 @@ const allButtons = await page.evaluate(() =>
 );
 console.log('Buttons on login page:', JSON.stringify(allButtons));
 
-// Click using JS directly on first button found
+// Click the exact "Continue" button (not "Continue via Google")
 await page.evaluate(() => {
   const buttons = Array.from(document.querySelectorAll('button'));
-  if (buttons.length > 0) buttons[0].click();
+  const btn = buttons.find(b => b.textContent.trim() === 'Continue');
+  if (btn) btn.click();
 });
 
 console.log('Clicked first button on page');
