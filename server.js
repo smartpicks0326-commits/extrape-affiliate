@@ -103,7 +103,7 @@ async function loginToExtraPe() {
   });
 
   // Extra wait for React to render
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(5000);
   await screenshot(page, '1_login_page');
 
   // Log all inputs found on page for debugging
