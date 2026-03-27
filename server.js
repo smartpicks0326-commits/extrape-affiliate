@@ -2,9 +2,11 @@ const express = require('express');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const chromium = require('@sparticuz/chromium');
-puppeteer.use(StealthPlugin());
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
+const fs = require('fs');
+
+puppeteer.use(StealthPlugin());
 
 const app = express();
 app.use(express.json());
@@ -12,7 +14,8 @@ app.use(cors());
 
 const EXTRAPE_EMAIL    = process.env.EXTRAPE_EMAIL;
 const EXTRAPE_PASSWORD = process.env.EXTRAPE_PASSWORD;
-const AVG_SECONDS_PER_REQUEST = 12; // average time per conversion
+const EXTRAPE_COOKIES  = process.env.EXTRAPE_COOKIES;
+const AVG_SECONDS_PER_REQUEST = 10;
 
 const SUPPORTED_DOMAINS = [
   'amazon.in', 'amazon.com', 'amzn.in', 'amzn.to',
@@ -37,12 +40,11 @@ function isSupported(url) {
   } catch { return false; }
 }
 
-// ── Queue & Request Store ──
-const queue = [];        // pending request IDs in order
-const requests = {};     // all request states keyed by ID
+// ── Queue ──
+const queue = [];
+const requests = {};
 let isProcessing = false;
 
-// Request states: pending | processing | done | error
 function createRequest(url, store) {
   const id = uuidv4();
   requests[id] = { id, url, store, state: 'pending', position: 0, affiliateLink: null, error: null, createdAt: Date.now() };
@@ -61,158 +63,150 @@ function getStatus(id) {
   const r = requests[id];
   if (!r) return null;
   const position = r.state === 'pending' ? r.position : 0;
-  const estimatedSeconds = position > 0 ? position * AVG_SECONDS_PER_REQUEST : 0;
   return {
     id: r.id,
     state: r.state,
     position,
     queueLength: queue.length,
-    estimatedSeconds,
+    estimatedSeconds: position * AVG_SECONDS_PER_REQUEST,
     affiliateLink: r.affiliateLink,
     error: r.error,
   };
 }
 
-// ── Cleanup old requests after 10 mins ──
 setInterval(() => {
   const tenMins = 10 * 60 * 1000;
   Object.keys(requests).forEach(id => {
-    if (Date.now() - requests[id].createdAt > tenMins) {
-      delete requests[id];
-    }
+    if (Date.now() - requests[id].createdAt > tenMins) delete requests[id];
   });
 }, 60000);
 
-// ── Puppeteer ──
-async function screenshot(page, name) {
-  try { await page.screenshot({ path: '/tmp/debug_' + name + '.png', fullPage: true }); } catch(e) {}
+// ── Browser state — single shared page kept open on converter ──
+let browser = null;
+let converterPage = null;
+let isReady = false;
+
+async function screenshot(name) {
+  try {
+    if (converterPage) await converterPage.screenshot({ path: '/tmp/debug_' + name + '.png', fullPage: true });
+  } catch(e) {}
 }
 
-async function waitForAny(page, selectors, timeout) {
-  const combined = selectors.join(', ');
-  await page.waitForSelector(combined, { timeout: timeout || 10000 });
-  return combined;
-}
+// ── STARTUP: Launch browser, login, navigate to converter, keep ready ──
+async function setup() {
+  console.log('Launching browser...');
+  browser = await puppeteer.launch({
+    args: chromium.args,
+    defaultViewport: { width: 1280, height: 800 },
+    executablePath: await chromium.executablePath(),
+    headless: chromium.headless,
+  });
+  console.log('Browser launched');
 
-let browser   = null;
-let page      = null;
-let isLoggedIn = false;
-
-async function getBrowser() {
-  if (!browser || !browser.isConnected()) {
-    console.log('Launching browser...');
-    browser = await puppeteer.launch({
-      args: chromium.args,
-      defaultViewport: { width: 1280, height: 800 },
-      executablePath: await chromium.executablePath(),
-      headless: chromium.headless,
-    });
-    isLoggedIn = false;
-    console.log('Browser launched');
-  }
-  return browser;
-}
-
-async function loginToExtraPe() {
-  const br = await getBrowser();
-  page = await br.newPage();
-  await page.setUserAgent(
+  converterPage = await browser.newPage();
+  await converterPage.setUserAgent(
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
   );
 
-  const cookiesStr = process.env.EXTRAPE_COOKIES;
-  if (!cookiesStr) throw new Error('EXTRAPE_COOKIES not set in environment variables.');
+  // Step 1: Go to homepage first to establish session
+  console.log('Setting cookies...');
+  await converterPage.goto('https://www.extrape.com', { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await converterPage.waitForTimeout(2000);
 
-  const cookies = JSON.parse(cookiesStr);
-  await page.setCookie(...cookies);
-  console.log('Loaded ' + cookies.length + ' cookies');
+  // Step 2: Set auth cookies
+  const cookies = JSON.parse(EXTRAPE_COOKIES);
+  await converterPage.setCookie(...cookies);
+  console.log('Cookies set:', cookies.length);
 
-  await page.goto('https://extrape.com/dashboard', {
-    waitUntil: 'domcontentloaded',
-    timeout: 30000
-  });
-  await page.waitForTimeout(4000);
-  await screenshot(page, '1_dashboard');
+  // Step 3: Reload to apply cookies
+  await converterPage.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+  await converterPage.waitForTimeout(3000);
 
-  const url = page.url();
-  console.log('URL after cookie login: ' + url);
+  const homeUrl = converterPage.url();
+  console.log('After cookie reload URL:', homeUrl);
 
-  if (url.includes('/login')) {
-    throw new Error('Cookies expired — please update EXTRAPE_COOKIES in Render.');
+  // Step 4: Navigate directly to converter page
+  console.log('Navigating to converter...');
+  await converterPage.goto('https://www.extrape.com/link-converter', { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await converterPage.waitForTimeout(5000);
+
+  const converterUrl = converterPage.url();
+  console.log('Converter URL:', converterUrl);
+
+  if (converterUrl.includes('login')) {
+    throw new Error('Redirected to login — cookies may be expired. Update EXTRAPE_COOKIES in Render.');
   }
 
-  isLoggedIn = true;
-  console.log('Logged in via cookies!');
+  // Step 5: Wait for the input textarea to be ready
+  await converterPage.waitForSelector('textarea', { timeout: 20000 });
+  console.log('Converter textarea found — ready for conversions!');
+
+  await screenshot('startup_converter_ready');
+  isReady = true;
 }
 
-async function generateAffiliateLink(productUrl, storeName) {
-  if (!isLoggedIn || !page) await loginToExtraPe();
+// ── Convert a single URL using the already-open converter page ──
+async function convertUrl(productUrl) {
+  if (!isReady || !converterPage) throw new Error('Converter not ready yet. Please try again in a moment.');
 
-  try {
-    console.log('Generating link for [' + storeName + ']: ' + productUrl);
-
-    await page.goto('https://www.extrape.com/link-converter', {
-      waitUntil: 'domcontentloaded',
-      timeout: 30000
-    });
-    await page.waitForTimeout(6000);
-    await screenshot(page, '6_converter');
-// Log page content to verify we're on the right page
-    const converterPageText = await page.evaluate(() => document.body.innerText);
-    console.log('Converter page text:', converterPageText.substring(0, 300));
-
-    // Wait longer for React to render textarea
-    await page.waitForSelector('textarea', { timeout: 20000 });
-
-    // Type the product URL into the textarea
-    await page.evaluate((url) => {
-      const textareas = Array.from(document.querySelectorAll('textarea'));
-      const input = textareas.find(t =>
-        t.placeholder.includes('http') || t.placeholder.includes('Input')
-      );
-      if (!input) throw new Error('Input textarea not found');
-      const nativeSetter = Object.getOwnPropertyDescriptor(
-        window.HTMLTextAreaElement.prototype, 'value'
-      ).set;
-      nativeSetter.call(input, url);
+  // Clear the input textarea
+  await converterPage.evaluate(() => {
+    const textareas = Array.from(document.querySelectorAll('textarea'));
+    const input = textareas.find(t => t.placeholder.includes('http') || t.placeholder.includes('Input') || t.placeholder.includes('Links'));
+    if (input) {
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+      nativeSetter.call(input, '');
       input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    }, productUrl);
+    }
+  });
 
-    console.log('Typed product URL into textarea');
-    await page.waitForTimeout(1000);
+  // Paste the product URL
+  await converterPage.evaluate((url) => {
+    const textareas = Array.from(document.querySelectorAll('textarea'));
+    const input = textareas.find(t => t.placeholder.includes('http') || t.placeholder.includes('Input') || t.placeholder.includes('Links'));
+    if (!input) throw new Error('Input textarea not found');
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    nativeSetter.call(input, url);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }, productUrl);
 
-    // Click Convert button
-    await page.evaluate(() => {
-      const btn = Array.from(document.querySelectorAll('button'))
-        .find(b => b.textContent.trim() === 'Convert');
-      if (!btn) throw new Error('Convert button not found');
-      btn.click();
-    });
+  console.log('Pasted URL: ' + productUrl);
+  await converterPage.waitForTimeout(500);
 
-    console.log('Clicked Convert');
-    await page.waitForTimeout(5000);
-    await screenshot(page, '7_after_convert');
+  // Click Convert
+  await converterPage.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('button'))
+      .find(b => b.textContent.trim() === 'Convert');
+    if (!btn) throw new Error('Convert button not found');
+    btn.click();
+  });
 
-    // Extract converted link from output textarea
-    const affiliateLink = await page.evaluate(() => {
-      const textareas = Array.from(document.querySelectorAll('textarea'));
-      const output = textareas.find(t =>
-        t.placeholder.includes('Converted') || t.value.startsWith('http')
-      );
-      return output ? output.value.trim() : null;
-    });
+  console.log('Clicked Convert');
+  await converterPage.waitForTimeout(5000);
 
-    console.log('Affiliate link:', affiliateLink);
-    if (!affiliateLink) throw new Error('Converted link not found. Check screenshot 7_after_convert.');
+  // Read the output textarea
+  const affiliateLink = await converterPage.evaluate(() => {
+    const textareas = Array.from(document.querySelectorAll('textarea'));
+    const output = textareas.find(t =>
+      t.placeholder.includes('Converted') || (t.value && t.value.startsWith('http'))
+    );
+    return output ? output.value.trim() : null;
+  });
 
-    return affiliateLink;
-
-  } catch (err) {
-    isLoggedIn = false;
-    page = null;
-    throw err;
+  if (!affiliateLink) {
+    await screenshot('error_no_output');
+    const allTextareas = await converterPage.evaluate(() =>
+      Array.from(document.querySelectorAll('textarea')).map(t => ({
+        placeholder: t.placeholder, value: t.value.substring(0, 100)
+      }))
+    );
+    console.log('All textareas:', JSON.stringify(allTextareas));
+    throw new Error('Converted link not found in output. Check logs.');
   }
+
+  console.log('Converted link: ' + affiliateLink);
+  return affiliateLink;
 }
 
 // ── Queue Processor ──
@@ -226,44 +220,41 @@ async function processQueue() {
   if (!req) { isProcessing = false; processQueue(); return; }
 
   req.state = 'processing';
-  console.log('Processing request ' + id + ' for ' + req.store);
+  console.log('Processing: ' + id + ' [' + req.store + ']');
 
   try {
-    const link = await generateAffiliateLink(req.url, req.store);
+    const link = await convertUrl(req.url);
     req.state = 'done';
     req.affiliateLink = link;
   } catch(err) {
     req.state = 'error';
     req.error = err.message;
-    console.error('Request ' + id + ' failed:', err.message);
+    console.error('Failed:', err.message);
   } finally {
     isProcessing = false;
     processQueue();
   }
 }
 
-// ── POST /generate — Add to queue ──
+// ── API Routes ──
 app.post('/generate', async (req, res) => {
   const { url, store } = req.body;
   if (!url) return res.status(400).json({ error: 'No URL provided.' });
   try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL.' }); }
   if (!isSupported(url)) return res.status(400).json({ error: 'Store not supported.' });
-  if (!EXTRAPE_EMAIL || !EXTRAPE_PASSWORD) return res.status(500).json({ error: 'Credentials missing.' });
+  if (!isReady) return res.status(503).json({ error: 'Converter is warming up. Please try again in a moment.' });
 
   const id = createRequest(url, store || 'Unknown');
   processQueue();
-
   return res.json({ requestId: id, ...getStatus(id) });
 });
 
-// ── GET /status/:id — Poll queue position + result ──
 app.get('/status/:id', (req, res) => {
   const status = getStatus(req.params.id);
   if (!status) return res.status(404).json({ error: 'Request not found.' });
   return res.json(status);
 });
 
-const fs = require('fs');
 app.get('/screenshot/:name', (req, res) => {
   const path = '/tmp/debug_' + req.params.name + '.png';
   if (fs.existsSync(path)) {
@@ -274,15 +265,16 @@ app.get('/screenshot/:name', (req, res) => {
   }
 });
 
-app.get('/', (req, res) => res.send('Smart Pick Deals backend running'));
+app.get('/', (req, res) => res.send('Smart Pick Deals backend running. Ready: ' + isReady));
+
+// ── Start ──
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log('Server on port ' + PORT);
-  // Pre-warm browser and login on startup
   try {
-    await loginToExtraPe();
-    console.log('Browser pre-warmed and ready!');
+    await setup();
   } catch(err) {
-    console.warn('Pre-warm failed:', err.message);
+    console.error('Setup failed:', err.message);
+    isReady = false;
   }
 });
