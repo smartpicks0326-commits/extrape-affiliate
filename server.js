@@ -1,6 +1,8 @@
 const express = require('express');
-const puppeteer = require('puppeteer-core');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const chromium = require('@sparticuz/chromium');
+puppeteer.use(StealthPlugin());
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 
