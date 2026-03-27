@@ -60,7 +60,7 @@ async function loginToExtraPe() {
   );
 
   console.log('Logging into ExtraPe...');
-  await page.goto('https://extrape.com/login', { waitUntil: 'networkidle2', timeout: 30000 });
+  await page.goto('https://extrape.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
   // Step 1: Enter email/phone
   await page.waitForSelector('input[name="emailorphone"]', { timeout: 10000 });
@@ -104,7 +104,8 @@ async function generateAffiliateLink(productUrl, storeName) {
   try {
     console.log('Generating link for [' + storeName + ']: ' + productUrl);
 
-    await page.goto('https://extrape.com/dashboard', { waitUntil: 'networkidle2', timeout: 20000 });
+    await page.goto('https://extrape.com/dashboard', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(3000);
 
     await page.waitForSelector(
       'input[placeholder*="product"], input[placeholder*="url"], input[placeholder*="link"], textarea[name*="url"]',
