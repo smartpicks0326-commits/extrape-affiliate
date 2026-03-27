@@ -116,80 +116,33 @@ async function getBrowser() {
 async function loginToExtraPe() {
   const br = await getBrowser();
   page = await br.newPage();
-  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36');
-
-  console.log('Navigating to ExtraPe login...');
-  await page.goto('https://extrape.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForTimeout(8000);
-
-  // Step 1: Type email using keyboard simulation
-  await page.waitForSelector('input[name="emailorphone"]', { timeout: 10000 });
-  await page.evaluate(() => {
-    document.querySelector('input[name="emailorphone"]').focus();
-  });
-  await page.waitForTimeout(500);
-  await page.keyboard.type(EXTRAPE_EMAIL, { delay: 100 });
-  console.log('Typed email:', EXTRAPE_EMAIL);
-  await page.waitForTimeout(1000);
-
-  // Verify email was typed
-  const emailVal = await page.$eval('input[name="emailorphone"]', el => el.value);
-  console.log('Email field value:', emailVal);
-
-  // Step 2: Submit form directly via React form submit
-  await page.evaluate(() => {
-    const input = document.querySelector('input[name="emailorphone"]');
-
-    // Trigger all React events on the input
-    ['focus', 'keydown', 'keypress', 'keyup', 'input', 'change', 'blur'].forEach(eventType => {
-      input.dispatchEvent(new Event(eventType, { bubbles: true }));
-    });
-
-    // Find and submit the form directly
-    const form = input.closest('form');
-    if (form) {
-      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-      console.log('Submitted form directly');
-    }
-
-    // Also try clicking the button as backup
-    const btn = Array.from(document.querySelectorAll('button'))
-      .find(b => b.textContent.trim() === 'Continue');
-    if (btn) {
-      btn.removeAttribute('disabled');
-      btn.click();
-    }
-  });
-  console.log('Attempted form submit + button click');
-  await page.waitForTimeout(6000);
-  await screenshot(page, '3_after_continue');
-
-  const pageText2 = await page.evaluate(() => document.body.innerText);
-  console.log('Page text after submit:', pageText2.substring(0, 200));
-
-  // Step 3: Type password character by character
-  await page.waitForSelector('input[name="password"]', { timeout: 15000 });
-  await page.click('input[name="password"]');
-  await page.type('input[name="password"]', EXTRAPE_PASSWORD, { delay: 100 });
-  console.log('Typed password');
-  await page.waitForTimeout(1000);
-
-  // Step 4: Click Submit via real element handle
-  const submitBtn = await page.evaluateHandle(() => {
-    return Array.from(document.querySelectorAll('button'))
-      .find(b => b.textContent.trim() === 'Submit');
-  });
-  await submitBtn.asElement().click();
-  console.log('Clicked Submit');
-  await page.waitForTimeout(6000);
-
-  await page.waitForFunction(
-    () => !document.querySelector('input[name="password"]'),
-    { timeout: 20000 }
+  await page.setUserAgent(
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
   );
 
+  const cookiesStr = process.env.EXTRAPE_COOKIES;
+  if (!cookiesStr) throw new Error('EXTRAPE_COOKIES not set in environment variables.');
+
+  const cookies = JSON.parse(cookiesStr);
+  await page.setCookie(...cookies);
+  console.log('Loaded ' + cookies.length + ' cookies');
+
+  await page.goto('https://extrape.com/dashboard', {
+    waitUntil: 'domcontentloaded',
+    timeout: 30000
+  });
+  await page.waitForTimeout(4000);
+  await screenshot(page, '1_dashboard');
+
+  const url = page.url();
+  console.log('URL after cookie login: ' + url);
+
+  if (url.includes('/login')) {
+    throw new Error('Cookies expired — please update EXTRAPE_COOKIES in Render.');
+  }
+
   isLoggedIn = true;
-  console.log('Logged in successfully!');
+  console.log('Logged in via cookies!');
 }
 
 async function generateAffiliateLink(productUrl, storeName) {
