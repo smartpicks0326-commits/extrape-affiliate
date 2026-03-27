@@ -445,8 +445,14 @@
       <div id="loader">
         <div class="spinner"></div>
         <div class="loader-text">
-          <strong>Generating your link…</strong>
-          Fetching your cashback deal link instantly
+          <strong id="loaderTitle">Generating your link…</strong>
+          <span id="loaderSub">Fetching your cashback deal link instantly</span>
+          <div id="queueInfo" style="display:none; margin-top:8px;">
+            <div id="queueBadge" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,107,43,0.12);border:1px solid rgba(255,107,43,0.25);color:#ff9a5c;font-size:11px;font-weight:600;letter-spacing:0.08em;padding:4px 12px;border-radius:999px;">
+              <span id="queueText">Position in queue: 1</span>
+            </div>
+            <div id="etaText" style="margin-top:6px;font-size:12px;color:#6b6878;"></div>
+          </div>
         </div>
       </div>
 
@@ -483,16 +489,15 @@
   <footer>Smart Pick Deals · Cashback links from 200+ stores, generated instantly</footer>
 
   <script>
-    const BACKEND_URL = 'https://extrape-affiliate.onrender.com/generate';
+    const BACKEND_URL = 'https://YOUR-APP-NAME.onrender.com';
 
-    // Supported ExtraPe store domains for validation & detection
     const SUPPORTED_STORES = [
       { name: 'Amazon',      domains: ['amazon.in', 'amazon.com', 'amzn.in', 'amzn.to'] },
       { name: 'Flipkart',    domains: ['flipkart.com', 'dl.flipkart.com'] },
       { name: 'Myntra',      domains: ['myntra.com'] },
       { name: 'Ajio',        domains: ['ajio.com'] },
       { name: 'Nykaa',       domains: ['nykaa.com', 'nykaafashion.com', 'nykaabeauty.com'] },
-      { name: 'TataCliq',    domains: ['tatacliq.com', 'tatacliq.luxury'] },
+      { name: 'TataCliq',    domains: ['tatacliq.com'] },
       { name: 'Croma',       domains: ['croma.com'] },
       { name: 'Snapdeal',    domains: ['snapdeal.com'] },
       { name: 'Boat',        domains: ['boat-lifestyle.com'] },
@@ -502,7 +507,6 @@
       { name: 'SonyLiv',     domains: ['sonyliv.com'] },
       { name: 'Netmeds',     domains: ['netmeds.com'] },
       { name: 'Mamaearth',   domains: ['mamaearth.in'] },
-      { name: 'WOW',         domains: ['wowskinscience.com'] },
       { name: 'Meesho',      domains: ['meesho.com'] },
       { name: 'JioMart',     domains: ['jiomart.com'] },
       { name: 'BigBasket',   domains: ['bigbasket.com'] },
@@ -516,19 +520,66 @@
       } catch { return null; }
     }
 
-    // Live store detection as user types
     document.getElementById('productUrl').addEventListener('input', function () {
       const url = this.value.trim();
       const badge = document.getElementById('storeBadge');
       const storeName = document.getElementById('storeName');
       const store = url ? detectStore(url) : null;
-      if (store) {
-        storeName.textContent = store.name;
-        badge.style.display = 'block';
-      } else {
-        badge.style.display = 'none';
-      }
+      if (store) { storeName.textContent = store.name; badge.style.display = 'block'; }
+      else { badge.style.display = 'none'; }
     });
+
+    let pollInterval = null;
+
+    function stopPolling() {
+      if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+    }
+
+    function formatTime(seconds) {
+      if (seconds <= 0) return 'almost done...';
+      if (seconds < 60) return 'about ' + seconds + ' seconds';
+      return 'about ' + Math.ceil(seconds / 60) + ' minute(s)';
+    }
+
+    async function pollStatus(requestId, storeName) {
+      try {
+        const res = await fetch(BACKEND_URL + '/status/' + requestId);
+        const data = await res.json();
+
+        if (data.state === 'pending') {
+          // Show queue position
+          document.getElementById('queueInfo').style.display = 'block';
+          document.getElementById('loaderTitle').textContent = 'You are in the queue...';
+          document.getElementById('loaderSub').textContent = 'We will process your ' + storeName + ' link shortly';
+          document.getElementById('queueText').textContent =
+            data.position + ' request' + (data.position > 1 ? 's' : '') + ' ahead of you';
+          document.getElementById('etaText').textContent =
+            'Estimated wait: ' + formatTime(data.estimatedSeconds);
+
+        } else if (data.state === 'processing') {
+          document.getElementById('queueInfo').style.display = 'none';
+          document.getElementById('loaderTitle').textContent = 'Generating your link...';
+          document.getElementById('loaderSub').textContent = 'Fetching your ' + storeName + ' cashback deal link';
+
+        } else if (data.state === 'done') {
+          stopPolling();
+          document.getElementById('loader').classList.remove('show');
+          document.getElementById('productUrl').disabled = false;
+          document.getElementById('convertBtn').disabled = false;
+          document.getElementById('affiliateLink').textContent = data.affiliateLink;
+          document.getElementById('result').classList.add('show');
+
+        } else if (data.state === 'error') {
+          stopPolling();
+          document.getElementById('loader').classList.remove('show');
+          document.getElementById('productUrl').disabled = false;
+          document.getElementById('convertBtn').disabled = false;
+          showError(data.error || 'Something went wrong. Please try again.');
+        }
+      } catch(err) {
+        console.error('Polling error:', err);
+      }
+    }
 
     async function convert() {
       const input    = document.getElementById('productUrl');
@@ -540,45 +591,44 @@
 
       result.classList.remove('show');
       errorBox.classList.remove('show');
+      document.getElementById('queueInfo').style.display = 'none';
 
       if (!url) return showError('Please paste a product URL.');
+      try { new URL(url); } catch { return showError('That does not look like a valid URL.'); }
 
-      // Validate URL format
-      try { new URL(url); } catch { return showError('That doesn\'t look like a valid URL. Please try again.'); }
-
-      // Check if it's a supported store
       const store = detectStore(url);
-      if (!store) {
-        return showError('This store may not be supported. Try Amazon, Flipkart, Myntra, Ajio, Nykaa, TataCliq and 200+ more.');
-      }
+      if (!store) return showError('This store may not be supported. Try Amazon, Flipkart, Myntra, Ajio, Nykaa, TataCliq and 200+ more.');
 
       btn.disabled = true;
+      input.disabled = true;
+      document.getElementById('loaderTitle').textContent = 'Adding to queue...';
+      document.getElementById('loaderSub').textContent = 'Fetching your ' + store.name + ' cashback deal link';
       loader.classList.add('show');
 
-      // Update loader text with store name
-      document.querySelector('.loader-text strong').textContent = `Generating ${store.name} affiliate link…`;
-
       try {
-        const res  = await fetch(BACKEND_URL, {
+        const res = await fetch(BACKEND_URL + '/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url, store: store.name })
         });
         const data = await res.json();
         if (!res.ok || data.error) throw new Error(data.error || 'Something went wrong.');
-        document.getElementById('affiliateLink').textContent = data.affiliateLink;
-        result.classList.add('show');
-      } catch (err) {
-        showError(err.message || 'Failed to generate link. Make sure the backend is running.');
-      } finally {
+
+        // Start polling every 2 seconds
+        pollInterval = setInterval(() => pollStatus(data.requestId, store.name), 2000);
+        pollStatus(data.requestId, store.name); // immediate first check
+
+      } catch(err) {
         loader.classList.remove('show');
+        input.disabled = false;
         btn.disabled = false;
+        showError(err.message || 'Failed to connect. Make sure the backend is running.');
       }
     }
 
     function showError(msg) {
       const errorBox = document.getElementById('error');
-      errorBox.textContent = '⚠ ' + msg;
+      errorBox.textContent = 'Warning: ' + msg;
       errorBox.classList.add('show');
     }
 

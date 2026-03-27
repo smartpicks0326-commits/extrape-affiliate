@@ -1,17 +1,16 @@
 {
   "name": "extrape-affiliate-backend",
   "version": "1.0.0",
-  "description": "Puppeteer backend to automate ExtraPe affiliate link generation",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.18.2",
     "puppeteer-core": "^21.6.1",
-    "@sparticuz/chromium": "^123.0.0"
+    "@sparticuz/chromium": "^123.0.0",
+    "uuid": "^9.0.0"
   },
   "engines": {
     "node": ">=18.0.0"
