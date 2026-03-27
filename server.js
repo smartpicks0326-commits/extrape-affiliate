@@ -148,16 +148,21 @@ await page.evaluate(() => {
 });
 
 console.log('Clicked first button on page');
-await page.waitForTimeout(3000);
+// Wait longer for password screen to animate in
+await page.waitForTimeout(5000);
 await screenshot(page, '3_after_continue');
 
-  // Log inputs again after clicking continue
-  const inputs2 = await page.evaluate(() =>
-    Array.from(document.querySelectorAll('input')).map(i => ({
-      type: i.type, name: i.name, id: i.id, placeholder: i.placeholder
-    }))
-  );
-  console.log('Inputs after Continue:', JSON.stringify(inputs2));
+const inputs2 = await page.evaluate(() =>
+  Array.from(document.querySelectorAll('input')).map(i => ({
+    type: i.type, name: i.name, id: i.id, placeholder: i.placeholder
+  }))
+);
+console.log('Inputs after Continue:', JSON.stringify(inputs2));
+
+const buttons2 = await page.evaluate(() =>
+  Array.from(document.querySelectorAll('button')).map(b => b.textContent.trim())
+);
+console.log('Buttons after Continue:', JSON.stringify(buttons2));
 
   // ── Step 3: Find and fill password field ──
   const passSel = await waitForAny(page, [
