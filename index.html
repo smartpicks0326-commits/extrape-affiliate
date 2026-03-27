@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AffiLink — Amazon to ExtraPe Affiliate Converter</title>
+  <title>Smart Pick Deals</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
@@ -403,9 +403,9 @@
 <body>
 
   <header>
-    <div class="badge">Powered by ExtraPe · 200+ Stores</div>
-    <h1>Turn any product link into<br/><span>affiliate links</span></h1>
-    <p class="subtitle">Paste a product URL from Amazon, Flipkart, Myntra, Ajio, TataCliq, Nykaa, MakeMyTrip and 200+ more — instantly get your ExtraPe affiliate link.</p>
+    <div class="badge">200+ Stores · Best Deals Handpicked</div>
+    <h1>Shop Smart.<br/><span>Earn Smarter.</span></h1>
+    <p class="subtitle">Paste any product link from your favourite store and get the best cashback deal — instantly.</p>
   </header>
 
   <!-- Supported stores ticker -->
@@ -446,7 +446,7 @@
         <div class="spinner"></div>
         <div class="loader-text">
           <strong>Generating your link…</strong>
-          Logging into ExtraPe and fetching your affiliate link
+          Fetching your cashback deal link instantly
         </div>
       </div>
 
@@ -470,7 +470,7 @@
         </div>
         <div class="step">
           <div class="step-num">2</div>
-          <p>We generate your ExtraPe affiliate link instantly</p>
+          <p>We generate your cashback deal link instantly</p>
         </div>
         <div class="step">
           <div class="step-num">3</div>
@@ -480,10 +480,10 @@
     </div>
   </main>
 
-  <footer>Supports 200+ stores via ExtraPe · Affiliate links generated securely in the cloud</footer>
+  <footer>Smart Pick Deals · Cashback links from 200+ stores, generated instantly</footer>
 
   <script>
-    const BACKEND_URL = 'https://extrape-affiliate.onrender.com/generate';
+    const BACKEND_URL = 'https://YOUR-APP-NAME.onrender.com/generate';
 
     // Supported ExtraPe store domains for validation & detection
     const SUPPORTED_STORES = [
@@ -549,7 +549,7 @@
       // Check if it's a supported store
       const store = detectStore(url);
       if (!store) {
-        return showError('This store may not be supported by ExtraPe. Supported stores include Amazon, Flipkart, Myntra, Ajio, Nykaa, TataCliq, and 200+ more.');
+        return showError('This store may not be supported. Try Amazon, Flipkart, Myntra, Ajio, Nykaa, TataCliq and 200+ more.');
       }
 
       btn.disabled = true;

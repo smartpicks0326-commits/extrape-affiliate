@@ -62,32 +62,33 @@ async function loginToExtraPe() {
   console.log('Logging into ExtraPe...');
   await page.goto('https://extrape.com/login', { waitUntil: 'networkidle2', timeout: 30000 });
 
-  // Step 1: Enter email
+  // Step 1: Enter email/phone
   await page.waitForSelector('input[name="emailorphone"]', { timeout: 10000 });
   await page.type('input[name="emailorphone"]', EXTRAPE_EMAIL, { delay: 50 });
 
-  // Click Continue
+  // Click Continue button (MUI - find by text)
   await page.evaluate(() => {
-    const buttons = Array.from(document.querySelectorAll('button'));
-    const btn = buttons.find(b => b.textContent.trim() === 'Continue');
+    const btn = Array.from(document.querySelectorAll('button'))
+      .find(b => b.textContent.trim() === 'Continue');
     if (btn) btn.click();
   });
 
-  // Step 2: Wait for password field
+  // Step 2: Wait for password field to appear
   await page.waitForTimeout(2000);
   await page.waitForSelector('input[name="password"]', { timeout: 15000 });
   await page.type('input[name="password"]', EXTRAPE_PASSWORD, { delay: 50 });
 
-  // Click Submit
+  // Click Submit button (MUI - find by text)
   await page.evaluate(() => {
-    const buttons = Array.from(document.querySelectorAll('button'));
-    const btn = buttons.find(b => b.textContent.trim() === 'Submit');
+    const btn = Array.from(document.querySelectorAll('button'))
+      .find(b => b.textContent.trim() === 'Submit');
     if (btn) btn.click();
   });
 
-  // Wait for URL to change away from login (SPA - no full navigation)
+  // ExtraPe is a SPA - no full page reload after login.
+  // Wait for the password field to disappear = login successful.
   await page.waitForFunction(
-    () => !window.location.href.includes('/login'),
+    () => !document.querySelector('input[name="password"]'),
     { timeout: 20000 }
   );
 
@@ -115,9 +116,9 @@ async function generateAffiliateLink(productUrl, storeName) {
     await page.type(inputSel, productUrl, { delay: 30 });
 
     await page.evaluate(() => {
-    const buttons = Array.from(document.querySelectorAll('button'));
-    const btn = buttons.find(b => b.textContent.trim() === 'Submit');
-    if (btn) btn.click();
+      const btn = Array.from(document.querySelectorAll('button'))
+        .find(b => b.textContent.trim().includes('Generate') || b.textContent.trim().includes('Convert') || b.textContent.trim().includes('Get Link'));
+      if (btn) btn.click();
     });
 
     await page.waitForSelector(
@@ -159,12 +160,12 @@ app.post('/generate', async (req, res) => {
 
   if (!isSupported(url)) {
     return res.status(400).json({
-      error: 'This store is not supported by ExtraPe. Try Amazon, Flipkart, Myntra, Ajio, Nykaa, or TataCliq.'
+      error: 'This store is not supported. Try Amazon, Flipkart, Myntra, Ajio, Nykaa, or TataCliq.'
     });
   }
 
   if (!EXTRAPE_EMAIL || !EXTRAPE_PASSWORD) {
-    return res.status(500).json({ error: 'ExtraPe credentials not configured on the server.' });
+    return res.status(500).json({ error: 'Credentials not configured on the server.' });
   }
 
   try {
@@ -176,7 +177,7 @@ app.post('/generate', async (req, res) => {
   }
 });
 
-app.get('/', (req, res) => res.send('AffiLink backend running'));
+app.get('/', (req, res) => res.send('Smart Pick Deals backend running'));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
