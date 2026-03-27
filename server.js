@@ -98,19 +98,23 @@ async function loginToExtraPe() {
     }))
   );
   console.log('Inputs on login page:', JSON.stringify(inputs));
+// ── Step 1: Type email directly via JS (avoids React re-render timing issue) ──
+await page.evaluate((email) => {
+  const input = document.querySelector('input[name="emailorphone"]');
+  if (!input) throw new Error('Email input not found');
+  input.focus();
+  input.value = email;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}, EXTRAPE_EMAIL);
+console.log('Typed email via JS');
+await screenshot(page, '2_email_typed');
 
-  // ── Step 1: Type email ──
-  await page.waitForSelector('input[name="emailorphone"]', { timeout: 10000 });
-  await page.click('input[name="emailorphone"]');
-  await page.type('input[name="emailorphone"]', EXTRAPE_EMAIL, { delay: 80 });
-  console.log('Typed email');
-  await screenshot(page, '2_email_typed');
-
-  // ── Log all buttons before clicking ──
-  const btns = await page.evaluate(() =>
-    Array.from(document.querySelectorAll('button')).map(b => b.textContent.trim())
-  );
-  console.log('Buttons before Continue:', JSON.stringify(btns));
+// ── Log all buttons before clicking ──
+const btns = await page.evaluate(() =>
+  Array.from(document.querySelectorAll('button')).map(b => b.textContent.trim())
+);
+console.log('Buttons before Continue:', JSON.stringify(btns));
 
   // ── Step 2: Click Continue using real mouse click ──
 const continueBtn = await page.evaluateHandle(() => {
