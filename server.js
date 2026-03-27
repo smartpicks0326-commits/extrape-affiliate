@@ -136,33 +136,36 @@ async function loginToExtraPe() {
   const emailVal = await page.$eval('input[name="emailorphone"]', el => el.value);
   console.log('Email field value:', emailVal);
 
-  // Step 2: Trigger blur to validate email, then click Continue
+  // Step 2: Submit form directly via React form submit
   await page.evaluate(() => {
     const input = document.querySelector('input[name="emailorphone"]');
-    input.dispatchEvent(new Event('blur', { bubbles: true }));
-    input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
-  });
-  console.log('Triggered blur on email field');
-  await page.waitForTimeout(1000);
 
-  // Tab away from field to trigger validation
-  await page.keyboard.press('Tab');
-  await page.waitForTimeout(1000);
+    // Trigger all React events on the input
+    ['focus', 'keydown', 'keypress', 'keyup', 'input', 'change', 'blur'].forEach(eventType => {
+      input.dispatchEvent(new Event(eventType, { bubbles: true }));
+    });
 
-  // Now click Continue using coordinates
-  const continueBtn = await page.evaluateHandle(() => {
-    return Array.from(document.querySelectorAll('button'))
+    // Find and submit the form directly
+    const form = input.closest('form');
+    if (form) {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      console.log('Submitted form directly');
+    }
+
+    // Also try clicking the button as backup
+    const btn = Array.from(document.querySelectorAll('button'))
       .find(b => b.textContent.trim() === 'Continue');
+    if (btn) {
+      btn.removeAttribute('disabled');
+      btn.click();
+    }
   });
-  const box = await continueBtn.asElement().boundingBox();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  console.log('Clicked Continue via mouse coordinates');
-  await page.waitForTimeout(2000);
+  console.log('Attempted form submit + button click');
+  await page.waitForTimeout(6000);
+  await screenshot(page, '3_after_continue');
 
   const pageText2 = await page.evaluate(() => document.body.innerText);
-  console.log('Page text after click:', pageText2.substring(0, 200));
-  await page.waitForTimeout(4000);
-  await screenshot(page, '3_after_continue');
+  console.log('Page text after submit:', pageText2.substring(0, 200));
 
   // Step 3: Type password character by character
   await page.waitForSelector('input[name="password"]', { timeout: 15000 });
