@@ -134,22 +134,20 @@ async function loginToExtraPe() {
   const emailVal = await page.$eval('input[name="emailorphone"]', el => el.value);
   console.log('Email field value:', emailVal);
 
-  // Step 2: Click Continue using dispatchEvent for full React compatibility
-  await page.evaluate(() => {
-    const btn = Array.from(document.querySelectorAll('button'))
+  // Step 2: Click Continue using bounding box coordinates
+  const continueBtn = await page.evaluateHandle(() => {
+    return Array.from(document.querySelectorAll('button'))
       .find(b => b.textContent.trim() === 'Continue');
-    if (!btn) throw new Error('Continue button not found');
-    ['mousedown', 'mouseup', 'click'].forEach(type => {
-      btn.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
-    });
   });
-  console.log('Clicked Continue via MouseEvent');
+  const box = await continueBtn.asElement().boundingBox();
+  console.log('Continue button box:', JSON.stringify(box));
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  console.log('Clicked Continue via mouse coordinates');
   await page.waitForTimeout(2000);
-  await screenshot(page, '2b_immediately_after_continue');
 
-  // Check what appeared on page after Continue
-  const pageText = await page.evaluate(() => document.body.innerText);
-  console.log('Page text after Continue:', pageText.substring(0, 300));
+  // Check page text immediately after click
+  const pageText2 = await page.evaluate(() => document.body.innerText);
+  console.log('Page text immediately after click:', pageText2.substring(0, 200));
 
   await page.waitForTimeout(4000);
   await screenshot(page, '3_after_continue');
