@@ -98,16 +98,19 @@ async function loginToExtraPe() {
     }))
   );
   console.log('Inputs on login page:', JSON.stringify(inputs));
-// ── Step 1: Type email directly via JS (avoids React re-render timing issue) ──
+  // ── Step 1: Type email using React-compatible input setter ──
 await page.evaluate((email) => {
   const input = document.querySelector('input[name="emailorphone"]');
   if (!input) throw new Error('Email input not found');
-  input.focus();
-  input.value = email;
+  const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype, 'value'
+  ).set;
+  nativeInputValueSetter.call(input, email);
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.dispatchEvent(new Event('change', { bubbles: true }));
 }, EXTRAPE_EMAIL);
-console.log('Typed email via JS');
+console.log('Typed email via React-compatible setter');
+await page.waitForTimeout(1000);
 await screenshot(page, '2_email_typed');
 
 // ── Log all buttons before clicking ──
