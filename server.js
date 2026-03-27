@@ -36,38 +36,29 @@ function isSupported(url) {
   }
 }
 
-// ── Save screenshot for debugging ──
 async function screenshot(page, name) {
   try {
-    const path = '/tmp/debug_' + name + '.png';
-    await page.screenshot({ path, fullPage: true });
-    console.log('Screenshot saved: ' + path);
-  } catch(e) {
-    console.log('Screenshot failed: ' + e.message);
-  }
+    await page.screenshot({ path: '/tmp/debug_' + name + '.png', fullPage: true });
+    console.log('Screenshot: ' + name);
+  } catch(e) {}
 }
 
-// ── Wait for any selector from a list ──
-async function waitForAny(page, selectors, timeout = 10000) {
+async function waitForAny(page, selectors, timeout) {
   const combined = selectors.join(', ');
-  try {
-    await page.waitForSelector(combined, { timeout });
-    return combined;
-  } catch(e) {
-    throw new Error('None of these selectors found: ' + selectors.join(' | '));
-  }
+  await page.waitForSelector(combined, { timeout: timeout || 10000 });
+  return combined;
 }
 
-// ── Click button by partial text ──
-async function clickButtonByText(page, text) {
+// ── Click button by EXACT text match ──
+async function clickButtonExact(page, exactText) {
   const found = await page.evaluate((text) => {
-    const buttons = Array.from(document.querySelectorAll('button, [role="button"], a.btn, input[type="submit"]'));
-    const btn = buttons.find(b => b.textContent.trim().toLowerCase().includes(text.toLowerCase()));
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const btn = buttons.find(b => b.textContent.trim() === text);
     if (btn) { btn.click(); return true; }
     return false;
-  }, text);
-  if (!found) throw new Error('Button with text "' + text + '" not found');
-  console.log('Clicked button: ' + text);
+  }, exactText);
+  if (!found) throw new Error('Button "' + exactText + '" not found');
+  console.log('Clicked: ' + exactText);
 }
 
 let browser   = null;
@@ -97,105 +88,64 @@ async function loginToExtraPe() {
   );
 
   console.log('Navigating to ExtraPe login...');
-  await page.goto('https://extrape.com/login', {
-    waitUntil: 'domcontentloaded',
-    timeout: 30000
-  });
-
-  // Extra wait for React to render
+  await page.goto('https://extrape.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForTimeout(8000);
   await screenshot(page, '1_login_page');
 
-  // Log all inputs found on page for debugging
   const inputs = await page.evaluate(() =>
     Array.from(document.querySelectorAll('input')).map(i => ({
       type: i.type, name: i.name, id: i.id, placeholder: i.placeholder
     }))
   );
-  console.log('Inputs found on login page:', JSON.stringify(inputs));
+  console.log('Inputs on login page:', JSON.stringify(inputs));
 
-  // ── Step 1: Find and fill email/phone field ──
-  const emailSel = await waitForAny(page, [
-    'input[name="emailorphone"]',
-    'input[type="email"]',
-    'input[type="tel"]',
-    'input[type="text"]',
-    'input[placeholder*="mail"]',
-    'input[placeholder*="phone"]',
-    'input[placeholder*="Phone"]',
-    'input[placeholder*="Email"]',
-    'input[placeholder*="Mobile"]',
-  ], 15000);
-
-  await page.click(emailSel);
-  await page.type(emailSel, EXTRAPE_EMAIL, { delay: 80 });
-  console.log('Typed email into: ' + emailSel);
+  // ── Step 1: Type email ──
+  await page.waitForSelector('input[name="emailorphone"]', { timeout: 10000 });
+  await page.click('input[name="emailorphone"]');
+  await page.type('input[name="emailorphone"]', EXTRAPE_EMAIL, { delay: 80 });
+  console.log('Typed email');
   await screenshot(page, '2_email_typed');
 
-  // ── Step 2: Log all buttons then click Continue ──
-const allButtons = await page.evaluate(() =>
-  Array.from(document.querySelectorAll('button')).map(b => ({
-    text: b.textContent.trim(),
-    inner: b.innerHTML.substring(0, 100)
-  }))
-);
-console.log('Buttons on login page:', JSON.stringify(allButtons));
+  // ── Log all buttons before clicking ──
+  const btns = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('button')).map(b => b.textContent.trim())
+  );
+  console.log('Buttons before Continue:', JSON.stringify(btns));
 
-// Click the exact "Continue" button (not "Continue via Google")
-await page.evaluate(() => {
-  const buttons = Array.from(document.querySelectorAll('button'));
-  const btn = buttons.find(b => b.textContent.trim() === 'Continue');
-  if (btn) btn.click();
-});
+  // ── Step 2: Click EXACT "Continue" (not "Continue via Google") ──
+  await clickButtonExact(page, 'Continue');
+  await page.waitForTimeout(5000);
+  await screenshot(page, '3_after_continue');
 
-console.log('Clicked first button on page');
-// Wait longer for password screen to animate in
-await page.waitForTimeout(5000);
-await screenshot(page, '3_after_continue');
+  const inputs2 = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('input')).map(i => ({
+      type: i.type, name: i.name, id: i.id, placeholder: i.placeholder
+    }))
+  );
+  console.log('Inputs after Continue:', JSON.stringify(inputs2));
 
-const inputs2 = await page.evaluate(() =>
-  Array.from(document.querySelectorAll('input')).map(i => ({
-    type: i.type, name: i.name, id: i.id, placeholder: i.placeholder
-  }))
-);
-console.log('Inputs after Continue:', JSON.stringify(inputs2));
-
-const buttons2 = await page.evaluate(() =>
-  Array.from(document.querySelectorAll('button')).map(b => b.textContent.trim())
-);
-console.log('Buttons after Continue:', JSON.stringify(buttons2));
-
-  // ── Step 3: Find and fill password field ──
-  const passSel = await waitForAny(page, [
-    'input[name="password"]',
-    'input[type="password"]',
-    'input[placeholder*="assword"]',
-    'input[placeholder*="Password"]',
-  ], 15000);
-
-  await page.click(passSel);
-  await page.type(passSel, EXTRAPE_PASSWORD, { delay: 80 });
-  console.log('Typed password into: ' + passSel);
+  // ── Step 3: Type password ──
+  await page.waitForSelector('input[name="password"]', { timeout: 15000 });
+  await page.click('input[name="password"]');
+  await page.type('input[name="password"]', EXTRAPE_PASSWORD, { delay: 80 });
+  console.log('Typed password');
   await screenshot(page, '4_password_typed');
 
-  // ── Step 4: Click Submit ──
-  await clickButtonByText(page, 'Submit');
-  await page.waitForTimeout(4000);
+  // ── Step 4: Click EXACT "Submit" ──
+  await clickButtonExact(page, 'Submit');
+  await page.waitForTimeout(5000);
   await screenshot(page, '5_after_submit');
 
-  // Check current URL and page content
-  const currentUrl = page.url();
-  console.log('URL after submit: ' + currentUrl);
+  const urlAfter = page.url();
+  console.log('URL after submit: ' + urlAfter);
 
-  const pageText = await page.evaluate(() => document.body.innerText.substring(0, 200));
-  console.log('Page content after submit: ' + pageText);
-
-  if (currentUrl.includes('/login')) {
-    throw new Error('Still on login page after submit. Check credentials or screenshot 5_after_submit.');
-  }
+  await page.waitForFunction(
+    () => !document.querySelector('input[name="password"]'),
+    { timeout: 20000 }
+  );
 
   isLoggedIn = true;
-  console.log('Logged into ExtraPe successfully. Current URL: ' + currentUrl);
+  console.log('Logged in successfully!');
 }
 
 async function generateAffiliateLink(productUrl, storeName) {
@@ -206,14 +156,10 @@ async function generateAffiliateLink(productUrl, storeName) {
   try {
     console.log('Generating link for [' + storeName + ']: ' + productUrl);
 
-    await page.goto('https://extrape.com/dashboard', {
-      waitUntil: 'domcontentloaded',
-      timeout: 30000
-    });
-    await page.waitForTimeout(3000);
+    await page.goto('https://extrape.com/dashboard', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(4000);
     await screenshot(page, '6_dashboard');
 
-    // Log all inputs on dashboard
     const inputs = await page.evaluate(() =>
       Array.from(document.querySelectorAll('input, textarea')).map(i => ({
         type: i.type, name: i.name, id: i.id, placeholder: i.placeholder
@@ -221,7 +167,6 @@ async function generateAffiliateLink(productUrl, storeName) {
     );
     console.log('Dashboard inputs:', JSON.stringify(inputs));
 
-    // ── Find the URL input field ──
     const inputSel = await waitForAny(page, [
       'input[placeholder*="product"]',
       'input[placeholder*="Product"]',
@@ -235,75 +180,59 @@ async function generateAffiliateLink(productUrl, storeName) {
       'input[name="url"]',
       'input[name="link"]',
       'input[name="productUrl"]',
-      'textarea[placeholder*="url"]',
-      'textarea[placeholder*="link"]',
+      'textarea',
     ], 15000);
 
     await page.click(inputSel, { clickCount: 3 });
     await page.type(inputSel, productUrl, { delay: 40 });
-    console.log('Typed product URL into: ' + inputSel);
+    console.log('Typed URL into: ' + inputSel);
     await screenshot(page, '7_url_typed');
 
-    // Log all buttons on dashboard
     const buttons = await page.evaluate(() =>
       Array.from(document.querySelectorAll('button')).map(b => b.textContent.trim())
     );
     console.log('Dashboard buttons:', JSON.stringify(buttons));
 
-    // Click the generate button
-    const generateTexts = ['Generate', 'Convert', 'Get Link', 'Create', 'Submit', 'Go', 'Shorten'];
+    const generateTexts = ['Generate', 'Convert', 'Get Link', 'Create', 'Submit', 'Go', 'Shorten', 'Get'];
     let clicked = false;
     for (const text of generateTexts) {
       try {
-        await clickButtonByText(page, text);
+        await clickButtonExact(page, text);
         clicked = true;
         break;
-      } catch(e) {
-        continue;
-      }
+      } catch(e) { continue; }
     }
-    if (!clicked) throw new Error('Could not find generate button. Buttons found: ' + JSON.stringify(buttons));
+
+    if (!clicked) {
+      // Click first available button as fallback
+      await page.evaluate(() => {
+        const btns = document.querySelectorAll('button');
+        if (btns.length > 0) btns[0].click();
+      });
+      console.log('Clicked first available button as fallback');
+    }
 
     await page.waitForTimeout(4000);
     await screenshot(page, '8_after_generate');
 
-    // Log all links and inputs after generating
-    const results = await page.evaluate(() => {
-      const inputs = Array.from(document.querySelectorAll('input')).map(i => ({
-        tag: 'input', value: i.value, name: i.name, placeholder: i.placeholder
-      }));
-      const links = Array.from(document.querySelectorAll('a[href*="extrape"], a[href*="fkrt"], a[href*="amzn"]')).map(a => ({
-        tag: 'a', href: a.href, text: a.textContent.trim().substring(0, 50)
-      }));
-      const spans = Array.from(document.querySelectorAll('[class*="link"], [class*="result"], [class*="affiliate"], [class*="short"]')).map(el => ({
-        tag: el.tagName, text: el.textContent.trim().substring(0, 100)
-      }));
-      return { inputs, links, spans };
-    });
-    console.log('Results after generate:', JSON.stringify(results));
+    const results = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('input')).map(i => ({
+        name: i.name, value: i.value, placeholder: i.placeholder
+      }))
+    );
+    console.log('Inputs after generate:', JSON.stringify(results));
 
-    // Try to extract the affiliate link
     const affiliateLink = await page.evaluate(() => {
-      // Try inputs with values
       const inputs = Array.from(document.querySelectorAll('input'));
       for (const input of inputs) {
-        if (input.value && (
-          input.value.includes('extrape') ||
-          input.value.includes('fkrt') ||
-          input.value.includes('amzn') ||
-          input.value.includes('http')
-        )) return input.value;
+        if (input.value && input.value.startsWith('http')) return input.value;
       }
-      // Try anchor tags
       const links = Array.from(document.querySelectorAll('a'));
       for (const link of links) {
-        if (link.href && (
-          link.href.includes('extrape') ||
-          link.href.includes('fkrt') ||
-          link.href.includes('amzn')
-        )) return link.href;
+        if (link.href && (link.href.includes('extrape') || link.href.includes('fkrt') || link.href.includes('amzn'))) {
+          return link.href;
+        }
       }
-      // Try elements with link-related classes
       const els = document.querySelectorAll('[class*="link"], [class*="result"], [class*="affiliate"], [class*="short"], [class*="copy"]');
       for (const el of els) {
         const text = el.value || el.textContent.trim();
@@ -312,11 +241,9 @@ async function generateAffiliateLink(productUrl, storeName) {
       return null;
     });
 
-    if (!affiliateLink) {
-      throw new Error('Could not find affiliate link. Check screenshot 8_after_generate and logs above.');
-    }
+    if (!affiliateLink) throw new Error('Could not find affiliate link. Check logs and screenshots.');
 
-    console.log('Done [' + storeName + ']: ' + affiliateLink);
+    console.log('Success! Link: ' + affiliateLink);
     return affiliateLink.trim();
 
   } catch (err) {
@@ -328,23 +255,10 @@ async function generateAffiliateLink(productUrl, storeName) {
 
 app.post('/generate', async (req, res) => {
   const { url, store } = req.body;
-
   if (!url) return res.status(400).json({ error: 'No URL provided.' });
-
-  try { new URL(url); } catch {
-    return res.status(400).json({ error: 'Invalid URL format.' });
-  }
-
-  if (!isSupported(url)) {
-    return res.status(400).json({
-      error: 'This store is not supported. Try Amazon, Flipkart, Myntra, Ajio, Nykaa, or TataCliq.'
-    });
-  }
-
-  if (!EXTRAPE_EMAIL || !EXTRAPE_PASSWORD) {
-    return res.status(500).json({ error: 'Credentials not configured on the server.' });
-  }
-
+  try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL.' }); }
+  if (!isSupported(url)) return res.status(400).json({ error: 'Store not supported.' });
+  if (!EXTRAPE_EMAIL || !EXTRAPE_PASSWORD) return res.status(500).json({ error: 'Credentials missing.' });
   try {
     const affiliateLink = await generateAffiliateLink(url, store || 'Unknown');
     return res.json({ affiliateLink, store: store || 'Unknown' });
@@ -354,19 +268,14 @@ app.post('/generate', async (req, res) => {
   }
 });
 
-// ── Debug endpoint: view screenshots list ──
 app.get('/debug', (req, res) => {
   try {
     const files = fs.readdirSync('/tmp').filter(f => f.startsWith('debug_'));
-    res.json({ screenshots: files, message: 'These are saved at /tmp/ on the server' });
-  } catch(e) {
-    res.json({ error: e.message });
-  }
+    res.json({ screenshots: files });
+  } catch(e) { res.json({ error: e.message }); }
 });
 
 app.get('/', (req, res) => res.send('Smart Pick Deals backend running'));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log('Server on port ' + PORT);
-});
+app.listen(PORT, () => console.log('Server on port ' + PORT));
