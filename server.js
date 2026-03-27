@@ -150,69 +150,60 @@ async function generateAffiliateLink(productUrl, storeName) {
 
   try {
     console.log('Generating link for [' + storeName + ']: ' + productUrl);
-    await page.goto('https://extrape.com/dashboard', { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+    await page.goto('https://www.extrape.com/link-converter', {
+      waitUntil: 'domcontentloaded',
+      timeout: 30000
+    });
     await page.waitForTimeout(4000);
-    await screenshot(page, '6_dashboard');
+    await screenshot(page, '6_converter');
 
-    const inputs = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('input, textarea')).map(i => ({
-        type: i.type, name: i.name, id: i.id, placeholder: i.placeholder
-      }))
-    );
-    console.log('Dashboard inputs:', JSON.stringify(inputs));
+    // Find the input textarea
+    await page.waitForSelector('textarea', { timeout: 10000 });
 
-    const inputSel = await waitForAny(page, [
-      'input[placeholder*="product"]', 'input[placeholder*="Product"]',
-      'input[placeholder*="url"]', 'input[placeholder*="URL"]',
-      'input[placeholder*="link"]', 'input[placeholder*="Link"]',
-      'input[placeholder*="paste"]', 'input[placeholder*="Paste"]',
-      'input[placeholder*="http"]',
-      'input[name="url"]', 'input[name="link"]', 'input[name="productUrl"]',
-      'textarea',
-    ], 15000);
-
-    await page.evaluate((sel, url) => {
-      const input = document.querySelector(sel);
-      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-      nativeInputValueSetter.call(input, url);
+    // Type the product URL into the textarea
+    await page.evaluate((url) => {
+      const textareas = Array.from(document.querySelectorAll('textarea'));
+      const input = textareas.find(t =>
+        t.placeholder.includes('http') || t.placeholder.includes('Input')
+      );
+      if (!input) throw new Error('Input textarea not found');
+      const nativeSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype, 'value'
+      ).set;
+      nativeSetter.call(input, url);
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
-    }, inputSel.split(',')[0].trim(), productUrl);
+    }, productUrl);
 
-    console.log('Typed product URL');
+    console.log('Typed product URL into textarea');
     await page.waitForTimeout(1000);
-    await page.focus(inputSel.split(',')[0].trim());
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(4000);
-    await screenshot(page, '8_after_generate');
 
-    const results = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('input')).map(i => ({
-        name: i.name, value: i.value, placeholder: i.placeholder
-      }))
-    );
-    console.log('Inputs after generate:', JSON.stringify(results));
-
-    const affiliateLink = await page.evaluate(() => {
-      const inputs = Array.from(document.querySelectorAll('input'));
-      for (const input of inputs) {
-        if (input.value && input.value.startsWith('http')) return input.value;
-      }
-      const links = Array.from(document.querySelectorAll('a'));
-      for (const link of links) {
-        if (link.href && (link.href.includes('extrape') || link.href.includes('fkrt') || link.href.includes('amzn'))) return link.href;
-      }
-      const els = document.querySelectorAll('[class*="link"], [class*="result"], [class*="affiliate"], [class*="short"], [class*="copy"]');
-      for (const el of els) {
-        const text = el.value || el.textContent.trim();
-        if (text && text.startsWith('http')) return text;
-      }
-      return null;
+    // Click Convert button
+    await page.evaluate(() => {
+      const btn = Array.from(document.querySelectorAll('button'))
+        .find(b => b.textContent.trim() === 'Convert');
+      if (!btn) throw new Error('Convert button not found');
+      btn.click();
     });
 
-    if (!affiliateLink) throw new Error('Could not find affiliate link. Check logs and screenshots.');
-    console.log('Success! Link: ' + affiliateLink);
-    return affiliateLink.trim();
+    console.log('Clicked Convert');
+    await page.waitForTimeout(5000);
+    await screenshot(page, '7_after_convert');
+
+    // Extract converted link from output textarea
+    const affiliateLink = await page.evaluate(() => {
+      const textareas = Array.from(document.querySelectorAll('textarea'));
+      const output = textareas.find(t =>
+        t.placeholder.includes('Converted') || t.value.startsWith('http')
+      );
+      return output ? output.value.trim() : null;
+    });
+
+    console.log('Affiliate link:', affiliateLink);
+    if (!affiliateLink) throw new Error('Converted link not found. Check screenshot 7_after_convert.');
+
+    return affiliateLink;
 
   } catch (err) {
     isLoggedIn = false;
