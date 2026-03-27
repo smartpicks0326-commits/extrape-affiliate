@@ -276,4 +276,13 @@ app.get('/screenshot/:name', (req, res) => {
 
 app.get('/', (req, res) => res.send('Smart Pick Deals backend running'));
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('Server on port ' + PORT));
+app.listen(PORT, async () => {
+  console.log('Server on port ' + PORT);
+  // Pre-warm browser and login on startup
+  try {
+    await loginToExtraPe();
+    console.log('Browser pre-warmed and ready!');
+  } catch(err) {
+    console.warn('Pre-warm failed:', err.message);
+  }
+});
