@@ -136,21 +136,31 @@ async function loginToExtraPe() {
   const emailVal = await page.$eval('input[name="emailorphone"]', el => el.value);
   console.log('Email field value:', emailVal);
 
-  // Step 2: Click Continue using bounding box coordinates
+  // Step 2: Trigger blur to validate email, then click Continue
+  await page.evaluate(() => {
+    const input = document.querySelector('input[name="emailorphone"]');
+    input.dispatchEvent(new Event('blur', { bubbles: true }));
+    input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+  });
+  console.log('Triggered blur on email field');
+  await page.waitForTimeout(1000);
+
+  // Tab away from field to trigger validation
+  await page.keyboard.press('Tab');
+  await page.waitForTimeout(1000);
+
+  // Now click Continue using coordinates
   const continueBtn = await page.evaluateHandle(() => {
     return Array.from(document.querySelectorAll('button'))
       .find(b => b.textContent.trim() === 'Continue');
   });
   const box = await continueBtn.asElement().boundingBox();
-  console.log('Continue button box:', JSON.stringify(box));
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   console.log('Clicked Continue via mouse coordinates');
   await page.waitForTimeout(2000);
 
-  // Check page text immediately after click
   const pageText2 = await page.evaluate(() => document.body.innerText);
-  console.log('Page text immediately after click:', pageText2.substring(0, 200));
-
+  console.log('Page text after click:', pageText2.substring(0, 200));
   await page.waitForTimeout(4000);
   await screenshot(page, '3_after_continue');
 
