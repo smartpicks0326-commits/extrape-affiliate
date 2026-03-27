@@ -165,6 +165,13 @@ async function generateAffiliateLink(productUrl, storeName) {
     // Wait longer for React to render textarea
     await page.waitForSelector('textarea', { timeout: 20000 });
 
+    // Log page content to verify we're on the right page
+    const pageText = await page.evaluate(() => document.body.innerText);
+    console.log('Converter page text:', pageText.substring(0, 300));
+
+    // Wait longer for React to render textarea
+    await page.waitForSelector('textarea', { timeout: 20000 });
+
     // Type the product URL into the textarea
     await page.evaluate((url) => {
       const textareas = Array.from(document.querySelectorAll('textarea'));
