@@ -92,7 +92,6 @@ async function screenshot(name) {
   } catch(e) {}
 }
 
-// ── STARTUP: Launch browser, login, navigate to converter, keep ready ──
 async function setup() {
   console.log('Launching browser...');
   browser = await puppeteer.launch({
@@ -108,40 +107,47 @@ async function setup() {
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
   );
 
-  // Step 1: Go to homepage first to establish session
-  console.log('Setting cookies...');
+  // Step 1: Go to homepage first
   await converterPage.goto('https://www.extrape.com', { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await converterPage.waitForTimeout(2000);
+  await converterPage.waitForTimeout(3000);
 
-  // Step 2: Set auth cookies
+  // Step 2: Set cookies
   const cookies = JSON.parse(EXTRAPE_COOKIES);
   await converterPage.setCookie(...cookies);
   console.log('Cookies set:', cookies.length);
 
-  // Step 3: Reload to apply cookies
-  await converterPage.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
-  await converterPage.waitForTimeout(3000);
-
-  const homeUrl = converterPage.url();
-  console.log('After cookie reload URL:', homeUrl);
-
-  // Step 4: Navigate directly to converter page
-  console.log('Navigating to converter...');
+  // Step 3: Navigate to converter directly
   await converterPage.goto('https://www.extrape.com/link-converter', { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await converterPage.waitForTimeout(5000);
+  await converterPage.waitForTimeout(6000);
 
-  const converterUrl = converterPage.url();
-  console.log('Converter URL:', converterUrl);
+  // Step 4: Log what we see
+  const url = converterPage.url();
+  const title = await converterPage.title();
+  console.log('URL:', url);
+  console.log('Title:', title);
 
-  if (converterUrl.includes('login')) {
-    throw new Error('Redirected to login — cookies may be expired. Update EXTRAPE_COOKIES in Render.');
+  const bodyText = await converterPage.evaluate(() => document.body.innerText.substring(0, 200));
+  console.log('Page text:', bodyText);
+
+  await screenshot('startup');
+
+  if (!url.includes('link-converter')) {
+    // Try once more with a fresh navigation
+    console.log('Retrying navigation to converter...');
+    await converterPage.goto('https://www.extrape.com/link-converter', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await converterPage.waitForTimeout(8000);
+
+    const url2 = converterPage.url();
+    const bodyText2 = await converterPage.evaluate(() => document.body.innerText.substring(0, 200));
+    console.log('Retry URL:', url2);
+    console.log('Retry page text:', bodyText2);
+    await screenshot('startup_retry');
   }
 
-  // Step 5: Wait for the input textarea to be ready
+  // Step 5: Wait for textarea
   await converterPage.waitForSelector('textarea', { timeout: 20000 });
-  console.log('Converter textarea found — ready for conversions!');
+  console.log('Converter ready!');
 
-  await screenshot('startup_converter_ready');
   isReady = true;
 }
 
