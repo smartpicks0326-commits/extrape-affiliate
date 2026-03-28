@@ -113,8 +113,17 @@ async function setup() {
 
   // Step 2: Set cookies
   const cookies = JSON.parse(EXTRAPE_COOKIES);
-  await converterPage.setCookie(...cookies);
-  console.log('Cookies set:', cookies.length);
+  // Set cookies with correct domain
+  const formattedCookies = cookies.map(c => ({
+  ...c,
+  domain: 'www.extrape.com',
+  path: '/',
+  httpOnly: false,
+  secure: true,
+  }));
+  await converterPage.setCookie(...formattedCookies);
+  console.log('Cookies set:', formattedCookies.length);
+
 
   // Step 3: Navigate to converter directly
   await converterPage.goto('https://www.extrape.com/link-converter', { waitUntil: 'domcontentloaded', timeout: 30000 });
