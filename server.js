@@ -113,16 +113,8 @@ async function setup() {
 
   // Step 2: Set cookies
   const cookies = JSON.parse(EXTRAPE_COOKIES);
-  // Set cookies with correct domain
-  const formattedCookies = cookies.map(c => ({
-  ...c,
-  domain: 'www.extrape.com',
-  path: '/',
-  httpOnly: false,
-  secure: true,
-  }));
-  await converterPage.setCookie(...formattedCookies);
-  console.log('Cookies set:', formattedCookies.length);
+  await converterPage.setCookie(...cookies);
+  console.log('Cookies set:', cookies.length);
 
 
   // Step 3: Navigate to converter directly
