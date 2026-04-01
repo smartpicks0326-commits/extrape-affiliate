@@ -33,6 +33,23 @@ function isSupported(url) {
   } catch { return false; }
 }
 
+// ── Short URL store ──
+const shortLinks = {}; // code -> full affiliate URL
+
+function generateShortCode() {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+function createShortLink(fullUrl, baseUrl) {
+  let code = generateShortCode();
+  while (shortLinks[code]) code = generateShortCode(); // ensure unique
+  shortLinks[code] = fullUrl;
+  return baseUrl + '/s/' + code;
+}
+
 // ── Queue ──
 const queue = [];
 const requests = {};
@@ -131,11 +148,9 @@ async function convertUrl(productUrl) {
 
   const decoded = decodeURIComponent(affiliateLink.trim());
 
-  // Encode the full URL into a short /go/ link to hide affiliate tags
-  const encoded = Buffer.from(decoded).toString('base64url');
-  const shortLink = process.env.BACKEND_URL
-    ? process.env.BACKEND_URL + '/go/' + encoded
-    : decoded;
+  // Create a clean short link that hides affiliate tags
+  const baseUrl = process.env.BACKEND_URL || '';
+  const shortLink = baseUrl ? createShortLink(decoded, baseUrl) : decoded;
 
   console.log('Done: ' + decoded);
   console.log('Short link: ' + shortLink);
@@ -188,13 +203,13 @@ app.get('/status/:id', (req, res) => {
   return res.json(status);
 });
 
-// ── Short link redirect — hides affiliate tag from users ──
-app.get('/go/:encoded', (req, res) => {
-  try {
-    const url = Buffer.from(req.params.encoded, 'base64url').toString('utf8');
+// ── Short link redirect — /s/:code ──
+app.get('/s/:code', (req, res) => {
+  const url = shortLinks[req.params.code];
+  if (url) {
     res.redirect(301, url);
-  } catch(e) {
-    res.status(400).send('Invalid link');
+  } else {
+    res.status(404).send('Link not found or expired.');
   }
 });
 
