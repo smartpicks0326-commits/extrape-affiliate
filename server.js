@@ -129,8 +129,17 @@ async function convertUrl(productUrl) {
     throw new Error('No affiliate link in response: ' + JSON.stringify(data));
   }
 
-  console.log('Done: ' + affiliateLink);
-  return decodeURIComponent(affiliateLink.trim());
+  const decoded = decodeURIComponent(affiliateLink.trim());
+
+  // Encode the full URL into a short /go/ link to hide affiliate tags
+  const encoded = Buffer.from(decoded).toString('base64url');
+  const shortLink = process.env.BACKEND_URL
+    ? process.env.BACKEND_URL + '/go/' + encoded
+    : decoded;
+
+  console.log('Done: ' + decoded);
+  console.log('Short link: ' + shortLink);
+  return shortLink;
 }
 
 // ── Queue Processor ──
@@ -179,9 +188,17 @@ app.get('/status/:id', (req, res) => {
   return res.json(status);
 });
 
+// ── Short link redirect — hides affiliate tag from users ──
+app.get('/go/:encoded', (req, res) => {
+  try {
+    const url = Buffer.from(req.params.encoded, 'base64url').toString('utf8');
+    res.redirect(301, url);
+  } catch(e) {
+    res.status(400).send('Invalid link');
+  }
+});
+
 app.get('/', (req, res) => res.send('Smart Pick Deals backend running ✅'));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('Server on port ' + PORT + ' — ready instantly!'));
-
-

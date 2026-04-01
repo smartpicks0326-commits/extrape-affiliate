@@ -405,7 +405,7 @@
   <header>
     <div class="badge">200+ Stores · Best Deals Handpicked</div>
     <h1>Shop Smart.<br/><span>Earn Smarter.</span></h1>
-    <p class="subtitle">Paste any product link from your favourite store and get the best cashback deal — instantly.</p>
+    <p class="subtitle">Paste any product link from your favourite store and get the best deal — instantly.</p>
   </header>
 
   <!-- Supported stores ticker -->
@@ -446,7 +446,7 @@
         <div class="spinner"></div>
         <div class="loader-text">
           <strong id="loaderTitle">Generating your link…</strong>
-          <span id="loaderSub">Fetching your cashback deal link instantly</span>
+          <span id="loaderSub">Fetching your deal link instantly</span>
           <div id="queueInfo" style="display:none; margin-top:8px;">
             <div id="queueBadge" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,107,43,0.12);border:1px solid rgba(255,107,43,0.25);color:#ff9a5c;font-size:11px;font-weight:600;letter-spacing:0.08em;padding:4px 12px;border-radius:999px;">
               <span id="queueText">Position in queue: 1</span>
@@ -458,24 +458,10 @@
 
       <!-- Result -->
       <div id="result">
-        <div class="result-label">link ready</div>
+        <div class="result-label">Affiliate link ready</div>
         <div class="result-box">
           <span class="result-link" id="affiliateLink"></span>
           <button id="copyBtn" onclick="copyLink()">Copy</button>
-          <button id="openBtn" onclick="openLink()" style="
-            background: rgba(255,107,43,0.12);
-            color: var(--accent2);
-            border: 1px solid rgba(255,107,43,0.25);
-            font-family: 'Syne', sans-serif;
-            font-weight: 600;
-            font-size: 12px;
-            padding: 8px 16px;
-            border-radius: 8px;
-            cursor: pointer;
-            white-space: nowrap;
-            transition: background 0.2s;
-            flex-shrink: 0;
-          ">Open ↗</button>
         </div>
       </div>
 
@@ -486,15 +472,15 @@
       <div class="how-it-works">
         <div class="step">
           <div class="step-num">1</div>
-          <p>Paste any Amazon product URL above</p>
+          <p>Paste any product URL from your favourite store</p>
         </div>
         <div class="step">
           <div class="step-num">2</div>
-          <p>We generate your cashback deal link instantly</p>
+          <p>We generate your deal link instantly</p>
         </div>
         <div class="step">
           <div class="step-num">3</div>
-          <p>Copy and share to earn commissions</p>
+          <p>Copy and share to help your friends save money</p>
         </div>
       </div>
     </div>
@@ -503,7 +489,7 @@
   <footer>Smart Pick Deals · Cashback links from 200+ stores, generated instantly</footer>
 
   <script>
-    const BACKEND_URL = 'https://extrape-affiliate.onrender.com';
+    const BACKEND_URL = 'https://YOUR-APP-NAME.onrender.com';
 
     const SUPPORTED_STORES = [
       { name: 'Amazon',      domains: ['amazon.in', 'amazon.com', 'amzn.in', 'amzn.to'] },
@@ -573,7 +559,7 @@
         } else if (data.state === 'processing') {
           document.getElementById('queueInfo').style.display = 'none';
           document.getElementById('loaderTitle').textContent = 'Generating your link...';
-          document.getElementById('loaderSub').textContent = 'Fetching your ' + storeName + ' cashback deal link';
+          document.getElementById('loaderSub').textContent = 'Fetching your ' + storeName + ' deal link';
 
         } else if (data.state === 'done') {
           stopPolling();
@@ -616,7 +602,7 @@
       btn.disabled = true;
       input.disabled = true;
       document.getElementById('loaderTitle').textContent = 'Adding to queue...';
-      document.getElementById('loaderSub').textContent = 'Fetching your ' + store.name + ' cashback deal link';
+      document.getElementById('loaderSub').textContent = 'Fetching your ' + store.name + ' deal link';
       loader.classList.add('show');
 
       try {
@@ -654,11 +640,6 @@
         btn.classList.add('copied');
         setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
       });
-    }
-
-    function openLink() {
-      const link = document.getElementById('affiliateLink').textContent;
-      window.open(link, '_blank');
     }
 
     document.getElementById('productUrl').addEventListener('keydown', e => {
