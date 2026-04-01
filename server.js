@@ -147,15 +147,24 @@ async function convertUrl(productUrl) {
   }
 
   const decoded = decodeURIComponent(affiliateLink.trim());
+  console.log('ExtraPe returned: ' + decoded);
 
-  // Wrap in our short link to hide affiliate tags from users
+  // If ExtraPe already returned a native short link (fkrt.co, amzn.in etc.) return as-is
+  const nativeShortDomains = ['fkrt.co', 'amzn.in', 'amzn.to', 'clnk.in', 'myntra.com/p'];
+  const isAlreadyShort = nativeShortDomains.some(d => decoded.includes(d)) || decoded.length < 60;
+
+  if (isAlreadyShort) {
+    console.log('Native short link — returning directly: ' + decoded);
+    return decoded;
+  }
+
+  // Long URL with tags (Amazon full URL etc.) — wrap in our /s/ code to hide tags
   const baseUrl = process.env.BACKEND_URL || '';
   if (baseUrl) {
-    const code = generateShortCode() + generateShortCode(); // 12-char code
+    const code = generateShortCode() + generateShortCode();
     shortLinks[code] = decoded;
     const short = baseUrl + '/s/' + code;
-    console.log('Full link: ' + decoded);
-    console.log('Short link: ' + short);
+    console.log('Wrapped long URL as: ' + short);
     return short;
   }
   return decoded;

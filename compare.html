@@ -299,25 +299,31 @@
 <script>
   const BACKEND_URL = 'https://extrape-affiliate.onrender.com';
 
-  // Real store logos from official sources
+  // Store logos using Google favicon service — most reliable source
   const LOGOS = {
-    'Amazon':    'https://logo.clearbit.com/amazon.in',
-    'Flipkart':  'https://logo.clearbit.com/flipkart.com',
-    'Myntra':    'https://logo.clearbit.com/myntra.com',
-    'Ajio':      'https://logo.clearbit.com/ajio.com',
-    'Nykaa':     'https://logo.clearbit.com/nykaa.com',
-    'TataCliq':  'https://logo.clearbit.com/tatacliq.com',
-    'Croma':     'https://logo.clearbit.com/croma.com',
-    'Snapdeal':  'https://logo.clearbit.com/snapdeal.com',
-    'Meesho':    'https://logo.clearbit.com/meesho.com',
-    'JioMart':   'https://logo.clearbit.com/jiomart.com',
-    'BigBasket': 'https://logo.clearbit.com/bigbasket.com',
-    'FirstCry':  'https://logo.clearbit.com/firstcry.com',
-    'Netmeds':   'https://logo.clearbit.com/netmeds.com',
-    'Lenskart':  'https://logo.clearbit.com/lenskart.com',
-    'Mamaearth': 'https://logo.clearbit.com/mamaearth.in',
-    'Boat':      'https://logo.clearbit.com/boat-lifestyle.com',
-    'Pepperfry': 'https://logo.clearbit.com/pepperfry.com',
+    'Amazon':    'https://www.google.com/s2/favicons?sz=64&domain=amazon.in',
+    'Flipkart':  'https://www.google.com/s2/favicons?sz=64&domain=flipkart.com',
+    'Myntra':    'https://www.google.com/s2/favicons?sz=64&domain=myntra.com',
+    'Ajio':      'https://www.google.com/s2/favicons?sz=64&domain=ajio.com',
+    'Nykaa':     'https://www.google.com/s2/favicons?sz=64&domain=nykaa.com',
+    'TataCliq':  'https://www.google.com/s2/favicons?sz=64&domain=tatacliq.com',
+    'Croma':     'https://www.google.com/s2/favicons?sz=64&domain=croma.com',
+    'Snapdeal':  'https://www.google.com/s2/favicons?sz=64&domain=snapdeal.com',
+    'Meesho':    'https://www.google.com/s2/favicons?sz=64&domain=meesho.com',
+    'JioMart':   'https://www.google.com/s2/favicons?sz=64&domain=jiomart.com',
+    'BigBasket': 'https://www.google.com/s2/favicons?sz=64&domain=bigbasket.com',
+    'FirstCry':  'https://www.google.com/s2/favicons?sz=64&domain=firstcry.com',
+    'Netmeds':   'https://www.google.com/s2/favicons?sz=64&domain=netmeds.com',
+    'Lenskart':  'https://www.google.com/s2/favicons?sz=64&domain=lenskart.com',
+    'Mamaearth': 'https://www.google.com/s2/favicons?sz=64&domain=mamaearth.in',
+    'Boat':      'https://www.google.com/s2/favicons?sz=64&domain=boat-lifestyle.com',
+    'Pepperfry': 'https://www.google.com/s2/favicons?sz=64&domain=pepperfry.com',
+    'MakeMyTrip':'https://www.google.com/s2/favicons?sz=64&domain=makemytrip.com',
+    'ClearTrip': 'https://www.google.com/s2/favicons?sz=64&domain=cleartrip.com',
+    'Reliance':  'https://www.google.com/s2/favicons?sz=64&domain=reliancedigital.in',
+    'Vijay Sales':'https://www.google.com/s2/favicons?sz=64&domain=vijaysales.com',
+    'Shopsy':    'https://www.google.com/s2/favicons?sz=64&domain=shopsy.in',
+    'Boomdeal':  'https://www.google.com/s2/favicons?sz=64&domain=boomdeal.in',
   };
 
   const FALLBACK_ICONS = {
@@ -459,16 +465,25 @@
 
   // Use our backend proxy to bypass CORS
   async function fetchFlashPrices(url) {
+    console.log('Fetching flash prices for:', url);
     const searchRes = await fetch(BACKEND_URL + '/flash/search?url=' + encodeURIComponent(url));
-    if (!searchRes.ok) throw new Error('Flash search failed');
+    if (!searchRes.ok) throw new Error('Flash search failed: ' + searchRes.status);
     const searchData = await searchRes.json();
+    console.log('Flash search response:', JSON.stringify(searchData).substring(0, 300));
 
-    const productId = searchData.productId || searchData.id || searchData.data?.id;
-    if (!productId) throw new Error('No product ID from flash');
+    // Try all possible ID fields in flash.co response
+    const productId = searchData.productId || searchData.id ||
+      searchData.data?.id || searchData.result?.id ||
+      searchData.slug || searchData.data?.slug;
 
+    if (!productId) throw new Error('No product ID in flash response: ' + JSON.stringify(searchData).substring(0, 200));
+
+    console.log('Flash product ID:', productId);
     const compareRes = await fetch(BACKEND_URL + '/flash/compare/' + productId);
-    if (!compareRes.ok) throw new Error('Flash compare failed');
-    return await compareRes.json();
+    if (!compareRes.ok) throw new Error('Flash compare failed: ' + compareRes.status);
+    const compareData = await compareRes.json();
+    console.log('Flash compare response:', JSON.stringify(compareData).substring(0, 300));
+    return compareData;
   }
 
   // Per-store affiliate link generation
@@ -496,24 +511,32 @@
     let pool = [];
 
     if (flashData) {
-      // Try various flash.co response shapes
-      const stores = flashData.stores || flashData.data?.stores || flashData.prices || [];
+      // Try all possible flash.co response shapes
+      const stores =
+        flashData.stores ||
+        flashData.data?.stores ||
+        flashData.prices ||
+        flashData.result?.stores ||
+        flashData.comparisons ||
+        flashData.data?.comparisons ||
+        [];
+
+      console.log('Flash stores count:', stores.length);
+
       if (stores.length > 0) {
         pool = stores.map(s => {
-          const name   = s.storeName || s.name || s.store || 'Unknown';
-          const price  = parseInt(s.price || s.amount || s.mrp || 0);
-          const storeUrl = s.url || s.link || s.productUrl || sourceUrl;
-          const isSource = name === sourceName;
+          const name   = s.storeName || s.name || s.store || s.retailer || 'Unknown';
+          const price  = parseInt((s.price || s.amount || s.mrp || s.salePrice || '0').toString().replace(/[^0-9]/g,''));
+          const storeUrl = s.url || s.link || s.productUrl || s.buyUrl || sourceUrl;
+          const isSource = name.toLowerCase() === sourceName.toLowerCase();
           const supported = EXTRAPE_SUPPORTED.includes(name);
           return {
-            name, price, isSource,
-            storeUrl,
-            // Start with source affiliate link; per-store links load async
+            name, price, isSource, storeUrl,
             link: isSource ? affiliateLink : storeUrl,
             affiliateLink: isSource ? affiliateLink : null,
             supported,
           };
-        }).filter(s => s.price > 0);
+        }).filter(s => s.price > 0 && s.name !== 'Unknown');
       }
     }
 
