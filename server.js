@@ -183,3 +183,5 @@ app.get('/', (req, res) => res.send('Smart Pick Deals backend running ✅'));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('Server on port ' + PORT + ' — ready instantly!'));
+
+
