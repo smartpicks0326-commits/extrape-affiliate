@@ -299,31 +299,31 @@
 <script>
   const BACKEND_URL = 'https://extrape-affiliate.onrender.com';
 
-  // Store logos using Google favicon service — most reliable source
+  // Direct store favicon/logo URLs — verified working
   const LOGOS = {
-    'Amazon':    'https://www.google.com/s2/favicons?sz=64&domain=amazon.in',
-    'Flipkart':  'https://www.google.com/s2/favicons?sz=64&domain=flipkart.com',
-    'Myntra':    'https://www.google.com/s2/favicons?sz=64&domain=myntra.com',
-    'Ajio':      'https://www.google.com/s2/favicons?sz=64&domain=ajio.com',
-    'Nykaa':     'https://www.google.com/s2/favicons?sz=64&domain=nykaa.com',
-    'TataCliq':  'https://www.google.com/s2/favicons?sz=64&domain=tatacliq.com',
-    'Croma':     'https://www.google.com/s2/favicons?sz=64&domain=croma.com',
-    'Snapdeal':  'https://www.google.com/s2/favicons?sz=64&domain=snapdeal.com',
-    'Meesho':    'https://www.google.com/s2/favicons?sz=64&domain=meesho.com',
-    'JioMart':   'https://www.google.com/s2/favicons?sz=64&domain=jiomart.com',
-    'BigBasket': 'https://www.google.com/s2/favicons?sz=64&domain=bigbasket.com',
-    'FirstCry':  'https://www.google.com/s2/favicons?sz=64&domain=firstcry.com',
-    'Netmeds':   'https://www.google.com/s2/favicons?sz=64&domain=netmeds.com',
-    'Lenskart':  'https://www.google.com/s2/favicons?sz=64&domain=lenskart.com',
-    'Mamaearth': 'https://www.google.com/s2/favicons?sz=64&domain=mamaearth.in',
-    'Boat':      'https://www.google.com/s2/favicons?sz=64&domain=boat-lifestyle.com',
-    'Pepperfry': 'https://www.google.com/s2/favicons?sz=64&domain=pepperfry.com',
-    'MakeMyTrip':'https://www.google.com/s2/favicons?sz=64&domain=makemytrip.com',
-    'ClearTrip': 'https://www.google.com/s2/favicons?sz=64&domain=cleartrip.com',
-    'Reliance':  'https://www.google.com/s2/favicons?sz=64&domain=reliancedigital.in',
-    'Vijay Sales':'https://www.google.com/s2/favicons?sz=64&domain=vijaysales.com',
-    'Shopsy':    'https://www.google.com/s2/favicons?sz=64&domain=shopsy.in',
-    'Boomdeal':  'https://www.google.com/s2/favicons?sz=64&domain=boomdeal.in',
+    'Amazon':     'https://www.amazon.in/favicon.ico',
+    'Flipkart':   'https://static-assets-web.flixcart.com/fk-p-linchpin-web/fk-icons/v2/favicon-32x32.png',
+    'Myntra':     'https://constant.myntassets.com/web/assets/img/favicon.ico',
+    'Ajio':       'https://assets.ajio.com/static/img/Ajio-Favicon.png',
+    'Nykaa':      'https://adn-static1.nykaa.com/nykdesignstudio-images/pub/media/favicon/stores/2/fav_nykaa_new.png',
+    'TataCliq':   'https://www.tatacliq.com/favicon.ico',
+    'Croma':      'https://media.croma.com/image/upload/v1637759004/Croma%20Assets/CMS/Category%20Banners/favicon_b7jkfc.png',
+    'Snapdeal':   'https://www.snapdeal.com/favicon.ico',
+    'Meesho':     'https://images.meesho.com/images/logo/1x/logo_hd.webp',
+    'JioMart':    'https://www.jiomart.com/images/favicon/32X32/apple-touch-icon.png',
+    'BigBasket':  'https://www.bigbasket.com/favicon.ico',
+    'FirstCry':   'https://static.fcimg.in/hindi/favicon.ico',
+    'Netmeds':    'https://www.netmeds.com/images/cms/favicon/apple-touch-icon.png',
+    'Lenskart':   'https://static1.lenskart.com/media/desktop/img/owndays/favicon.png',
+    'Mamaearth':  'https://www.mamaearth.in/favicon.ico',
+    'Boat':       'https://www.boat-lifestyle.com/cdn/shop/files/favicon_boat_32x32.png',
+    'Pepperfry':  'https://ii1.pepperfry.com/media/favicon.ico',
+    'MakeMyTrip': 'https://imgak.mmtcdn.com/pwa_v3/pwa_commons_assets/desktop/favicon-32x32.png',
+    'ClearTrip':  'https://www.cleartrip.com/favicon.ico',
+    'Shopsy':     'https://shopsy.in/favicon.ico',
+    'Boomdeal':   'https://boomdeal.in/favicon.ico',
+    'Reliance':   'https://www.reliancedigital.in/favicon.ico',
+    'Vijay Sales':'https://www.vijaysales.com/favicon.ico',
   };
 
   const FALLBACK_ICONS = {
@@ -355,12 +355,12 @@
     const url = LOGOS[storeName];
     const fb  = FALLBACK_ICONS[storeName] || '🏪';
     if (url) {
-      return `<img src="${url}" width="${size}" height="${size}"
-        onerror="this.style.display='none';this.nextElementSibling.style.display='block'"
-        style="object-fit:contain; border-radius:4px;"/>
-        <span class="fallback" style="display:none">${fb}</span>`;
+      // Show fallback emoji if image fails to load
+      return '<img src="' + url + '" width="' + size + '" height="' + size + '" '
+        + 'style="object-fit:contain;border-radius:4px;" '
+        + 'onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'' + fb + '',className:'fallback'}))" />';
     }
-    return `<span class="fallback">${fb}</span>`;
+    return '<span class="fallback">' + fb + '</span>';
   }
 
   function detectStore(url) {

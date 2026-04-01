@@ -149,22 +149,34 @@ async function convertUrl(productUrl) {
   const decoded = decodeURIComponent(affiliateLink.trim());
   console.log('ExtraPe returned: ' + decoded);
 
-  // If ExtraPe already returned a native short link (fkrt.co, amzn.in etc.) return as-is
-  const nativeShortDomains = ['fkrt.co', 'amzn.in', 'amzn.to', 'clnk.in', 'myntra.com/p'];
-  const isAlreadyShort = nativeShortDomains.some(d => decoded.includes(d)) || decoded.length < 60;
-
-  if (isAlreadyShort) {
+  // If ExtraPe returned a native short link (fkrt.co etc.) — return as-is
+  const nativeShortDomains = ['fkrt.co', 'clnk.in'];
+  if (nativeShortDomains.some(d => decoded.includes(d)) || decoded.length < 50) {
     console.log('Native short link — returning directly: ' + decoded);
     return decoded;
   }
 
-  // Long URL with tags (Amazon full URL etc.) — wrap in our /s/ code to hide tags
+  // For Amazon and other long URLs with tags — shorten via TinyURL (free, no auth)
+  try {
+    const tinyRes = await fetch('https://tinyurl.com/api-create.php?url=' + encodeURIComponent(decoded));
+    if (tinyRes.ok) {
+      const tinyUrl = await tinyRes.text();
+      if (tinyUrl.startsWith('https://tinyurl.com')) {
+        console.log('TinyURL created: ' + tinyUrl);
+        return tinyUrl.trim();
+      }
+    }
+  } catch(e) {
+    console.log('TinyURL failed, using /s/ fallback:', e.message);
+  }
+
+  // Final fallback: our own /s/ short code
   const baseUrl = process.env.BACKEND_URL || '';
   if (baseUrl) {
     const code = generateShortCode() + generateShortCode();
     shortLinks[code] = decoded;
     const short = baseUrl + '/s/' + code;
-    console.log('Wrapped long URL as: ' + short);
+    console.log('Fallback short link: ' + short);
     return short;
   }
   return decoded;
@@ -227,38 +239,89 @@ app.get('/s/:code', (req, res) => {
 });
 
 // ── Flash.co proxy — server-side to bypass CORS ──
+const FLASH_HEADERS = {
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+  'Referer': 'https://flash.co/',
+  'Origin': 'https://flash.co',
+  'sec-fetch-site': 'same-origin',
+  'sec-fetch-mode': 'cors',
+};
+
 app.get('/flash/search', async (req, res) => {
   const url = req.query.url;
   if (!url) return res.status(400).json({ error: 'No URL' });
   try {
-    const r = await fetch('https://flash.co/api/product-search?url=' + encodeURIComponent(url), {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-        'Referer': 'https://flash.co/',
-      }
-    });
-    const data = await r.json();
-    res.json(data);
+    // Try multiple flash.co endpoint patterns
+    const endpoints = [
+      'https://flash.co/api/product-search?url=' + encodeURIComponent(url),
+      'https://flash.co/api/search?url=' + encodeURIComponent(url),
+      'https://flash.co/api/v1/product-search?url=' + encodeURIComponent(url),
+    ];
+    let lastError = null;
+    for (const endpoint of endpoints) {
+      try {
+        const r = await fetch(endpoint, { headers: FLASH_HEADERS });
+        const text = await r.text();
+        console.log('Flash search [' + endpoint + '] status:', r.status, 'body:', text.substring(0, 200));
+        if (r.ok) {
+          res.json(JSON.parse(text));
+          return;
+        }
+        lastError = 'Status ' + r.status + ': ' + text.substring(0, 100);
+      } catch(e) { lastError = e.message; }
+    }
+    res.status(500).json({ error: 'All flash endpoints failed: ' + lastError });
   } catch(e) {
     res.status(500).json({ error: e.message });
   }
 });
 
 app.get('/flash/compare/:id', async (req, res) => {
+  const id = req.params.id;
   try {
-    const r = await fetch('https://flash.co/api/product-compare/' + req.params.id, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-        'Referer': 'https://flash.co/',
-      }
-    });
-    const data = await r.json();
-    res.json(data);
+    const endpoints = [
+      'https://flash.co/api/product-compare/' + id,
+      'https://flash.co/api/product-details/' + id,
+      'https://flash.co/api/v1/product-compare/' + id,
+    ];
+    let lastError = null;
+    for (const endpoint of endpoints) {
+      try {
+        const r = await fetch(endpoint, { headers: FLASH_HEADERS });
+        const text = await r.text();
+        console.log('Flash compare [' + endpoint + '] status:', r.status, 'body:', text.substring(0, 200));
+        if (r.ok) {
+          res.json(JSON.parse(text));
+          return;
+        }
+        lastError = 'Status ' + r.status + ': ' + text.substring(0, 100);
+      } catch(e) { lastError = e.message; }
+    }
+    res.status(500).json({ error: 'All flash compare endpoints failed: ' + lastError });
   } catch(e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── Flash debug endpoint — call this to see raw flash.co response ──
+app.get('/flash/debug', async (req, res) => {
+  const testUrl = req.query.url || 'https://www.flipkart.com/apple-iphone-15/p/itm6ac6485515ae4';
+  const results = {};
+  const endpoints = [
+    'https://flash.co/api/product-search?url=' + encodeURIComponent(testUrl),
+    'https://flash.co/api/search?url=' + encodeURIComponent(testUrl),
+  ];
+  for (const ep of endpoints) {
+    try {
+      const r = await fetch(ep, { headers: FLASH_HEADERS });
+      results[ep] = { status: r.status, body: (await r.text()).substring(0, 500) };
+    } catch(e) {
+      results[ep] = { error: e.message };
+    }
+  }
+  res.json(results);
 });
 
 app.get('/', (req, res) => res.send('Smart Pick Deals backend running ✅'));
