@@ -146,15 +146,11 @@ async function convertUrl(productUrl) {
     throw new Error('No affiliate link in response: ' + JSON.stringify(data));
   }
 
+  // ExtraPe already returns native short URLs (fkrt.co, amzn.in etc.)
+  // Just decode and return directly - no wrapping needed
   const decoded = decodeURIComponent(affiliateLink.trim());
-
-  // Create a clean short link that hides affiliate tags
-  const baseUrl = process.env.BACKEND_URL || '';
-  const shortLink = baseUrl ? createShortLink(decoded, baseUrl) : decoded;
-
   console.log('Done: ' + decoded);
-  console.log('Short link: ' + shortLink);
-  return shortLink;
+  return decoded;
 }
 
 // ── Queue Processor ──

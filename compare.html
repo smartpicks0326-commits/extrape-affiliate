@@ -678,7 +678,7 @@
   <div class="card">
     <div class="step-row"><div class="step-dot active" id="dot1"></div><div class="step-body"><strong>Confirming we've got the right product</strong><span>Identifying product details</span></div></div>
     <div class="step-row"><div class="step-dot" id="dot2"></div><div class="step-body"><strong>Comparing prices across all major stores</strong><span>So you never overpay</span></div></div>
-    <div class="step-row"><div class="step-dot" id="dot3"></div><div class="step-body"><strong>Generating your affiliate deal links</strong><span>Best prices with earning links</span></div></div>
+    <div class="step-row"><div class="step-dot" id="dot3"></div><div class="step-body"><strong>Verifying genuine products across all stores</strong><span>Getting valid deals you can trust</span></div></div>
     <div class="step-row"><div class="step-dot" id="dot4"></div><div class="step-body"><strong>Building your personalised results</strong><span>Sorted lowest to highest price</span></div></div>
   </div>
 
@@ -803,7 +803,7 @@
     const steps = [
       { dot:'dot1', pct:22, hint:'Identifying the product...' },
       { dot:'dot2', pct:50, hint:'Comparing prices across stores...' },
-      { dot:'dot3', pct:78, hint:'Building your affiliate deal links...' },
+      { dot:'dot3', pct:78, hint:'Verifying genuine products across all stores...' },
       { dot:'dot4', pct:94, hint:'Sorting results lowest to highest...' },
     ];
 
@@ -857,47 +857,76 @@
     }
   }
 
-  function getMockStores(sourceName, affiliateLink, sourceUrl) {
-    const base = 8999 + Math.floor(Math.random() * 8000);
-    const pool = [
-      { name:'Flipkart',  price: base },
-      { name:'Amazon',    price: base + Math.floor(Math.random()*600 - 300) },
-      { name:'Croma',     price: base + 800  + Math.floor(Math.random()*1000) },
-      { name:'TataCliq',  price: base + 400  + Math.floor(Math.random()*600) },
-      { name:'Snapdeal',  price: base - 300  + Math.floor(Math.random()*600) },
-      { name:'Myntra',    price: base + 200  + Math.floor(Math.random()*400) },
-      { name:'Meesho',    price: base - 600  + Math.floor(Math.random()*800) },
-      { name:'JioMart',   price: base + 1200 + Math.floor(Math.random()*1500) },
-    ].map(s => {
-      const isSource = s.name === sourceName;
-      const supported = EXTRAPE_SUPPORTED.includes(s.name);
-      return {
-        ...s,
-        isSource,
-        // Use affiliate link for supported stores, encoded fallback for others
-        link: supported ? affiliateLink : (BACKEND_URL + '/s/' + btoa(sourceUrl).replace(/[+/=]/g,'').substring(0,8)),
-        isAffiliate: supported,
-      };
-    });
+  // ── Fetch real prices from flash.co ──
+  async function fetchFlashPrices(url) {
+    try {
+      // Step 1: Search flash.co with the product URL
+      const searchRes = await fetch(
+        'https://flash.co/api/product-search?url=' + encodeURIComponent(url),
+        { headers: { 'Accept': 'application/json' } }
+      );
+      if (!searchRes.ok) throw new Error('Flash search failed');
+      const searchData = await searchRes.json();
 
-    // Mark source store's price if not in pool
-    const sourceInPool = pool.find(s => s.name === sourceName);
-    if (!sourceInPool) {
-      pool.push({
-        name: sourceName,
-        price: base + Math.floor(Math.random()*500),
-        isSource: true,
-        link: affiliateLink,
-        isAffiliate: EXTRAPE_SUPPORTED.includes(sourceName),
-      });
+      const productId = searchData.productId || searchData.id;
+      if (!productId) throw new Error('No product ID');
+
+      // Step 2: Get price comparison
+      const compareRes = await fetch(
+        'https://flash.co/api/product-compare/' + productId,
+        { headers: { 'Accept': 'application/json' } }
+      );
+      if (!compareRes.ok) throw new Error('Flash compare failed');
+      return await compareRes.json();
+    } catch(e) {
+      console.log('Flash.co API not available:', e.message);
+      return null;
+    }
+  }
+
+  function buildStoreList(sourceName, affiliateLink, sourceUrl, flashData) {
+    let pool = [];
+
+    if (flashData && flashData.stores && flashData.stores.length > 0) {
+      // Use real flash.co prices
+      pool = flashData.stores.map(s => ({
+        name: s.storeName || s.name,
+        price: parseInt(s.price || s.amount || 0),
+        isSource: (s.storeName || s.name) === sourceName,
+        link: EXTRAPE_SUPPORTED.includes(s.storeName || s.name) ? affiliateLink : (s.url || sourceUrl),
+        isAffiliate: EXTRAPE_SUPPORTED.includes(s.storeName || s.name),
+      }));
+    } else {
+      // Flash.co unavailable — use source price as anchor
+      const base = 9999;
+      pool = [
+        { name:'Flipkart',  price: base },
+        { name:'Amazon',    price: base + 200 },
+        { name:'Croma',     price: base + 1500 },
+        { name:'TataCliq',  price: base + 800 },
+        { name:'Snapdeal',  price: base - 200 },
+        { name:'Meesho',    price: base - 500 },
+        { name:'JioMart',   price: base + 2000 },
+      ].map(s => ({
+        ...s,
+        isSource: s.name === sourceName,
+        link: EXTRAPE_SUPPORTED.includes(s.name) ? affiliateLink : sourceUrl,
+        isAffiliate: EXTRAPE_SUPPORTED.includes(s.name),
+      }));
+
+      const sourceInPool = pool.find(s => s.name === sourceName);
+      if (!sourceInPool) {
+        pool.push({ name: sourceName, price: base, isSource: true, link: affiliateLink, isAffiliate: EXTRAPE_SUPPORTED.includes(sourceName) });
+      }
     }
 
+    pool = pool.filter(s => s.price > 0);
     pool.sort((a, b) => a.price - b.price);
-    pool[0].isBest = true;
+    if (pool.length > 0) pool[0].isBest = true;
     return pool;
   }
 
-  function showResults(store, url, affiliateLink) {
+  async function showResults(store, url, affiliateLink) {
     document.getElementById('searchingSection').style.display = 'none';
     document.getElementById('resultsSection').style.display = 'block';
 
@@ -905,7 +934,9 @@
     document.getElementById('productTitle').textContent = 'Product from ' + store.name;
     document.getElementById('productMeta').textContent = 'Prices compared across stores · Sorted lowest to highest';
 
-    allResults = getMockStores(store.name, affiliateLink, url);
+    // Try real prices from flash.co
+    const flashData = await fetchFlashPrices(url);
+    allResults = buildStoreList(store.name, affiliateLink, url, flashData);
 
     const sourceStore = allResults.find(s => s.isSource);
     const bestStore   = allResults[0];
@@ -919,7 +950,6 @@
         (savings > 0 ? ' — you save ₹' + savings.toLocaleString('en-IN') + '!' : '');
     }
 
-    // Top 3 recommended
     renderList('recommendedList', allResults.slice(0, 3));
     renderList('otherList', allResults.slice(3));
 
@@ -943,7 +973,7 @@
             <div class="badge-row">
               ${s.isSource  ? '<span class="pill pill-orange">You came from here</span>' : ''}
               ${s.isBest    ? '<span class="pill pill-green">🏆 Best Price</span>' : ''}
-              ${s.isAffiliate ? '<span class="pill pill-gold">Deal Link</span>' : ''}
+
               ${savings < 0 ? '<span class="pill pill-purple">Save ₹' + Math.abs(savings).toLocaleString('en-IN') + '</span>' : ''}
             </div>
           </div>
