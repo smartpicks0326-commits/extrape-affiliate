@@ -146,10 +146,18 @@ async function convertUrl(productUrl) {
     throw new Error('No affiliate link in response: ' + JSON.stringify(data));
   }
 
-  // ExtraPe already returns native short URLs (fkrt.co, amzn.in etc.)
-  // Just decode and return directly - no wrapping needed
   const decoded = decodeURIComponent(affiliateLink.trim());
-  console.log('Done: ' + decoded);
+
+  // Wrap in our short link to hide affiliate tags from users
+  const baseUrl = process.env.BACKEND_URL || '';
+  if (baseUrl) {
+    const code = generateShortCode() + generateShortCode(); // 12-char code
+    shortLinks[code] = decoded;
+    const short = baseUrl + '/s/' + code;
+    console.log('Full link: ' + decoded);
+    console.log('Short link: ' + short);
+    return short;
+  }
   return decoded;
 }
 
@@ -206,6 +214,41 @@ app.get('/s/:code', (req, res) => {
     res.redirect(301, url);
   } else {
     res.status(404).send('Link not found or expired.');
+  }
+});
+
+// ── Flash.co proxy — server-side to bypass CORS ──
+app.get('/flash/search', async (req, res) => {
+  const url = req.query.url;
+  if (!url) return res.status(400).json({ error: 'No URL' });
+  try {
+    const r = await fetch('https://flash.co/api/product-search?url=' + encodeURIComponent(url), {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Referer': 'https://flash.co/',
+      }
+    });
+    const data = await r.json();
+    res.json(data);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/flash/compare/:id', async (req, res) => {
+  try {
+    const r = await fetch('https://flash.co/api/product-compare/' + req.params.id, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Referer': 'https://flash.co/',
+      }
+    });
+    const data = await r.json();
+    res.json(data);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
