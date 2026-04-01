@@ -462,6 +462,20 @@
         <div class="result-box">
           <span class="result-link" id="affiliateLink"></span>
           <button id="copyBtn" onclick="copyLink()">Copy</button>
+          <button id="openBtn" onclick="openLink()" style="
+            background: rgba(255,107,43,0.12);
+            color: var(--accent2);
+            border: 1px solid rgba(255,107,43,0.25);
+            font-family: 'Syne', sans-serif;
+            font-weight: 600;
+            font-size: 12px;
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background 0.2s;
+            flex-shrink: 0;
+          ">Open ↗</button>
         </div>
       </div>
 
@@ -640,6 +654,11 @@
         btn.classList.add('copied');
         setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
       });
+    }
+
+    function openLink() {
+      const link = document.getElementById('affiliateLink').textContent;
+      window.open(link, '_blank');
     }
 
     document.getElementById('productUrl').addEventListener('keydown', e => {

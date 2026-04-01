@@ -130,7 +130,7 @@ async function convertUrl(productUrl) {
   }
 
   console.log('Done: ' + affiliateLink);
-  return affiliateLink.trim();
+  return decodeURIComponent(affiliateLink.trim());
 }
 
 // ── Queue Processor ──
