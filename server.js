@@ -51,7 +51,7 @@ let isProcessing = false;
 
 function createRequest(url, store) {
   const id = uuidv4();
-  requests[id] = { id, url, store, state:'pending', position:0, affiliateLink:null, error:null, createdAt:Date.now() };
+  requests[id] = { id, url, store, state:'pending', position:0, affiliateLink:null, displayLink:null, error:null, createdAt:Date.now() };
   queue.push(id);
   updatePositions();
   return id;
@@ -66,7 +66,10 @@ function getStatus(id) {
   if (!r) return null;
   const pos = r.state === 'pending' ? r.position : 0;
   return { id:r.id, state:r.state, position:pos, queueLength:queue.length,
-    estimatedSeconds:pos * AVG_SECONDS_PER_REQUEST, affiliateLink:r.affiliateLink, error:r.error };
+    estimatedSeconds:pos * AVG_SECONDS_PER_REQUEST,
+    affiliateLink: r.affiliateLink,
+    displayLink:   r.displayLink || r.affiliateLink,
+    error: r.error };
 }
 
 setInterval(() => {
@@ -90,20 +93,28 @@ function cleanAffiliateUrl(url, originalInput) {
     // Any short URL under 55 chars — return as-is
     if (url.length < 55) return url;
 
-    // ── Long URLs with visible tags — extract ASIN and make clean Amazon short link ──
+    // ── Long Amazon URLs with visible tags ──
     if (host.includes('amazon')) {
       const dpMatch = parsed.pathname.match(/\/dp\/([A-Z0-9]{10})/i);
-      const tag = parsed.searchParams.get('tag');
-      if (dpMatch && tag) {
-        // Return clean amazon.in/dp/ASIN?tag=xxx — short and looks native Amazon
-        return 'https://www.amazon.in/dp/' + dpMatch[1] + '?tag=' + tag;
+      if (dpMatch) {
+        const asin = dpMatch[1];
+        const code = makeShortCode();
+        shortLinks[code] = url; // full URL with tag stored server-side
+        const frontendUrl = process.env.FRONTEND_URL || BACKEND_URL;
+        // Use frontend domain for the redirect link — looks branded, not backend
+        const shortLink = frontendUrl + '/go/' + code;
+        return {
+          displayUrl: shortLink,  // what user sees & copies — branded clean URL
+          clickUrl:   shortLink   // same URL — always earns commission
+        };
       }
     }
 
-    // ── Other long URLs — wrap in /s/ short code ──
+    // ── Other long URLs — use frontend branded short link ──
     const code = makeShortCode();
     shortLinks[code] = url;
-    return BACKEND_URL + '/s/' + code;
+    const frontendUrl = process.env.FRONTEND_URL || BACKEND_URL;
+    return frontendUrl + '/go/' + code;
 
   } catch(e) { return url; }
 }
@@ -138,9 +149,17 @@ async function convertUrl(productUrl) {
   const decoded = decodeURIComponent(raw.trim());
   console.log('ExtraPe raw: ' + decoded);
 
-  const final = cleanAffiliateUrl(decoded, productUrl);
-  console.log('Final link: ' + final);
-  return final;
+  const result = cleanAffiliateUrl(decoded, productUrl);
+
+  // If result is an object (Amazon dual-link), return both displayUrl and clickUrl
+  if (result && typeof result === 'object') {
+    console.log('Display URL: ' + result.displayUrl);
+    console.log('Click URL: ' + result.clickUrl);
+    return result; // { displayUrl, clickUrl }
+  }
+
+  console.log('Final link: ' + result);
+  return result;
 }
 
 // ── Queue Processor ──
@@ -153,7 +172,15 @@ async function processQueue() {
   if (!req) { isProcessing = false; processQueue(); return; }
   req.state = 'processing';
   try {
-    req.affiliateLink = await convertUrl(req.url);
+    const linkResult = await convertUrl(req.url);
+    // Handle dual-link object (Amazon) vs plain string
+    if (linkResult && typeof linkResult === 'object') {
+      req.affiliateLink = linkResult.clickUrl;   // actual click URL with tag
+      req.displayLink   = linkResult.displayUrl; // clean URL shown to user
+    } else {
+      req.affiliateLink = linkResult;
+      req.displayLink   = linkResult;
+    }
     req.state = 'done';
   } catch(err) {
     req.state = 'error'; req.error = err.message;
@@ -277,6 +304,20 @@ app.get('/s/:code', (req, res) => {
   const url = shortLinks[req.params.code];
   if (url) res.redirect(301, url);
   else res.status(404).send('Link not found or expired.');
+});
+
+// ── /go/:code — same as /s/ but served from branded frontend domain via proxy ──
+app.get('/go/:code', (req, res) => {
+  const url = shortLinks[req.params.code];
+  if (url) res.redirect(301, url);
+  else res.status(404).send('Link not found or expired.');
+});
+
+// ── API: resolve a /go/ code (called by Cloudflare Pages function) ──
+app.get('/resolve/:code', (req, res) => {
+  const url = shortLinks[req.params.code];
+  if (url) res.json({ url });
+  else res.status(404).json({ error: 'Not found' });
 });
 
 app.get('/', (req, res) => res.send('Smart Pick Deals backend ✅'));

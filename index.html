@@ -471,6 +471,7 @@
         <div class="result-box">
           <span class="result-link" id="affiliateLink"></span>
           <button id="copyBtn" onclick="copyLink()">Copy</button>
+          <button id="openBtn" onclick="openLink()" style="background:rgba(255,107,43,0.12);color:var(--accent2);border:1px solid rgba(255,107,43,0.25);font-family:'Syne',sans-serif;font-weight:600;font-size:12px;padding:8px 16px;border-radius:8px;cursor:pointer;white-space:nowrap;transition:background 0.2s;flex-shrink:0;">Open ↗</button>
         </div>
       </div>
 
@@ -575,7 +576,11 @@
           document.getElementById('loader').classList.remove('show');
           document.getElementById('productUrl').disabled = false;
           document.getElementById('convertBtn').disabled = false;
-          document.getElementById('affiliateLink').textContent = data.affiliateLink;
+          // Show clean display URL, store actual click URL separately
+          const displayUrl = data.displayLink || data.affiliateLink;
+          const clickUrl   = data.affiliateLink;
+          document.getElementById('affiliateLink').textContent = displayUrl;
+          document.getElementById('affiliateLink').dataset.clickUrl = clickUrl;
           document.getElementById('result').classList.add('show');
 
         } else if (data.state === 'error') {
@@ -642,13 +647,21 @@
     }
 
     function copyLink() {
-      const link = document.getElementById('affiliateLink').textContent;
+      const el   = document.getElementById('affiliateLink');
+      // Always copy the commission-earning link (displayUrl = clickUrl now)
+      const link = el.dataset.clickUrl || el.textContent.trim();
       const btn  = document.getElementById('copyBtn');
       navigator.clipboard.writeText(link).then(() => {
         btn.textContent = 'Copied!';
         btn.classList.add('copied');
         setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
       });
+    }
+
+    function openLink() {
+      const el   = document.getElementById('affiliateLink');
+      const link = el.dataset.clickUrl || el.textContent;
+      window.open(link, '_blank');
     }
 
     document.getElementById('productUrl').addEventListener('keydown', e => {
