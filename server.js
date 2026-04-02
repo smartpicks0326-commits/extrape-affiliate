@@ -80,26 +80,27 @@ function cleanAffiliateUrl(url, originalInput) {
     const parsed = new URL(url);
     const host = parsed.hostname;
 
-    // Amazon: keep only dp path + tag param → produces clean amazon.in/dp/XXXXX?tag=yyy
+    // ── Native short links ExtraPe returns — pass through directly ──
+    // Flipkart native: fkrt.co/xxxxx
+    if (host.includes('fkrt.co')) return url;
+
+    // Amazon native short links: amzn.in/d/xxx or amzn.to/xxx
+    if (host === 'amzn.in' || host === 'amzn.to') return url;
+
+    // Any short URL under 55 chars — return as-is
+    if (url.length < 55) return url;
+
+    // ── Long URLs with visible tags — extract ASIN and make clean Amazon short link ──
     if (host.includes('amazon')) {
       const dpMatch = parsed.pathname.match(/\/dp\/([A-Z0-9]{10})/i);
-      if (dpMatch) {
-        const tag = parsed.searchParams.get('tag');
-        const clean = 'https://www.amazon.in/dp/' + dpMatch[1] + (tag ? '?tag=' + tag : '');
-        // Wrap in /s/ to hide tag
-        const code = makeShortCode();
-        shortLinks[code] = clean;
-        return BACKEND_URL + '/s/' + code;
+      const tag = parsed.searchParams.get('tag');
+      if (dpMatch && tag) {
+        // Return clean amazon.in/dp/ASIN?tag=xxx — short and looks native Amazon
+        return 'https://www.amazon.in/dp/' + dpMatch[1] + '?tag=' + tag;
       }
     }
 
-    // Flipkart: already short (fkrt.co) — return as-is
-    if (host.includes('fkrt.co')) return url;
-
-    // Other native short links — return as-is
-    if (url.length < 55) return url;
-
-    // Everything else — wrap in /s/ short code
+    // ── Other long URLs — wrap in /s/ short code ──
     const code = makeShortCode();
     shortLinks[code] = url;
     return BACKEND_URL + '/s/' + code;
@@ -223,6 +224,35 @@ app.get('/flash/debug', async (req, res) => {
     } catch(e) { results[ep] = { error: e.message }; }
   }
   res.json(results);
+});
+
+// ── Debug: see raw ExtraPe output ──
+app.get('/test-link', async (req, res) => {
+  const url = req.query.url;
+  if (!url) return res.json({ error: 'Pass ?url=...' });
+  try {
+    const encodedUrl = encodeURIComponent(url);
+    const r = await fetch('https://www.extrape.com/handler/convertText', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json, text/plain, */*',
+        'Accesstoken': EXTRAPE_ACCESS_TOKEN,
+        'Content-Type': 'application/json',
+        'Origin': 'https://www.extrape.com',
+        'Referer': 'https://www.extrape.com/link-converter',
+        'Remembermetoken': EXTRAPE_REMEMBER_TOKEN,
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+      },
+      body: JSON.stringify({ inputText: encodedUrl, bitlyConvert: false, advanceMode: false })
+    });
+    const data = await r.json();
+    const raw = data.convertedText || data.outputText || data.result || data.link || data.url || JSON.stringify(data);
+    const decoded = decodeURIComponent(raw.trim());
+    const final = cleanAffiliateUrl(decoded, url);
+    res.json({ input: url, rawFromExtraPe: decoded, finalLink: final, fullResponse: data });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── Routes ──
