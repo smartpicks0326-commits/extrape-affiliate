@@ -190,68 +190,120 @@ async function processQueue() {
   }
 }
 
-// ── Flash.co proxy ──
-const FLASH_HEADERS = {
-  'Accept': 'application/json, text/plain, */*',
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
-  'Referer': 'https://flash.co/',
-  'Origin': 'https://flash.co',
-  'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
-};
+// ── SerpAPI Google Shopping — real prices across Indian stores ──
+// Get free API key at: https://serpapi.com (100 free searches/month)
+const SERP_API_KEY = process.env.SERP_API_KEY || '';
 
-async function flashFetch(url) {
-  const r = await fetch(url, { headers: FLASH_HEADERS });
-  const text = await r.text();
-  console.log('Flash [' + url.substring(0,80) + '] status:' + r.status + ' body:' + text.substring(0,200));
-  if (!r.ok) throw new Error('Flash ' + r.status + ': ' + text.substring(0,100));
-  return JSON.parse(text);
+app.get('/compare/search', async (req, res) => {
+  const { url, q } = req.query;
+  if (!url && !q) return res.status(400).json({ error: 'Pass ?url= or ?q=' });
+
+  if (!SERP_API_KEY) {
+    return res.status(503).json({ error: 'SERP_API_KEY not configured. Get a free key at serpapi.com', needsKey: true });
+  }
+
+  try {
+    // Build search query from URL or direct query
+    let searchQuery = q || '';
+    let productUrl = url || '';
+
+    // If URL provided, extract product name from it
+    if (url && !q) {
+      const parsed = new URL(url);
+      const path = parsed.pathname;
+      // Try to extract product name from URL path
+      const parts = path.split('/').filter(p => p && p.length > 3 && !p.match(/^[A-Z0-9]{10}$/));
+      searchQuery = parts.slice(0, 3).join(' ').replace(/-/g,' ').replace(/[^a-zA-Z0-9 ]/g,' ').trim();
+      if (!searchQuery || searchQuery.length < 5) searchQuery = 'product'; // fallback
+    }
+
+    console.log('Shopping search query:', searchQuery);
+
+    // Call SerpAPI Google Shopping India
+    const serpUrl = 'https://serpapi.com/search.json'
+      + '?engine=google_shopping'
+      + '&q=' + encodeURIComponent(searchQuery)
+      + '&gl=in'
+      + '&hl=en'
+      + '&location=India'
+      + '&api_key=' + SERP_API_KEY;
+
+    const r = await fetch(serpUrl);
+    if (!r.ok) throw new Error('SerpAPI error: ' + r.status);
+    const data = await r.json();
+
+    // Extract shopping results
+    const results = data.shopping_results || [];
+    console.log('SerpAPI returned', results.length, 'shopping results');
+
+    if (results.length === 0) {
+      return res.json({ stores: [], productName: searchQuery, query: searchQuery });
+    }
+
+    // Find the best matching product (first result)
+    const topProduct = results[0];
+
+    // Group results by store — find lowest price per store
+    const storeMap = {};
+    results.slice(0, 20).forEach(item => {
+      const storeName = normalizeStoreName(item.source || '');
+      if (!storeName) return;
+      const price = parseFloat((item.price || '0').replace(/[₹,\s]/g, '')) || 0;
+      if (!storeMap[storeName] || price < storeMap[storeName].price) {
+        storeMap[storeName] = {
+          name: storeName,
+          price,
+          url: item.link || item.product_link || '',
+          image: item.thumbnail || '',
+          productName: item.title || topProduct.title || searchQuery,
+        };
+      }
+    });
+
+    const stores = Object.values(storeMap)
+      .filter(s => s.price > 0)
+      .sort((a, b) => a.price - b.price);
+
+    return res.json({
+      stores,
+      productName: topProduct.title || searchQuery,
+      productImage: topProduct.thumbnail || '',
+      totalStores: stores.length,
+      query: searchQuery,
+    });
+
+  } catch(e) {
+    console.error('Compare search error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Normalize store names to match our known stores
+function normalizeStoreName(source) {
+  const s = source.toLowerCase();
+  if (s.includes('amazon')) return 'Amazon';
+  if (s.includes('flipkart')) return 'Flipkart';
+  if (s.includes('myntra')) return 'Myntra';
+  if (s.includes('ajio')) return 'Ajio';
+  if (s.includes('nykaa')) return 'Nykaa';
+  if (s.includes('tatacliq') || s.includes('tata cliq')) return 'TataCliq';
+  if (s.includes('croma')) return 'Croma';
+  if (s.includes('snapdeal')) return 'Snapdeal';
+  if (s.includes('meesho')) return 'Meesho';
+  if (s.includes('jiomart')) return 'JioMart';
+  if (s.includes('bigbasket')) return 'BigBasket';
+  if (s.includes('firstcry')) return 'FirstCry';
+  if (s.includes('netmeds')) return 'Netmeds';
+  if (s.includes('lenskart')) return 'Lenskart';
+  if (s.includes('reliance')) return 'Reliance Digital';
+  if (s.includes('vijay')) return 'Vijay Sales';
+  if (s.includes('shopsy')) return 'Shopsy';
+  if (s.includes('pepperfry')) return 'Pepperfry';
+  if (s.includes('boat')) return 'Boat';
+  if (s.includes('mamaearth')) return 'Mamaearth';
+  if (source.length > 2) return source; // keep unknown stores
+  return '';
 }
-
-app.get('/flash/search', async (req, res) => {
-  const url = req.query.url;
-  if (!url) return res.status(400).json({ error: 'No URL' });
-  const endpoints = [
-    'https://flash.co/api/product-search?url=' + encodeURIComponent(url),
-    'https://flash.co/api/search?url=' + encodeURIComponent(url),
-    'https://flash.co/api/v1/product-search?url=' + encodeURIComponent(url),
-    'https://flash.co/api/v2/product-search?url=' + encodeURIComponent(url),
-  ];
-  for (const ep of endpoints) {
-    try { return res.json(await flashFetch(ep)); } catch(e) { console.log('Tried:', ep, e.message); }
-  }
-  res.status(500).json({ error: 'Flash search unavailable' });
-});
-
-app.get('/flash/compare/:id', async (req, res) => {
-  const id = req.params.id;
-  const endpoints = [
-    'https://flash.co/api/product-compare/' + id,
-    'https://flash.co/api/product/' + id + '/compare',
-    'https://flash.co/api/product-details/' + id,
-    'https://flash.co/api/v1/product-compare/' + id,
-  ];
-  for (const ep of endpoints) {
-    try { return res.json(await flashFetch(ep)); } catch(e) { console.log('Tried:', ep, e.message); }
-  }
-  res.status(500).json({ error: 'Flash compare unavailable' });
-});
-
-app.get('/flash/debug', async (req, res) => {
-  const url = req.query.url || 'https://dl.flipkart.com/s/7PRWD6NNNN';
-  const results = {};
-  const eps = [
-    'https://flash.co/api/product-search?url=' + encodeURIComponent(url),
-    'https://flash.co/api/search?url=' + encodeURIComponent(url),
-    'https://flash.co/api/v1/product-search?url=' + encodeURIComponent(url),
-  ];
-  for (const ep of eps) {
-    try {
-      const r = await fetch(ep, { headers: FLASH_HEADERS });
-      results[ep] = { status: r.status, body: (await r.text()).substring(0, 600) };
-    } catch(e) { results[ep] = { error: e.message }; }
-  }
-  res.json(results);
-});
 
 // ── Debug: see raw ExtraPe output ──
 app.get('/test-link', async (req, res) => {

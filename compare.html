@@ -355,7 +355,7 @@
 
     // Run affiliate link + flash prices in parallel
     const linkP = genAffiliateLink(url, storeName);
-    const flashP = getFlashPrices(url).catch(() => null);
+    const priceP = getPriceData(url).catch(e => { console.log('Price fetch failed:', e.message); return null; });
 
     const steps = [
       { dot:'s1', pct:22, hint:'Identifying the product...' },
@@ -377,9 +377,9 @@
       await sleep(1500);
     }
 
-    let affiliateLink = url, flashData = null;
+    let affiliateLink = url, priceData = null;
     try { affiliateLink = await linkP; } catch(e) { console.log('Link error:', e.message); }
-    try { flashData = await flashP; } catch(e) {}
+    try { priceData = await priceP; } catch(e) {}
 
     // Finish
     const last = document.getElementById('s4');
@@ -389,7 +389,7 @@
     document.getElementById('rpHint').textContent = 'Done! Showing results.';
 
     await sleep(350);
-    showResults(storeName, url, affiliateLink, flashData);
+    showResults(storeName, url, affiliateLink, priceData);
   }
 
   async function genAffiliateLink(url, storeName) {
@@ -407,77 +407,58 @@
     }
   }
 
-  async function getFlashPrices(url) {
-    const sr = await fetch(BACKEND + '/flash/search?url=' + encodeURIComponent(url));
-    if (!sr.ok) throw new Error('search fail ' + sr.status);
-    const sd = await sr.json();
-    console.log('Flash search:', JSON.stringify(sd).substring(0,400));
-
-    const pid = sd.productId || sd.id || sd.data?.id || sd.result?.id || sd.slug || sd.data?.slug;
-    if (!pid) throw new Error('no productId: ' + JSON.stringify(sd).substring(0,200));
-
-    const cr = await fetch(BACKEND + '/flash/compare/' + pid);
-    if (!cr.ok) throw new Error('compare fail');
-    const cd = await cr.json();
-    console.log('Flash compare:', JSON.stringify(cd).substring(0,400));
-    return { ...cd, productId: pid };
+  // Get real prices via SerpAPI Google Shopping
+  async function getPriceData(url) {
+    const r = await fetch(BACKEND + '/compare/search?url=' + encodeURIComponent(url));
+    if (!r.ok) throw new Error('price search failed: ' + r.status);
+    const d = await r.json();
+    if (d.needsKey) throw new Error('SERP_API_KEY not configured');
+    console.log('Price data:', JSON.stringify(d).substring(0,400));
+    return d;
   }
 
-  function parseStores(flashData, srcName, affiliateLink, sourceUrl) {
-    // Try every possible response shape flash.co might use
-    const raw =
-      flashData?.stores ||
-      flashData?.data?.stores ||
-      flashData?.comparisons ||
-      flashData?.data?.comparisons ||
-      flashData?.prices ||
-      flashData?.result?.stores ||
-      flashData?.storeDetails ||
-      [];
-
-    console.log('Flash stores raw count:', raw.length, 'keys:', flashData ? Object.keys(flashData) : []);
+  function parseStores(priceData, srcName, affiliateLink, sourceUrl) {
+    const raw = priceData?.stores || [];
+    console.log('Stores from SerpAPI:', raw.length);
 
     if (raw.length > 0) {
       return raw.map(s => {
-        const name = s.storeName || s.name || s.store || s.retailer || s.merchant || 'Unknown';
-        const priceStr = (s.price || s.amount || s.salePrice || s.mrp || s.offerPrice || '0').toString().replace(/[₹,\s]/g,'');
-        const price = parseInt(priceStr) || 0;
-        const storeUrl = s.url || s.link || s.buyUrl || s.productUrl || s.storeUrl || sourceUrl;
-        const isSource = name.toLowerCase() === srcName.toLowerCase();
+        const isSource = s.name.toLowerCase() === srcName.toLowerCase();
         return {
-          name, price, storeUrl,
+          name: s.name,
+          price: s.price,
+          storeUrl: s.url || sourceUrl,
+          image: s.image || '',
           isSource,
-          extrapeOk: EXTRAPE_OK.includes(name),
-          link: isSource ? affiliateLink : storeUrl,
+          extrapeOk: EXTRAPE_OK.includes(s.name),
+          link: isSource ? affiliateLink : (s.url || sourceUrl),
           affiliateLink: isSource ? affiliateLink : null,
         };
-      }).filter(s => s.price > 0 && s.name !== 'Unknown');
+      }).filter(s => s.price > 0);
     }
 
-    // Fallback: best-effort static list
+    // Fallback if SerpAPI not configured
     return [
-      { name:'Flipkart', price:9999 },
-      { name:'Amazon',   price:10199 },
-      { name:'Croma',    price:11499 },
-      { name:'TataCliq', price:10799 },
-      { name:'Snapdeal', price:9799 },
-      { name:'Meesho',   price:9499 },
+      {name:'Flipkart', price:9999},
+      {name:'Amazon',   price:10199},
+      {name:'Croma',    price:11499},
+      {name:'TataCliq', price:10799},
+      {name:'Snapdeal', price:9799},
     ].map(s => ({
-      ...s, isSource: s.name === srcName,
-      storeUrl: sourceUrl,
-      extrapeOk: EXTRAPE_OK.includes(s.name),
-      link: EXTRAPE_OK.includes(s.name) ? affiliateLink : sourceUrl,
-      affiliateLink: EXTRAPE_OK.includes(s.name) ? affiliateLink : null,
+      ...s, isSource:s.name===srcName, storeUrl:sourceUrl,
+      extrapeOk:EXTRAPE_OK.includes(s.name),
+      link:EXTRAPE_OK.includes(s.name)?affiliateLink:sourceUrl,
+      affiliateLink:EXTRAPE_OK.includes(s.name)?affiliateLink:null,
     }));
   }
 
-  function showResults(storeName, url, affiliateLink, flashData) {
+  function showResults(storeName, url, affiliateLink, priceData) {
     document.getElementById('loading').style.display = 'none';
     document.getElementById('results').style.display = 'block';
 
-    // Product image + name from flash.co response
-    const name  = flashData?.productName || flashData?.name || flashData?.data?.name || flashData?.title || ('Product from ' + storeName);
-    const img   = flashData?.image || flashData?.imageUrl || flashData?.data?.image || flashData?.thumbnail || null;
+    // Product image + name from SerpAPI response
+    const name  = priceData?.productName || ('Product from ' + storeName);
+    const img   = priceData?.productImage || null;
 
     const imgEl = document.getElementById('prodImg');
     if (img) {
@@ -491,7 +472,7 @@
     document.getElementById('prodUpdated').textContent = '🕐 Just updated';
 
     // Build & sort store list
-    allStores = parseStores(flashData, storeName, affiliateLink, url);
+    allStores = parseStores(priceData, storeName, affiliateLink, url);
     allStores.sort((a,b) => a.price - b.price);
     if (allStores.length > 0) allStores[0].isBest = true;
 
