@@ -190,134 +190,185 @@ async function processQueue() {
   }
 }
 
-// ── SerpAPI Google Shopping — real prices across Indian stores ──
-const SERP_API_KEY = process.env.SERP_API_KEY || '';
+// ── Flash.co API Integration ──
+// Add FLASH_AUTH_TOKEN and FLASH_DEVICE_ID to Render environment variables
+const FLASH_AUTH_TOKEN = process.env.FLASH_AUTH_TOKEN || '';
+const FLASH_DEVICE_ID  = process.env.FLASH_DEVICE_ID  || '';
 
-// Fetch real product title by loading the actual product page
-async function fetchProductTitle(productUrl) {
-  try {
-    const r = await fetch(productUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html',
-        'Accept-Language': 'en-IN,en;q=0.9',
-      },
-      signal: AbortSignal.timeout(8000),
-    });
-    const html = await r.text();
+const FLASH_API_HEADERS = () => ({
+  'Accept': 'application/json',
+  'Accept-Language': 'en-GB,en;q=0.9',
+  'Authorization': 'Bearer ' + FLASH_AUTH_TOKEN,
+  'Channel-Type': 'web',
+  'Origin': 'https://flash.co',
+  'Referer': 'https://flash.co/',
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36',
+  'X-Country-Code': 'IN',
+  'X-Device-Id': FLASH_DEVICE_ID,
+  'X-Timezone': 'Asia/Calcutta',
+});
 
-    // 1. Open Graph title (most accurate)
-    let m = html.match(/<meta[^>]+property=.og:title.[^>]+content=.([^"']+)/i);
-    if (m) return m[1].trim();
+// Step 1: Submit URL to flash.co and get pageHash via SSE stream
+async function flashSearch(productUrl) {
+  const params = new URLSearchParams({
+    source: 'APPEND',
+    context: 'HOME_URL_PASTE',
+    user_agent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36',
+    device_type: 'DESKTOP',
+    country_code: 'IN',
+  });
 
-    // 2. Standard title tag — clean store name from end
-    m = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-    if (m) {
-      return m[1].trim()
-        .replace(/\s*[|\-]\s*(Amazon|Flipkart|Myntra|Ajio|Nykaa|Croma|TataCliq|Online Shopping|India|Buy).*/i, '')
-        .trim();
-    }
-    return null;
-  } catch(e) {
-    console.log('Title fetch error:', e.message);
-    return null;
+  const url = 'https://apiv3.flash.tech/agents/chat/stream?' + params.toString();
+  console.log('Flash search URL:', url);
+
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {
+      ...FLASH_API_HEADERS(),
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+    },
+    body: JSON.stringify({
+      message: productUrl,
+      context: 'HOME_URL_PASTE',
+    }),
+    signal: AbortSignal.timeout(30000),
+  });
+
+  if (!r.ok) {
+    const txt = await r.text();
+    throw new Error('Flash stream error ' + r.status + ': ' + txt.substring(0, 200));
   }
+
+  // Read SSE stream and extract pageHash/productId
+  const text = await r.text();
+  console.log('Flash stream raw (first 800):', text.substring(0, 800));
+
+  // Parse SSE events to find pageHash
+  let pageHash = null;
+  let productId = null;
+  let productName = null;
+  let productImage = null;
+
+  // Look for redirect URL pattern: flash.co/price-compare/{id}/h/{hash} or flash.co/item/{id}/{slug}/h/{hash}
+  const redirectMatch = text.match(/flash\.co\/(?:price-compare|item)\/(\d+)\/[^\/]+\/h\/([A-Za-z0-9_-]+)/);
+  if (redirectMatch) {
+    productId = redirectMatch[1];
+    pageHash  = redirectMatch[2];
+    console.log('Found from redirect - productId:', productId, 'pageHash:', pageHash);
+  }
+
+  // Also try parsing JSON chunks in the SSE
+  if (!pageHash) {
+    const lines = text.split("\n"); // parse SSE lines
+    for (const match of jsonMatches) {
+      try {
+        const d = JSON.parse(match[1]);
+        if (d.pageHash) { pageHash = d.pageHash; }
+        if (d.productId) { productId = d.productId; }
+        if (d.name || d.productName) { productName = d.name || d.productName; }
+        if (d.image || d.imageUrl) { productImage = d.image || d.imageUrl; }
+      } catch(e) {}
+    }
+  }
+
+  // Try finding pageHash in any form in the response
+  if (!pageHash) {
+    const hashMatch = text.match(/"pageHash":\s*"([A-Za-z0-9_-]+)"/);
+    if (hashMatch) pageHash = hashMatch[1];
+  }
+
+  if (!pageHash) throw new Error('Could not extract pageHash from flash stream. Response: ' + text.substring(0, 400));
+
+  return { pageHash, productId, productName, productImage };
 }
 
-app.get('/compare/search', async (req, res) => {
-  const { url, q } = req.query;
-  if (!url && !q) return res.status(400).json({ error: 'Pass ?url= or ?q=' });
+// Step 2: Get product details + store prices using pageHash
+async function flashGetPrices(pageHash) {
+  const url = 'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash;
+  console.log('Flash prices URL:', url);
 
-  if (!SERP_API_KEY) {
-    return res.status(503).json({ error: 'SERP_API_KEY not configured. Get free key at serpapi.com', needsKey: true });
+  const r = await fetch(url, {
+    headers: FLASH_API_HEADERS(),
+    signal: AbortSignal.timeout(15000),
+  });
+
+  if (!r.ok) throw new Error('Flash prices error ' + r.status);
+  const data = await r.json();
+  console.log('Flash prices response (first 600):', JSON.stringify(data).substring(0, 600));
+  return data;
+}
+
+// Main compare endpoint
+app.get('/compare/search', async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: 'Pass ?url=' });
+
+  if (!FLASH_AUTH_TOKEN) {
+    return res.status(503).json({
+      error: 'FLASH_AUTH_TOKEN not configured. Add it to Render environment variables.',
+      needsKey: true
+    });
   }
 
   try {
-    let searchQuery = q || '';
+    // Step 1: Search and get pageHash
+    console.log('Searching flash.co for:', url);
+    const { pageHash, productId, productName: pName, productImage: pImg } = await flashSearch(url);
+    console.log('Got pageHash:', pageHash, 'productId:', productId);
 
-    if (url && !q) {
-      // Step 1: Fetch real product title from the page
-      console.log('Fetching product title from page:', url);
-      const title = await fetchProductTitle(url);
+    // Step 2: Get prices
+    const priceData = await flashGetPrices(pageHash);
 
-      if (title && title.length > 5) {
-        // Clean title — remove variants, keep core name (first ~60 chars)
-        searchQuery = title
-          .replace(/[\(\[].*?[\)\]]/g, '')
-          .replace(/,\s*(Pack of|Set of|Combo|Bundle|Color|Colour|Size).*/i, '')
-          .replace(/\s+/g, ' ')
-          .trim()
-          .substring(0, 80);
-        console.log('Real title from page:', searchQuery);
-      } else {
-        // Fallback: extract from URL slug
-        try {
-          const parsed = new URL(url);
-          const segs = parsed.pathname.split('/')
-            .filter(s => s.length > 4 && !/^[A-Z0-9]{6,}$/.test(s) && !/^(dp|p|product|item|buy|s|ip)$/i.test(s));
-          searchQuery = (segs[0] || '').replace(/-/g, ' ').replace(/[^a-zA-Z0-9 ]/g, ' ').trim();
-          console.log('URL slug fallback:', searchQuery);
-        } catch(e) {}
-      }
+    // Step 3: Parse stores from flash response
+    // Flash returns data in various shapes - try all
+    const rawStores =
+      priceData?.stores ||
+      priceData?.data?.stores ||
+      priceData?.priceComparisons ||
+      priceData?.data?.priceComparisons ||
+      priceData?.comparisons ||
+      priceData?.storeDetails ||
+      priceData?.retailers ||
+      [];
+
+    const productTitle = priceData?.productName || priceData?.name ||
+      priceData?.data?.name || priceData?.data?.productName || pName || 'Product';
+    const productImage = priceData?.image || priceData?.imageUrl ||
+      priceData?.data?.image || pImg || '';
+
+    console.log('Raw stores count:', rawStores.length, 'Product:', productTitle);
+    console.log('Full priceData keys:', Object.keys(priceData || {}));
+
+    let stores = [];
+    if (rawStores.length > 0) {
+      stores = rawStores.map(s => ({
+        name: normalizeStoreName(s.storeName || s.name || s.store || s.retailer || s.source || ''),
+        price: parseInt((s.price || s.amount || s.salePrice || s.mrp || s.offerPrice || '0').toString().replace(/[^0-9]/g, '')) || 0,
+        url: s.url || s.link || s.buyUrl || s.storeUrl || s.productUrl || '',
+        image: s.image || s.thumbnail || productImage || '',
+      })).filter(s => s.price > 0 && s.name);
     }
 
-    if (!searchQuery || searchQuery.length < 3) {
-      return res.status(400).json({ error: 'Could not determine product from URL' });
+    // If no stores parsed, return the raw data for debugging
+    if (stores.length === 0) {
+      return res.json({
+        stores: [],
+        productName: productTitle,
+        productImage,
+        pageHash,
+        debug: { keys: Object.keys(priceData || {}), rawSample: JSON.stringify(priceData).substring(0, 500) }
+      });
     }
 
-    console.log('Searching SerpAPI for:', searchQuery);
-
-    const serpUrl = 'https://serpapi.com/search.json'
-      + '?engine=google_shopping'
-      + '&q=' + encodeURIComponent(searchQuery)
-      + '&gl=in'
-      + '&hl=en'
-      + '&location=India'
-      + '&num=20'
-      + '&api_key=' + SERP_API_KEY;
-
-    const r = await fetch(serpUrl);
-    if (!r.ok) throw new Error('SerpAPI ' + r.status + ': ' + (await r.text()).substring(0, 100));
-    const data = await r.json();
-
-    const results = data.shopping_results || [];
-    console.log('SerpAPI:', results.length, 'results for:', searchQuery);
-
-    if (results.length === 0) {
-      return res.json({ stores: [], productName: searchQuery, productImage: '', noResults: true });
-    }
-
-    const top = results[0];
-
-    // Group by store — each store gets its OWN specific product URL and price
-    const storeMap = {};
-    results.forEach(item => {
-      const name = normalizeStoreName(item.source || '');
-      if (!name) return;
-      const price = parseFloat((item.price || '').replace(/[^0-9.]/g, '')) || 0;
-      if (price === 0) return;
-      // Keep lowest price per store but also keep that specific product URL
-      if (!storeMap[name] || price < storeMap[name].price) {
-        storeMap[name] = {
-          name,
-          price,
-          url: item.link || item.product_link || '',
-          image: item.thumbnail || top.thumbnail || '',
-          title: item.title || top.title,
-        };
-      }
-    });
-
-    const stores = Object.values(storeMap)
-      .filter(s => s.price > 0)
-      .sort((a, b) => a.price - b.price);
+    stores.sort((a, b) => a.price - b.price);
 
     return res.json({
       stores,
-      productName: top.title || searchQuery,
-      productImage: top.thumbnail || '',
+      productName: productTitle,
+      productImage,
       totalStores: stores.length,
-      searchQuery,
+      pageHash,
     });
 
   } catch(e) {
