@@ -173,7 +173,7 @@ footer{text-align:center;padding:20px;font-size:12px;color:var(--muted);}
   <h1 class="hero-title">Find the <em>Best Price.</em><br/>Every Time.</h1>
   <p class="hero-sub">Paste any product link from Amazon, Flipkart, Myntra or 200+ stores. We compare prices across all stores instantly.</p>
   <div class="search-row">
-    <input class="search-input" type="url" id="heroInput" placeholder="https://www.flipkart.com/... or amazon.in/..." autocomplete="off"/>
+    <input class="search-input" type="text" id="heroInput" placeholder="https://www.flipkart.com/... or amazon.in/..." autocomplete="off" inputmode="url"/>
     <button class="search-btn" onclick="startCompare()">Compare →</button>
   </div>
 </section>
@@ -332,16 +332,28 @@ function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 let allStores = [], showingOther = false, currentUrl = '';
 
 function startCompare() {
-  const url = document.getElementById('heroInput').value.trim();
-  if (!url) return;
-  try { new URL(url); } catch { alert('Please paste a valid product URL'); return; }
-  currentUrl = url;
-  runCompare(url);
+  try {
+    let url = (document.getElementById('heroInput').value || '').trim();
+    if (!url) { alert('Please paste a product URL first.'); return; }
+    // Auto-add https:// if missing
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+      document.getElementById('heroInput').value = url;
+    }
+    try { new URL(url); } catch(e) { alert('Invalid URL. Please paste a product link from Amazon, Flipkart etc.'); return; }
+    console.log('[Compare] Starting search for:', url);
+    currentUrl = url;
+    runCompare(url);
+  } catch(err) {
+    console.error('[Compare] startCompare error:', err);
+    alert('Error: ' + err.message);
+  }
 }
 
 document.getElementById('heroInput').addEventListener('keydown', e => { if(e.key==='Enter') startCompare(); });
 
 async function runCompare(url) {
+  try {
   const storeName = detectStore(url);
   showingOther = false;
 
@@ -350,6 +362,7 @@ async function runCompare(url) {
   document.getElementById('resultsSection').style.display = 'none';
   document.getElementById('loadingSection').style.display = 'block';
   window.scrollTo(0,0);
+  console.log('[Compare] runCompare started, store:', storeName);
 
   // Setup loading UI
   document.getElementById('srcStoreName').textContent = storeName;
@@ -531,6 +544,14 @@ function showResults(storeName, url, affiliateLink, data) {
 
   // Load affiliate links in background
   loadAffiliateLinks(url, affiliateLink);
+
+  } catch(err) {
+    console.error('[Compare] runCompare error:', err);
+    // If error, go back to hero so user isn't stuck
+    document.getElementById('loadingSection').style.display = 'none';
+    document.getElementById('heroSection').style.display = 'flex';
+    alert('Something went wrong: ' + err.message + '\nCheck the browser console for details.');
+  }
 }
 
 function renderStores(containerId, stores, srcStoreName) {

@@ -154,7 +154,7 @@
       gap: 10px;
     }
 
-    input[type="url"] {
+    input[type="text" inputmode="url"] {
       flex: 1;
       background: var(--bg);
       border: 1.5px solid var(--border);
@@ -167,9 +167,9 @@
       transition: border-color 0.2s, box-shadow 0.2s;
     }
 
-    input[type="url"]::placeholder { color: var(--muted); }
+    input[type="text" inputmode="url"]::placeholder { color: var(--muted); }
 
-    input[type="url"]:focus {
+    input[type="text" inputmode="url"]:focus {
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(255,107,43,0.12);
     }
@@ -437,7 +437,7 @@
       <label class="input-label" for="productUrl">Product URL (any supported store)</label>
       <div class="input-row">
         <input
-          type="url"
+          type="text" inputmode="url"
           id="productUrl"
           placeholder="https://www.flipkart.com/... or amazon.in/... or myntra.com/..."
           autocomplete="off"
