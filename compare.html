@@ -388,6 +388,7 @@ function showResults(storeName, url, affiliateLink, data) {
   var productName = (data && data.productName) ? data.productName : ('Product from ' + storeName);
   var productImage = (data && data.productImage) ? data.productImage : null;
   var savings = (data && data.savings) ? data.savings : 0;
+  var flashError = (data && data.flashError) ? data.flashError : null;
 
   // Product header
   var imgEl = document.getElementById('prodImg');
@@ -395,14 +396,26 @@ function showResults(storeName, url, affiliateLink, data) {
     imgEl.innerHTML = '<img src="' + productImage + '" onerror="this.parentElement.innerHTML=\'<span style=font-size:28px>📦</span>\'" style="width:62px;height:62px;object-fit:contain;border-radius:8px;">';
   }
   document.getElementById('prodTitle').textContent = productName;
-  document.getElementById('prodMeta').textContent = stores.length > 0 ? 'Found ' + stores.length + ' stores · Sorted lowest to highest' : 'Searching...';
+  document.getElementById('prodMeta').textContent = stores.length > 0 ? 'Found ' + stores.length + ' stores · Sorted lowest to highest' : 'Your affiliate link is ready';
 
   // Deal banner
   var banner = document.getElementById('dealBanner');
   if (stores.length === 0) {
-    banner.className = 'banner banner-warn';
-    banner.innerHTML = '⚠️ ' + (data && data.debug ? 'Flash API returned keys: ' + (data.debug.detailsKeys || []).join(', ') : 'Could not find prices. Check Render logs for details.');
     banner.style.display = 'flex';
+    if (flashError && flashError.indexOf('401') >= 0) {
+      banner.className = 'banner banner-warn';
+      banner.innerHTML = '🔑 Flash.co session expired — refresh <b>FLASH_AUTH_TOKEN</b> in Render to see all store prices. Your affiliate link is still ready below!';
+    } else {
+      banner.className = 'banner banner-warn';
+      banner.innerHTML = '⚠️ Price comparison unavailable. Your affiliate link is ready below.';
+    }
+    // Always show source store affiliate link even when flash fails
+    if (affiliateLink && affiliateLink !== url) {
+      stores = [{
+        name: storeName, normalizedName: storeName,
+        price: 0, url: affiliateLink, isSource: true, isBest: false, isAffiliateOnly: true
+      }];
+    }
   } else {
     banner.className = 'banner banner-green';
     var srcStore = stores.find(function(s) { return s.isSource; });
@@ -458,11 +471,12 @@ function renderList(id, stores) {
     if (s.isBest && !s.isSource) tags += '<span class="tag tg-green">🏆 Best Price</span>';
     if (savingAmt > 0) tags += '<span class="tag tg-purple">Save ₹' + savingAmt.toLocaleString('en-IN') + '</span>';
 
+    var priceDisplay = s.isAffiliateOnly ? '' : ('₹' + Number(s.price).toLocaleString('en-IN'));
     var div = document.createElement('div');
     div.className = 'store-card' + (s.isBest ? ' best' : '');
     div.innerHTML = '<div class="store-logo">' + logoHTML(name, 24) + '</div>' +
       '<div class="store-body"><div class="store-name">' + name + '</div><div class="tags">' + tags + '</div></div>' +
-      '<div class="price">₹' + Number(s.price).toLocaleString('en-IN') + '</div>' +
+      '<div class="price">' + priceDisplay + '</div>' +
       '<div class="store-acts">' +
         '<button class="btn-visit">Visit ↗</button>' +
         '<button class="btn-copy">Copy</button>' +

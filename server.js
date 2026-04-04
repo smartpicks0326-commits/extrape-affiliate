@@ -360,8 +360,24 @@ app.get('/compare/search', async (req, res) => {
   try {
     console.log('[Compare] Searching:', url);
 
-    // Step 1: Get pageHash
-    const { pageHash, productId, productName: streamName, productImage: streamImg } = await flashSearchUrl(url);
+    // Step 1: Get pageHash — if this fails, use fallback with just source store
+    let pageHash, streamName, streamImg;
+    try {
+      const sr = await flashSearchUrl(url);
+      pageHash = sr.pageHash;
+      streamName = sr.productName;
+      streamImg = sr.productImage;
+    } catch(flashErr) {
+      console.error('[Compare] Flash search failed:', flashErr.message);
+      // Return source store with affiliate link as fallback
+      return res.json({
+        stores: [],
+        productName: null,
+        productImage: null,
+        flashError: flashErr.message,
+        debug: { detailsKeys: [], priceSample: 'Flash error: ' + flashErr.message }
+      });
+    }
 
     // Step 2: Get product details (contains product info + stores)
     const details = await flashGetProductDetails(pageHash);
