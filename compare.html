@@ -8,24 +8,27 @@
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 :root{
-  --bg:#f7f3ee;
-  --card:#ffffff;
-  --border:#e8e2d9;
-  --text:#1a1a1a;
-  --muted:#888580;
+  --bg:#0a0a0f;
+  --card:#13131a;
+  --border:#1e1e2e;
+  --text:#f0ede8;
+  --muted:#6b6878;
   --accent:#ff6b2b;
   --accent2:#ff9a5c;
-  --green:#1a9f5a;
-  --green-bg:#edf7f1;
-  --green-border:#b8dfc9;
-  --btn:#1a1a1a;
+  --green:#29d87a;
+  --green-bg:rgba(41,216,122,.08);
+  --green-border:rgba(41,216,122,.25);
+  --btn:#ff6b2b;
   --btn-text:#ffffff;
-  --shadow:0 1px 4px rgba(0,0,0,.08),0 4px 16px rgba(0,0,0,.06);
+  --shadow:0 4px 24px rgba(0,0,0,.4);
 }
 body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
+body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:48px 48px;opacity:.35;pointer-events:none;z-index:0;}
+body::after{content:'';position:fixed;top:-200px;left:50%;transform:translateX(-50%);width:700px;height:500px;background:radial-gradient(ellipse,rgba(255,107,43,.1) 0%,transparent 70%);pointer-events:none;z-index:0;}
+nav,section,footer{position:relative;z-index:1;}
 
 /* NAV */
-nav{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:#fff;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100;}
+nav{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:rgba(10,10,15,.95);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100;}
 .logo{font-family:'Syne',sans-serif;font-size:15px;font-weight:800;text-decoration:none;color:var(--text);}
 .logo em{font-style:normal;color:var(--accent);}
 .nav-btns{display:flex;gap:8px;}
@@ -44,7 +47,7 @@ nav{display:flex;align-items:center;justify-content:space-between;padding:12px 2
 .hero-title em{font-style:normal;color:var(--accent);}
 .hero-sub{color:var(--muted);font-size:.95rem;max-width:400px;margin:0 auto 28px;line-height:1.6;}
 .search-row{display:flex;gap:8px;width:100%;max-width:560px;}
-.search-input{flex:1;border:1.5px solid var(--border);background:#fff;color:var(--text);font-family:'DM Mono',monospace;font-size:13px;padding:13px 16px;border-radius:12px;outline:none;transition:border-color .2s;box-shadow:var(--shadow);}
+.search-input{flex:1;border:1.5px solid var(--border);background:var(--card);color:var(--text);font-family:'DM Mono',monospace;font-size:13px;padding:13px 16px;border-radius:12px;outline:none;transition:border-color .2s;box-shadow:var(--shadow);}
 .search-input:focus{border-color:var(--accent);}
 .search-input::placeholder{color:var(--muted);}
 .search-btn{background:var(--accent);color:#fff;border:none;font-family:'Syne',sans-serif;font-weight:700;font-size:14px;padding:13px 22px;border-radius:12px;cursor:pointer;white-space:nowrap;transition:background .2s;box-shadow:0 4px 16px rgba(255,107,43,.3);}
@@ -57,13 +60,13 @@ nav{display:flex;align-items:center;justify-content:space-between;padding:12px 2
 #loadingSection{display:none;padding:28px 0;}
 
 /* "You're looking for" card — flash.co shows this when product identified */
-.looking-for-card{background:#fff;border:1px solid var(--border);border-radius:16px;padding:16px;margin-bottom:12px;box-shadow:var(--shadow);}
+.looking-for-card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;margin-bottom:12px;box-shadow:var(--shadow);}
 .looking-for-label{font-size:12px;font-weight:600;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:.08em;}
-.product-preview{display:flex;align-items:center;gap:12px;background:var(--bg);border-radius:10px;padding:10px 12px;margin-bottom:12px;}
-.product-preview-img{width:40px;height:40px;border-radius:8px;object-fit:contain;background:#fff;border:1px solid var(--border);flex-shrink:0;}
+.product-preview{display:flex;align-items:center;gap:12px;background:rgba(255,255,255,.04);border-radius:10px;padding:10px 12px;margin-bottom:12px;}
+.product-preview-img{width:40px;height:40px;border-radius:8px;object-fit:contain;background:rgba(255,255,255,.06);border:1px solid var(--border);flex-shrink:0;}
 .product-preview-name{font-size:13px;font-weight:600;line-height:1.3;color:var(--text);}
 .src-store-row{display:flex;align-items:center;gap:10px;}
-.src-logo-wrap{width:32px;height:32px;border-radius:8px;background:var(--bg);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;}
+.src-logo-wrap{width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,.06);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;}
 .src-logo-wrap img{width:22px;height:22px;object-fit:contain;}
 .src-store-name{font-size:14px;font-weight:600;flex:1;}
 .src-came-tag{font-size:11px;color:var(--muted);}
@@ -91,12 +94,12 @@ nav{display:flex;align-items:center;justify-content:space-between;padding:12px 2
 .back-link:hover{color:var(--text);}
 
 /* Product image — flash.co shows it large and centered */
-.prod-image-wrap{text-align:center;margin-bottom:0;background:#fff;border-radius:20px 20px 0 0;padding:28px 28px 0;}
+.prod-image-wrap{text-align:center;margin-bottom:0;background:var(--card);border-radius:20px 20px 0 0;padding:28px 28px 0;}
 .prod-image-wrap img{width:100%;max-width:260px;height:220px;object-fit:contain;border-radius:12px;}
 .prod-image-placeholder{width:100%;max-width:260px;height:160px;display:flex;align-items:center;justify-content:center;font-size:64px;margin:0 auto;}
 
 /* Product detail card — below image, same card */
-.prod-detail-card{background:#fff;border:1px solid var(--border);border-radius:0 0 20px 20px;padding:16px 20px 20px;margin-bottom:12px;box-shadow:var(--shadow);}
+.prod-detail-card{background:var(--card);border:1px solid var(--border);border-radius:0 0 20px 20px;padding:16px 20px 20px;margin-bottom:12px;box-shadow:var(--shadow);}
 .prod-name-text{font-family:'Syne',sans-serif;font-size:17px;font-weight:700;line-height:1.3;margin-bottom:8px;}
 .updated-row{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:5px;margin-bottom:12px;}
 
@@ -106,8 +109,8 @@ nav{display:flex;align-items:center;justify-content:space-between;padding:12px 2
 .savings-banner-text{font-size:13px;font-weight:600;color:var(--green);}
 
 /* Limited availability notice */
-.limited-banner{background:#fff8f0;border:1px solid #fddbb8;border-radius:12px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:flex-start;gap:10px;}
-.limited-banner-text{font-size:13px;font-weight:600;color:#b85c00;}
+.limited-banner{background:rgba(255,107,43,.08);border:1px solid rgba(255,107,43,.2);border-radius:12px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:flex-start;gap:10px;}
+.limited-banner-text{font-size:13px;font-weight:600;color:var(--accent2);}
 .limited-banner-sub{font-size:12px;color:var(--muted);margin-top:2px;}
 
 /* Section header */
@@ -117,10 +120,10 @@ nav{display:flex;align-items:center;justify-content:space-between;padding:12px 2
 .sec-info{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--muted);cursor:help;}
 
 /* Store card — flash.co exact */
-.store-card{background:#fff;border:1px solid var(--border);border-radius:14px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;gap:12px;box-shadow:var(--shadow);transition:border-color .15s,box-shadow .15s;}
+.store-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;gap:12px;box-shadow:var(--shadow);transition:border-color .15s,box-shadow .15s;}
 .store-card:hover{border-color:rgba(255,107,43,.3);box-shadow:0 2px 12px rgba(255,107,43,.1);}
-.store-card.best-store{border-color:var(--green-border);background:linear-gradient(to right,#f0fbf5,#fff);}
-.store-logo{width:38px;height:38px;border-radius:10px;background:var(--bg);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;}
+.store-card.best-store{border-color:var(--green-border);background:rgba(41,216,122,.04);}
+.store-logo{width:38px;height:38px;border-radius:10px;background:rgba(255,255,255,.06);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;}
 .store-logo img{width:26px;height:26px;object-fit:contain;border-radius:3px;}
 .store-logo .init{font-family:'Syne',sans-serif;font-size:14px;font-weight:800;color:var(--text);}
 .store-info{flex:1;min-width:0;}
@@ -138,14 +141,14 @@ nav{display:flex;align-items:center;justify-content:space-between;padding:12px 2
 .copy-btn.copied{color:var(--green);border-color:var(--green-border);}
 
 /* View all button */
-.view-all-btn{width:100%;background:#fff;border:1px solid var(--border);color:var(--text);font-family:'Syne',sans-serif;font-weight:700;font-size:14px;padding:15px;border-radius:14px;cursor:pointer;margin:4px 0;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:var(--shadow);transition:border-color .2s;}
+.view-all-btn{width:100%;background:var(--card);border:1px solid var(--border);color:var(--text);font-family:'Syne',sans-serif;font-weight:700;font-size:14px;padding:15px;border-radius:14px;cursor:pointer;margin:4px 0;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:var(--shadow);transition:border-color .2s;}
 .view-all-btn:hover{border-color:var(--accent);}
 
 /* Other stores section */
 #otherStores{display:none;margin-top:4px;}
 
 /* Error */
-.error-box{background:#fff0f0;border:1px solid #ffd0d0;border-radius:12px;padding:16px;margin-bottom:12px;font-size:13px;color:#c0392b;}
+.error-box{background:rgba(255,75,110,.08);border:1px solid rgba(255,75,110,.2);border-radius:12px;padding:16px;margin-bottom:12px;font-size:13px;color:#ff8099;}
 
 footer{text-align:center;padding:20px;font-size:12px;color:var(--muted);}
 
@@ -240,7 +243,7 @@ footer{text-align:center;padding:20px;font-size:12px;color:var(--muted);}
     </div>
     <div id="limitedBanner" style="display:none;">
       <div class="limited-banner">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#b85c00" stroke-width="2" style="flex-shrink:0;margin-top:1px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2" style="flex-shrink:0;margin-top:1px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
         <div><div class="limited-banner-text">Limited availability found</div><div class="limited-banner-sub" id="limitedText">This product may have limited store availability.</div></div>
       </div>
     </div>
@@ -464,10 +467,32 @@ function showResults(storeName, url, affiliateLink, data) {
   // Savings or error banners
   if (stores.length === 0) {
     document.getElementById('limitedBanner').style.display='block';
-    document.getElementById('limitedText').textContent = debugInfo
-      ? 'Debug: ' + JSON.stringify(debugInfo).substring(0,120)
-      : 'Could not find price comparisons. Try a different product URL.';
     document.getElementById('savingsBanner').style.display='none';
+
+    if (debugInfo) {
+      // Show full debug info in console and in a visible way
+      console.log('=== FLASH DEBUG ===');
+      console.log('Details keys:', debugInfo.detailsKeys);
+      console.log('Price keys:', debugInfo.priceKeys);
+      console.log('Details sample:', debugInfo.detailsSample);
+      console.log('Price sample:', debugInfo.priceSample);
+
+      document.getElementById('limitedText').textContent =
+        'Flash returned keys: ' + (debugInfo.detailsKeys||[]).join(', ') +
+        ' | Price keys: ' + (debugInfo.priceKeys||[]).join(', ');
+
+      // Show full debug in error box
+      const errBox = document.getElementById('errorBox');
+      errBox.style.display = 'block';
+      errBox.innerHTML = '<strong>Debug (open Console for full data):</strong><br/>' +
+        '<pre style="font-size:10px;overflow-x:auto;margin-top:6px;white-space:pre-wrap;">' +
+        'Details: ' + (debugInfo.detailsSample||'').substring(0,300) + '
+
+' +
+        'Prices: ' + (debugInfo.priceSample||'').substring(0,300) + '</pre>';
+    } else {
+      document.getElementById('limitedText').textContent = 'Could not find price comparisons. Check Render logs.';
+    }
   } else {
     document.getElementById('limitedBanner').style.display='none';
     document.getElementById('savingsBanner').style.display='block';

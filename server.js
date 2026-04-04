@@ -402,6 +402,8 @@ app.get('/compare/search', async (req, res) => {
     const updatedAt    = deepGet(details, ['updatedAt','lastUpdated','updated'], 0) || null;
 
     console.log('[Compare] Stores found:', rawStores.length, '| Product:', productName);
+    console.log('[Compare] Details full:', JSON.stringify(details).substring(0, 1500));
+    console.log('[Compare] PriceCompare full:', JSON.stringify(priceCompare).substring(0, 1500));
 
     let stores = [];
     if (rawStores.length > 0) {
@@ -447,11 +449,12 @@ app.get('/compare/search', async (req, res) => {
       bestStoreName: bestStore?.name || '',
       totalStores: stores.length,
       pageHash,
-      // Include debug info if no stores found
+      // Always include full raw data for debugging when stores empty
       debug: stores.length === 0 ? {
         detailsKeys: Object.keys(details || {}),
         priceKeys: Object.keys(priceCompare || {}),
-        sample: JSON.stringify(details).substring(0, 600)
+        detailsSample: JSON.stringify(details).substring(0, 1000),
+        priceSample: JSON.stringify(priceCompare).substring(0, 1000),
       } : undefined
     });
 
