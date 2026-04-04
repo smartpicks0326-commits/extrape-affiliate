@@ -191,191 +191,283 @@ async function processQueue() {
 }
 
 // ── Flash.co API Integration ──
-// Add FLASH_AUTH_TOKEN and FLASH_DEVICE_ID to Render environment variables
 const FLASH_AUTH_TOKEN = process.env.FLASH_AUTH_TOKEN || '';
-const FLASH_DEVICE_ID  = process.env.FLASH_DEVICE_ID  || '';
+const FLASH_DEVICE_ID  = process.env.FLASH_DEVICE_ID  || 'a44d3a70-b94f-4089-96d7-8e253768505d';
 
-const FLASH_API_HEADERS = () => ({
-  'Accept': 'application/json',
-  'Accept-Language': 'en-GB,en;q=0.9',
-  'Authorization': 'Bearer ' + FLASH_AUTH_TOKEN,
-  'Channel-Type': 'web',
-  'Origin': 'https://flash.co',
-  'Referer': 'https://flash.co/',
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36',
-  'X-Country-Code': 'IN',
-  'X-Device-Id': FLASH_DEVICE_ID,
-  'X-Timezone': 'Asia/Calcutta',
-});
+function flashHeaders() {
+  return {
+    'Accept': 'application/json',
+    'Accept-Encoding': 'gzip, deflate, br, zstd',
+    'Accept-Language': 'en-GB,en;q=0.9',
+    'Authorization': 'Bearer ' + FLASH_AUTH_TOKEN,
+    'Channel-Type': 'web',
+    'Origin': 'https://flash.co',
+    'Referer': 'https://flash.co/',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+    'X-Country-Code': 'IN',
+    'X-Device-Id': FLASH_DEVICE_ID,
+    'X-Timezone': 'Asia/Calcutta',
+  };
+}
 
-// Step 1: Submit URL to flash.co and get pageHash via SSE stream
-async function flashSearch(productUrl) {
-  const params = new URLSearchParams({
+// Step 1: POST URL to flash.co SSE stream, extract pageHash
+async function flashSearchUrl(productUrl) {
+  const qs = new URLSearchParams({
     source: 'APPEND',
     context: 'HOME_URL_PASTE',
     user_agent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36',
     device_type: 'DESKTOP',
     country_code: 'IN',
-  });
+  }).toString();
 
-  const url = 'https://apiv3.flash.tech/agents/chat/stream?' + params.toString();
-  console.log('Flash search URL:', url);
+  const endpoint = 'https://apiv3.flash.tech/agents/chat/stream?' + qs;
+  console.log('[Flash] Stream POST:', endpoint);
 
-  const r = await fetch(url, {
+  const r = await fetch(endpoint, {
     method: 'POST',
-    headers: {
-      ...FLASH_API_HEADERS(),
-      'Content-Type': 'application/json',
-      'Accept': 'text/event-stream',
-    },
-    body: JSON.stringify({
-      message: productUrl,
-      context: 'HOME_URL_PASTE',
-    }),
-    signal: AbortSignal.timeout(30000),
+    headers: { ...flashHeaders(), 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+    body: JSON.stringify({ message: productUrl, context: 'HOME_URL_PASTE' }),
+    signal: AbortSignal.timeout(35000),
   });
 
   if (!r.ok) {
-    const txt = await r.text();
-    throw new Error('Flash stream error ' + r.status + ': ' + txt.substring(0, 200));
+    const t = await r.text();
+    throw new Error('Flash stream ' + r.status + ': ' + t.substring(0, 300));
   }
 
-  // Read SSE stream and extract pageHash/productId
-  const text = await r.text();
-  console.log('Flash stream raw (first 800):', text.substring(0, 800));
+  const rawText = await r.text();
+  console.log('[Flash] SSE raw (1000 chars):', rawText.substring(0, 1000));
 
-  // Parse SSE events to find pageHash
+  // Extract pageHash from various patterns in the SSE response
   let pageHash = null;
   let productId = null;
   let productName = null;
   let productImage = null;
 
-  // Look for redirect URL pattern: flash.co/price-compare/{id}/h/{hash} or flash.co/item/{id}/{slug}/h/{hash}
-  const redirectMatch = text.match(/flash\.co\/(?:price-compare|item)\/(\d+)\/[^\/]+\/h\/([A-Za-z0-9_-]+)/);
-  if (redirectMatch) {
-    productId = redirectMatch[1];
-    pageHash  = redirectMatch[2];
-    console.log('Found from redirect - productId:', productId, 'pageHash:', pageHash);
+  // Pattern 1: URL in stream like /price-compare/81683/h/QdlzUMgS or /item/81683/slug/h/QdlzUMgS
+  const urlMatch = rawText.match(/flash\.co\/(?:price-compare|item)\/(\d+)\/[^\/\s"]*\/h\/([A-Za-z0-9_-]{4,})/);
+  if (urlMatch) {
+    productId = urlMatch[1];
+    pageHash  = urlMatch[2];
+    console.log('[Flash] Found via URL pattern - id:', productId, 'hash:', pageHash);
   }
 
-  // Also try parsing JSON chunks in the SSE
+  // Pattern 2: JSON field "pageHash" anywhere in stream
   if (!pageHash) {
-    const lines = text.split("\n"); // parse SSE lines
-    for (const match of jsonMatches) {
-      try {
-        const d = JSON.parse(match[1]);
-        if (d.pageHash) { pageHash = d.pageHash; }
-        if (d.productId) { productId = d.productId; }
-        if (d.name || d.productName) { productName = d.name || d.productName; }
-        if (d.image || d.imageUrl) { productImage = d.image || d.imageUrl; }
-      } catch(e) {}
-    }
+    const m = rawText.match(/"pageHash"\s*:\s*"([A-Za-z0-9_-]+)"/);
+    if (m) { pageHash = m[1]; console.log('[Flash] Found pageHash in JSON:', pageHash); }
   }
 
-  // Try finding pageHash in any form in the response
+  // Pattern 3: "referenceId" field
   if (!pageHash) {
-    const hashMatch = text.match(/"pageHash":\s*"([A-Za-z0-9_-]+)"/);
-    if (hashMatch) pageHash = hashMatch[1];
+    const m = rawText.match(/"referenceId"\s*:\s*"([A-Za-z0-9_-]+)"/);
+    if (m) { pageHash = m[1]; console.log('[Flash] Found referenceId:', pageHash); }
   }
 
-  if (!pageHash) throw new Error('Could not extract pageHash from flash stream. Response: ' + text.substring(0, 400));
+  // Extract product info from SSE lines
+  for (const line of rawText.split('\n')) {
+    if (!line.startsWith('data:')) continue;
+    try {
+      const d = JSON.parse(line.slice(5).trim());
+      if (!productName) productName = d.productName || d.name || d.title || null;
+      if (!productImage) productImage = d.image || d.imageUrl || d.thumbnail || null;
+      if (!pageHash) pageHash = d.pageHash || d.referenceId || null;
+    } catch(e) {}
+  }
+
+  if (!pageHash) {
+    throw new Error('pageHash not found in stream. Raw (400): ' + rawText.substring(0, 400));
+  }
 
   return { pageHash, productId, productName, productImage };
 }
 
-// Step 2: Get product details + store prices using pageHash
-async function flashGetPrices(pageHash) {
+// Step 2: GET product details + store prices from flash.co
+async function flashGetProductDetails(pageHash) {
   const url = 'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash;
-  console.log('Flash prices URL:', url);
+  console.log('[Flash] GET details:', url);
 
   const r = await fetch(url, {
-    headers: FLASH_API_HEADERS(),
-    signal: AbortSignal.timeout(15000),
+    headers: flashHeaders(),
+    signal: AbortSignal.timeout(20000),
   });
 
-  if (!r.ok) throw new Error('Flash prices error ' + r.status);
+  if (!r.ok) throw new Error('Flash details ' + r.status);
   const data = await r.json();
-  console.log('Flash prices response (first 600):', JSON.stringify(data).substring(0, 600));
+  console.log('[Flash] Details keys:', Object.keys(data || {}));
+  console.log('[Flash] Details (800):', JSON.stringify(data).substring(0, 800));
   return data;
 }
+
+// Step 3: Try the price-compare endpoint directly with pageHash
+async function flashGetPriceCompare(pageHash) {
+  const url = 'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash;
+  console.log('[Flash] GET price-compare:', url);
+  try {
+    const r = await fetch(url, { headers: flashHeaders(), signal: AbortSignal.timeout(15000) });
+    if (!r.ok) return null;
+    const data = await r.json();
+    console.log('[Flash] Price compare keys:', Object.keys(data || {}));
+    console.log('[Flash] Price compare (800):', JSON.stringify(data).substring(0, 800));
+    return data;
+  } catch(e) {
+    console.log('[Flash] Price compare failed:', e.message);
+    return null;
+  }
+}
+
+// Raw debug endpoint — call this to see exactly what flash returns
+app.get('/flash/raw', async (req, res) => {
+  const { url, hash, scope } = req.query;
+  if (!FLASH_AUTH_TOKEN) return res.json({ error: 'FLASH_AUTH_TOKEN not set' });
+
+  const result = {};
+  try {
+    if (url) {
+      const { pageHash, productId, productName, productImage } = await flashSearchUrl(url);
+      result.pageHash = pageHash;
+      result.productId = productId;
+      result.productName = productName;
+      result.productImage = productImage;
+
+      // Auto-fetch details with found hash
+      const details = await flashGetProductDetails(pageHash);
+      result.detailsKeys = Object.keys(details || {});
+      result.detailsFull = details;
+
+      const prices = await flashGetPriceCompare(pageHash);
+      result.priceCompareKeys = Object.keys(prices || {});
+      result.priceCompareFull = prices;
+    } else if (hash) {
+      const s = scope || 'PRODUCT_DETAILS';
+      const endpoint = 'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=' + s + '&referenceId=' + hash;
+      const r = await fetch(endpoint, { headers: flashHeaders() });
+      result.status = r.status;
+      result.data = await r.json();
+    }
+    res.json(result);
+  } catch(e) {
+    res.json({ error: e.message, partial: result });
+  }
+});
 
 // Main compare endpoint
 app.get('/compare/search', async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: 'Pass ?url=' });
-
-  if (!FLASH_AUTH_TOKEN) {
-    return res.status(503).json({
-      error: 'FLASH_AUTH_TOKEN not configured. Add it to Render environment variables.',
-      needsKey: true
-    });
-  }
+  if (!FLASH_AUTH_TOKEN) return res.status(503).json({ error: 'FLASH_AUTH_TOKEN not configured', needsKey: true });
 
   try {
-    // Step 1: Search and get pageHash
-    console.log('Searching flash.co for:', url);
-    const { pageHash, productId, productName: pName, productImage: pImg } = await flashSearch(url);
-    console.log('Got pageHash:', pageHash, 'productId:', productId);
+    console.log('[Compare] Searching:', url);
 
-    // Step 2: Get prices
-    const priceData = await flashGetPrices(pageHash);
+    // Step 1: Get pageHash
+    const { pageHash, productId, productName: streamName, productImage: streamImg } = await flashSearchUrl(url);
 
-    // Step 3: Parse stores from flash response
-    // Flash returns data in various shapes - try all
-    const rawStores =
-      priceData?.stores ||
-      priceData?.data?.stores ||
-      priceData?.priceComparisons ||
-      priceData?.data?.priceComparisons ||
-      priceData?.comparisons ||
-      priceData?.storeDetails ||
-      priceData?.retailers ||
-      [];
+    // Step 2: Get product details (contains product info + stores)
+    const details = await flashGetProductDetails(pageHash);
 
-    const productTitle = priceData?.productName || priceData?.name ||
-      priceData?.data?.name || priceData?.data?.productName || pName || 'Product';
-    const productImage = priceData?.image || priceData?.imageUrl ||
-      priceData?.data?.image || pImg || '';
+    // Step 3: Also try price-compare scope
+    const priceCompare = await flashGetPriceCompare(pageHash);
 
-    console.log('Raw stores count:', rawStores.length, 'Product:', productTitle);
-    console.log('Full priceData keys:', Object.keys(priceData || {}));
+    // Deep-search both responses for store arrays
+    function findStores(obj, depth) {
+      if (!obj || depth > 5) return [];
+      if (Array.isArray(obj) && obj.length > 0 && (obj[0].price || obj[0].storeName || obj[0].name)) return obj;
+      for (const key of Object.keys(obj)) {
+        const found = findStores(obj[key], depth + 1);
+        if (found.length > 0) return found;
+      }
+      return [];
+    }
+
+    const rawStores = findStores(details, 0).length > 0
+      ? findStores(details, 0)
+      : findStores(priceCompare || {}, 0);
+
+    // Deep-search for product name and image
+    function deepGet(obj, keys, depth) {
+      if (!obj || depth > 4) return null;
+      for (const k of keys) { if (obj[k]) return obj[k]; }
+      for (const key of Object.keys(obj)) {
+        if (typeof obj[key] === 'object') {
+          const v = deepGet(obj[key], keys, depth + 1);
+          if (v) return v;
+        }
+      }
+      return null;
+    }
+
+    const productName  = deepGet(details, ['productName','name','title'], 0) || streamName || 'Product';
+    const productImage = deepGet(details, ['image','imageUrl','thumbnail','img'], 0) || streamImg || '';
+    const updatedAt    = deepGet(details, ['updatedAt','lastUpdated','updated'], 0) || null;
+
+    console.log('[Compare] Stores found:', rawStores.length, '| Product:', productName);
 
     let stores = [];
     if (rawStores.length > 0) {
-      stores = rawStores.map(s => ({
-        name: normalizeStoreName(s.storeName || s.name || s.store || s.retailer || s.source || ''),
-        price: parseInt((s.price || s.amount || s.salePrice || s.mrp || s.offerPrice || '0').toString().replace(/[^0-9]/g, '')) || 0,
-        url: s.url || s.link || s.buyUrl || s.storeUrl || s.productUrl || '',
-        image: s.image || s.thumbnail || productImage || '',
-      })).filter(s => s.price > 0 && s.name);
+      stores = rawStores.map(s => {
+        const priceRaw = (s.price || s.amount || s.salePrice || s.mrp || s.offerPrice || 0).toString().replace(/[^0-9.]/g, '');
+        const price = parseInt(priceRaw) || 0;
+        const name = s.storeName || s.name || s.store || s.retailer || s.source || '';
+        return {
+          name: name,
+          normalizedName: normalizeStoreName(name) || name,
+          price,
+          url: s.url || s.link || s.buyUrl || s.storeUrl || s.productUrl || '',
+          logo: s.logo || s.storeLogo || s.icon || '',
+          isSource: false,
+        };
+      }).filter(s => s.price > 0 && s.name);
     }
 
-    // If no stores parsed, return the raw data for debugging
-    if (stores.length === 0) {
-      return res.json({
-        stores: [],
-        productName: productTitle,
-        productImage,
-        pageHash,
-        debug: { keys: Object.keys(priceData || {}), rawSample: JSON.stringify(priceData).substring(0, 500) }
-      });
-    }
+    // Mark source store
+    try {
+      const srcHost = new URL(url).hostname.replace('www.', '');
+      stores = stores.map(s => ({
+        ...s,
+        isSource: s.normalizedName.toLowerCase() === detectStoreName(srcHost).toLowerCase() ||
+                  s.name.toLowerCase().includes(srcHost.split('.')[0])
+      }));
+    } catch(e) {}
 
     stores.sort((a, b) => a.price - b.price);
+    if (stores.length > 0) stores[0].isBest = true;
+
+    // Savings amount
+    const srcStore = stores.find(s => s.isSource);
+    const bestStore = stores[0];
+    const savings = srcStore && bestStore && !srcStore.isBest ? srcStore.price - bestStore.price : 0;
 
     return res.json({
       stores,
-      productName: productTitle,
+      productName,
       productImage,
+      updatedAt,
+      savings: savings > 0 ? savings : 0,
+      bestStoreName: bestStore?.name || '',
       totalStores: stores.length,
       pageHash,
+      // Include debug info if no stores found
+      debug: stores.length === 0 ? {
+        detailsKeys: Object.keys(details || {}),
+        priceKeys: Object.keys(priceCompare || {}),
+        sample: JSON.stringify(details).substring(0, 600)
+      } : undefined
     });
 
   } catch(e) {
-    console.error('Compare error:', e.message);
+    console.error('[Compare] Error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
+
+function detectStoreName(hostname) {
+  if (hostname.includes('amazon')) return 'Amazon';
+  if (hostname.includes('flipkart')) return 'Flipkart';
+  if (hostname.includes('myntra')) return 'Myntra';
+  if (hostname.includes('ajio')) return 'Ajio';
+  return hostname.split('.')[0];
+}
 
 
 // Normalize store names to match our known stores
