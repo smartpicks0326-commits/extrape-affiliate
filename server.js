@@ -194,8 +194,10 @@ async function processQueue() {
 const FLASH_AUTH_TOKEN = process.env.FLASH_AUTH_TOKEN || '';
 const FLASH_DEVICE_ID  = process.env.FLASH_DEVICE_ID  || 'a44d3a70-b94f-4089-96d7-8e253768505d';
 
+const FLASH_COOKIES = process.env.FLASH_COOKIES || '';
+
 function flashHeaders() {
-  return {
+  const h = {
     'Accept': 'application/json',
     'Accept-Encoding': 'gzip, deflate, br, zstd',
     'Accept-Language': 'en-GB,en;q=0.9',
@@ -208,6 +210,9 @@ function flashHeaders() {
     'X-Device-Id': FLASH_DEVICE_ID,
     'X-Timezone': 'Asia/Calcutta',
   };
+  // Flash validates both Bearer token AND session cookies together
+  if (FLASH_COOKIES) h['Cookie'] = FLASH_COOKIES;
+  return h;
 }
 
 // Step 1: POST URL to flash.co SSE stream, extract pageHash
