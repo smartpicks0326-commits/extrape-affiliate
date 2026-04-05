@@ -194,18 +194,21 @@ async function processQueue() {
 // Free: 100 searches/month at serpapi.com — no IP restrictions
 const SERP_API_KEY = process.env.SERP_API_KEY || '';
 
-// Fetch real product title from the product page
+// Fetch real product title from the product page — follows redirects automatically
 async function fetchProductTitle(productUrl) {
   try {
     const r = await fetch(productUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html',
+        'Accept': 'text/html,application/xhtml+xml',
         'Accept-Language': 'en-IN,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
       },
-      signal: AbortSignal.timeout(8000),
+      redirect: 'follow',
+      signal: AbortSignal.timeout(10000),
     });
     const html = await r.text();
+    console.log('[Title] Fetched', r.url, 'status:', r.status, 'length:', html.length);
 
     // Try Open Graph title first (most accurate)
     let m = html.match(/<meta[^>]+property=.og:title.[^>]+content=.([^"'<]+)/i);
@@ -239,22 +242,38 @@ app.get('/compare/search', async (req, res) => {
   try {
     console.log('[Compare] Searching:', url);
 
-    // Step 1: Get real product title from the page
+    // Step 1: Get real product title, then extract SHORT core name (4-5 words max)
+    let fullTitle = '';
     let searchQuery = '';
     const title = await fetchProductTitle(url);
+
     if (title && title.length > 5) {
-      searchQuery = title
-        .replace(/[\(\[].*?[\)\]]/g, '')
-        .replace(/,\s*(Pack of|Set of|Combo|Bundle|Color|Size).*/i, '')
-        .replace(/\s+/g, ' ').trim().substring(0, 80);
-      console.log('[SerpAPI] Product title:', searchQuery);
+      fullTitle = title;
+      console.log('[SerpAPI] Full title:', fullTitle);
+
+      // Extract CORE product name: strip marketing words, take first 5 meaningful words
+      let core = title
+        .replace(/\|.*/g, '')                    // remove everything after |
+        .replace(/[\(\[].*?[\)\]]/g, '')      // remove parentheses content
+        .replace(/\b(with|for|up to|upto|comes|get|buy|online|india|featuring)\b.*/i, '')
+        .replace(/,.*/, '')                        // remove after first comma
+        .replace(/[^a-zA-Z0-9 ]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      // Take first 5 words — enough to identify product, short enough for broad results
+      const words = core.split(' ').filter(w => w.length > 0);
+      searchQuery = words.slice(0, 5).join(' ');
+      console.log('[SerpAPI] Core search query:', searchQuery);
     } else {
-      // Fallback: extract from URL
+      // Fallback: extract from URL slug
       try {
         const parsed = new URL(url);
         const segs = parsed.pathname.split('/')
-          .filter(s => s.length > 4 && !/^[A-Z0-9]{6,}$/.test(s) && !/^(dp|p|product|item|buy|s|ip)$/i.test(s));
-        searchQuery = (segs[0] || '').replace(/-/g, ' ').replace(/[^a-zA-Z0-9 ]/g, ' ').trim();
+          .filter(s => s.length > 3 && !/^[A-Z0-9]{6,}$/.test(s) && !/^(dp|p|product|item|buy|s|ip|d)$/i.test(s));
+        const slug = (segs[0] || '').replace(/-/g, ' ').trim();
+        const slugWords = slug.split(' ').filter(w => w.length > 1);
+        searchQuery = slugWords.slice(0, 5).join(' ');
       } catch(e) {}
     }
 
@@ -262,14 +281,17 @@ app.get('/compare/search', async (req, res) => {
       return res.status(400).json({ error: 'Could not determine product name from URL' });
     }
 
+    console.log('[SerpAPI] Final search query:', searchQuery);
+
     // Step 2: Google Shopping India via SerpAPI
+    // No &location param — it restricts results to a city, we want all of India
     const serpUrl = 'https://serpapi.com/search.json'
       + '?engine=google_shopping'
       + '&q=' + encodeURIComponent(searchQuery)
-      + '&gl=in'           // India
-      + '&hl=en'           // English
-      + '&currency=INR'    // Force ₹ prices
-      + '&num=40'          // More results = more stores
+      + '&gl=in'           // Country: India
+      + '&hl=en'           // Language: English
+      + '&currency=INR'    // Prices in ₹
+      + '&num=40'          // Get max results
       + '&api_key=' + SERP_API_KEY;
 
     console.log('[SerpAPI] Query:', searchQuery);
@@ -436,6 +458,7 @@ app.get('/serp/debug', async (req, res) => {
     + '&q=' + encodeURIComponent(searchQuery)
     + '&gl=in&hl=en&currency=INR&num=40'
     + '&api_key=' + SERP_API_KEY;
+  console.log('[Debug] Query sent to SerpAPI:', searchQuery);
 
   try {
     const r = await fetch(serpUrl);
