@@ -266,18 +266,33 @@ app.get('/compare/search', async (req, res) => {
     const serpUrl = 'https://serpapi.com/search.json'
       + '?engine=google_shopping'
       + '&q=' + encodeURIComponent(searchQuery)
-      + '&gl=in&hl=en&location=India&num=20'
+      + '&gl=in'           // India
+      + '&hl=en'           // English
+      + '&currency=INR'    // Force ₹ prices
+      + '&num=40'          // More results = more stores
       + '&api_key=' + SERP_API_KEY;
 
-    console.log('[SerpAPI] Searching for:', searchQuery);
-    const r = await fetch(serpUrl, { signal: AbortSignal.timeout(15000) });
+    console.log('[SerpAPI] Query:', searchQuery);
+    const r = await fetch(serpUrl, { signal: AbortSignal.timeout(20000) });
     if (!r.ok) {
       const errText = await r.text();
-      throw new Error('SerpAPI ' + r.status + ': ' + errText.substring(0, 150));
+      throw new Error('SerpAPI ' + r.status + ': ' + errText.substring(0, 200));
     }
     const data = await r.json();
     const results = data.shopping_results || [];
-    console.log('[SerpAPI] Results:', results.length, 'for:', searchQuery);
+
+    // Log first 3 raw results so we can debug store names and prices
+    console.log('[SerpAPI] Total results:', results.length, 'for:', searchQuery);
+    results.slice(0, 5).forEach((item, i) => {
+      console.log('[SerpAPI] result[' + i + ']:', JSON.stringify({
+        source: item.source,
+        price: item.price,
+        extracted_price: item.extracted_price,
+        link: (item.link||'').substring(0,80),
+        product_link: (item.product_link||'').substring(0,80),
+        title: (item.title||'').substring(0,60)
+      }));
+    });
 
     if (results.length === 0) {
       return res.json({ stores: [], productName: searchQuery, productImage: '', noResults: true });
@@ -285,31 +300,49 @@ app.get('/compare/search', async (req, res) => {
 
     const top = results[0];
 
-    // Group by store — keep lowest price and that store's specific product URL
+    // Parse price correctly — SerpAPI gives extracted_price as a number already
+    function parsePrice(item) {
+      // extracted_price is a clean number from SerpAPI — most reliable
+      if (item.extracted_price && item.extracted_price > 0) return Math.round(item.extracted_price);
+      // Fall back to price string — strip ₹ and commas carefully
+      const raw = (item.price || '').toString().replace(/[₹,\s]/g, '').trim();
+      const parsed = parseFloat(raw);
+      return parsed > 0 ? Math.round(parsed) : 0;
+    }
+
+    // Group by store — keep lowest price per store
     const storeMap = {};
     results.forEach(item => {
-      const rawName = item.source || '';
-      const name = normalizeStoreName(rawName) || rawName;
-      if (!name) return;
-      const price = parseFloat((item.price || '').replace(/[^0-9.]/g, '')) || 0;
+      const rawName = (item.source || '').trim();
+      if (!rawName) return;
+      const normalized = normalizeStoreName(rawName);
+      const storeName = normalized || rawName;
+      const price = parsePrice(item);
       if (price === 0) return;
-      if (!storeMap[name] || price < storeMap[name].price) {
-        storeMap[name] = {
-          name,
-          normalizedName: normalizeStoreName(rawName) || rawName,
+
+      // Use product_link (direct store URL) over link (Google redirect)
+      const storeUrl = item.product_link || item.link || '';
+
+      if (!storeMap[storeName] || price < storeMap[storeName].price) {
+        storeMap[storeName] = {
+          name: storeName,
+          normalizedName: normalized || rawName,
+          rawSource: rawName,
           price,
-          url: item.link || item.product_link || '',
+          url: storeUrl,
           image: item.thumbnail || top.thumbnail || '',
           title: item.title || top.title,
         };
       }
     });
 
-    const stores = Object.values(storeMap)
+    let stores = Object.values(storeMap)
       .filter(s => s.price > 0)
       .sort((a, b) => a.price - b.price);
 
     if (stores.length > 0) stores[0].isBest = true;
+
+    console.log('[SerpAPI] Parsed stores:', stores.map(s => s.name + ':₹' + s.price).join(', '));
 
     return res.json({
       stores,
@@ -352,6 +385,47 @@ function normalizeStoreName(source) {
   if (source.length > 2) return source; // keep unknown stores
   return '';
 }
+
+// ── Debug: see raw SerpAPI response ──
+app.get('/serp/debug', async (req, res) => {
+  const { url, q } = req.query;
+  if (!SERP_API_KEY) return res.json({ error: 'SERP_API_KEY not set' });
+
+  let searchQuery = q || '';
+  if (url && !q) {
+    const title = await fetchProductTitle(url).catch(() => null);
+    if (title) searchQuery = title.substring(0, 80);
+    else {
+      try {
+        const parsed = new URL(url);
+        const segs = parsed.pathname.split('/').filter(s => s.length > 4 && !/^[A-Z0-9]{6,}$/.test(s));
+        searchQuery = (segs[0]||'').replace(/-/g,' ').trim();
+      } catch(e) {}
+    }
+  }
+
+  const serpUrl = 'https://serpapi.com/search.json'
+    + '?engine=google_shopping'
+    + '&q=' + encodeURIComponent(searchQuery)
+    + '&gl=in&hl=en&currency=INR&num=40'
+    + '&api_key=' + SERP_API_KEY;
+
+  try {
+    const r = await fetch(serpUrl);
+    const data = await r.json();
+    const results = (data.shopping_results || []).slice(0, 15).map(item => ({
+      source: item.source,
+      price: item.price,
+      extracted_price: item.extracted_price,
+      title: (item.title||'').substring(0,60),
+      product_link: (item.product_link||'').substring(0,80),
+      link: (item.link||'').substring(0,80),
+    }));
+    res.json({ searchQuery, totalResults: (data.shopping_results||[]).length, results });
+  } catch(e) {
+    res.json({ error: e.message });
+  }
+});
 
 // ── Debug: see raw ExtraPe output ──
 app.get('/test-link', async (req, res) => {
