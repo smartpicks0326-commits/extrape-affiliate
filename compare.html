@@ -596,19 +596,39 @@ function showResults(storeName, url, affiliateLink, data) {
     }
   } else {
     banner.className = 'banner banner-green';
-    var srcStore = stores.find(function(s) { return s.isSource; });
-    var bestStore = stores[0];
-    if (srcStore && srcStore.isBest) {
+    var srcStore2 = stores.find(function(s) { return s.isSource; });
+    var bestStore2 = stores[0];
+    var calcSavings = (srcStore2 && bestStore2 && !srcStore2.isBest)
+      ? srcStore2.price - bestStore2.price : 0;
+    if (srcStore2 && srcStore2.isBest) {
       banner.innerHTML = '✅ You already have the best deal!';
-    } else if (savings > 0) {
-      banner.innerHTML = '✅ Smart Pick Deals saved you ₹' + savings.toLocaleString('en-IN') + '!';
-    } else {
-      banner.innerHTML = '✅ ' + (bestStore.normalizedName || bestStore.name) + ' has the best price!';
+    } else if (calcSavings > 0) {
+      banner.innerHTML = '✅ Smart Pick Deals just saved you ₹' + calcSavings.toLocaleString('en-IN') + '!';
+    } else if (bestStore2) {
+      banner.innerHTML = '✅ ' + (bestStore2.normalizedName || bestStore2.name) + ' has the best price!';
     }
     banner.style.display = 'flex';
   }
 
+  // Mark source store by matching storeName to the store we came from
+  var detectedSrcName = storeName.toLowerCase();
+  stores = stores.map(function(s) {
+    var n = (s.normalizedName || s.name || '').toLowerCase();
+    var isSource = n === detectedSrcName || n.includes(detectedSrcName) || detectedSrcName.includes(n);
+    return Object.assign({}, s, { isSource: isSource });
+  });
+
+  // Savings calculation
+  var srcStore = stores.find(function(s) { return s.isSource; });
+  var bestStore = stores[0];
+  if (bestStore) {
+    // recalculate isBest after sorting
+    stores.forEach(function(s) { delete s.isBest; });
+    stores[0].isBest = true;
+  }
+
   // Map stores with affiliate links
+  // Source store uses the ExtraPe affiliate link, others use their constructed store URLs
   allStores = stores.map(function(s) {
     return Object.assign({}, s, {
       displayLink: s.isSource ? affiliateLink : (s.url || url)

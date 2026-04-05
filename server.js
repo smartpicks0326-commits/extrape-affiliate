@@ -300,17 +300,43 @@ app.get('/compare/search', async (req, res) => {
 
     const top = results[0];
 
-    // Parse price correctly — SerpAPI gives extracted_price as a number already
+    // Parse price — extracted_price is a clean number from SerpAPI
     function parsePrice(item) {
-      // extracted_price is a clean number from SerpAPI — most reliable
       if (item.extracted_price && item.extracted_price > 0) return Math.round(item.extracted_price);
-      // Fall back to price string — strip ₹ and commas carefully
-      const raw = (item.price || '').toString().replace(/[₹,\s]/g, '').trim();
+      const raw = (item.price || '').toString().replace(/[₹,]/g, '').trim();
       const parsed = parseFloat(raw);
       return parsed > 0 ? Math.round(parsed) : 0;
     }
 
-    // Group by store — keep lowest price per store
+    // Build a direct store search/product URL from store name + query
+    // SerpAPI product_links are Google redirects — useless. Construct real ones.
+    function buildStoreUrl(storeName, productQuery) {
+      const q = encodeURIComponent(productQuery);
+      const s = storeName.toLowerCase();
+      if (s.includes('amazon'))         return 'https://www.amazon.in/s?k=' + q;
+      if (s.includes('flipkart'))       return 'https://www.flipkart.com/search?q=' + q;
+      if (s.includes('myntra'))         return 'https://www.myntra.com/' + q;
+      if (s.includes('ajio'))           return 'https://www.ajio.com/search/?text=' + q;
+      if (s.includes('nykaa'))          return 'https://www.nykaa.com/search/result/?q=' + q;
+      if (s.includes('tatacliq'))       return 'https://www.tatacliq.com/search/?searchCategory=all&text=' + q;
+      if (s.includes('croma'))          return 'https://www.croma.com/searchB?q=' + q;
+      if (s.includes('snapdeal'))       return 'https://www.snapdeal.com/search?keyword=' + q;
+      if (s.includes('meesho'))         return 'https://www.meesho.com/search?q=' + q;
+      if (s.includes('jiomart'))        return 'https://www.jiomart.com/catalogsearch/result/?q=' + q;
+      if (s.includes('reliance'))       return 'https://www.reliancedigital.in/search?q=' + q;
+      if (s.includes('vijay'))          return 'https://www.vijaysales.com/search/' + q;
+      if (s.includes('shopsy'))         return 'https://shopsy.in/search?q=' + q;
+      if (s.includes('bigbasket'))      return 'https://www.bigbasket.com/ps/?q=' + q;
+      if (s.includes('firstcry'))       return 'https://www.firstcry.com/search?q=' + q;
+      if (s.includes('netmeds'))        return 'https://www.netmeds.com/catalogsearch/result/' + q;
+      if (s.includes('lenskart'))       return 'https://www.lenskart.com/search/?q=' + q;
+      if (s.includes('boat'))           return 'https://www.boat-lifestyle.com/pages/search-results?q=' + q;
+      if (s.includes('mamaearth'))      return 'https://mamaearth.in/search?q=' + q;
+      // Unknown store — fallback to Google Shopping
+      return 'https://www.google.com/search?tbm=shop&q=' + q + '+' + encodeURIComponent(storeName);
+    }
+
+    // Group by normalized store name — keep lowest price
     const storeMap = {};
     results.forEach(item => {
       const rawName = (item.source || '').trim();
@@ -320,16 +346,15 @@ app.get('/compare/search', async (req, res) => {
       const price = parsePrice(item);
       if (price === 0) return;
 
-      // Use product_link (direct store URL) over link (Google redirect)
-      const storeUrl = item.product_link || item.link || '';
-
       if (!storeMap[storeName] || price < storeMap[storeName].price) {
+        // Build real store URL using product title for accurate search
+        const productQ = item.title || searchQuery;
         storeMap[storeName] = {
           name: storeName,
           normalizedName: normalized || rawName,
           rawSource: rawName,
           price,
-          url: storeUrl,
+          url: buildStoreUrl(storeName, productQ),
           image: item.thumbnail || top.thumbnail || '',
           title: item.title || top.title,
         };
@@ -342,14 +367,16 @@ app.get('/compare/search', async (req, res) => {
 
     if (stores.length > 0) stores[0].isBest = true;
 
-    console.log('[SerpAPI] Parsed stores:', stores.map(s => s.name + ':₹' + s.price).join(', '));
+    console.log('[SerpAPI] Parsed stores:', stores.map(s => s.name + ':₹' + s.price + ' → ' + s.url.substring(0,50)).join(' | '));
 
+    // Build final response — include source store info for frontend
     return res.json({
       stores,
       productName: top.title || searchQuery,
       productImage: top.thumbnail || '',
       totalStores: stores.length,
       searchQuery,
+      sourceUrl: url,  // original URL so frontend can mark "you came from here"
     });
 
   } catch(e) {
