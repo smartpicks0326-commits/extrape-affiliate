@@ -234,7 +234,7 @@ app.get('/compare/search', async (req, res) => {
 
   if (!SERP_API_KEY) {
     return res.status(503).json({
-      error: 'SERP_API_KEY not configured. Get a free key at serpapi.com (100 free searches/month)',
+      error: 'SERP_API_KEY not configured. Get free key at serpapi.com',
       needsKey: true
     });
   }
@@ -242,163 +242,154 @@ app.get('/compare/search', async (req, res) => {
   try {
     console.log('[Compare] Searching:', url);
 
-    // Step 1: Get real product title, then extract SHORT core name (4-5 words max)
+    // Step 1: Fetch real product title from page
     let fullTitle = '';
-    let searchQuery = '';
     const title = await fetchProductTitle(url);
-
     if (title && title.length > 5) {
       fullTitle = title;
-      console.log('[SerpAPI] Full title:', fullTitle);
+      console.log('[Compare] Full title:', fullTitle);
+    }
 
-      // Extract CORE product name: strip marketing words, take first 5 meaningful words
-      let core = title
-        .replace(/\|.*/g, '')                    // remove everything after |
-        .replace(/[\(\[].*?[\)\]]/g, '')      // remove parentheses content
+    // Step 2: Build SHORT core query (5 words max) for broad results
+    let searchQuery = '';
+    if (fullTitle) {
+      let core = fullTitle
+        .replace(/\|.*/g, '')
+        .replace(/[\(\[].*?[\)\]]/g, '')
         .replace(/\b(with|for|up to|upto|comes|get|buy|online|india|featuring)\b.*/i, '')
-        .replace(/,.*/, '')                        // remove after first comma
+        .replace(/,.*/, '')
         .replace(/[^a-zA-Z0-9 ]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
-
-      // Take first 5 words — enough to identify product, short enough for broad results
-      const words = core.split(' ').filter(w => w.length > 0);
-      searchQuery = words.slice(0, 5).join(' ');
-      console.log('[SerpAPI] Core search query:', searchQuery);
+      searchQuery = core.split(' ').filter(w => w.length > 0).slice(0, 5).join(' ');
     } else {
-      // Fallback: extract from URL slug
       try {
         const parsed = new URL(url);
         const segs = parsed.pathname.split('/')
           .filter(s => s.length > 3 && !/^[A-Z0-9]{6,}$/.test(s) && !/^(dp|p|product|item|buy|s|ip|d)$/i.test(s));
-        const slug = (segs[0] || '').replace(/-/g, ' ').trim();
-        const slugWords = slug.split(' ').filter(w => w.length > 1);
-        searchQuery = slugWords.slice(0, 5).join(' ');
+        searchQuery = (segs[0] || '').replace(/-/g, ' ').trim().split(' ').slice(0, 5).join(' ');
       } catch(e) {}
     }
 
     if (!searchQuery || searchQuery.length < 3) {
-      return res.status(400).json({ error: 'Could not determine product name from URL' });
+      return res.status(400).json({ error: 'Could not determine product name' });
     }
+    console.log('[Compare] Search query:', searchQuery);
 
-    console.log('[SerpAPI] Final search query:', searchQuery);
-
-    // Step 2: Google Shopping India via SerpAPI
-    // No &location param — it restricts results to a city, we want all of India
-    const serpUrl = 'https://serpapi.com/search.json'
+    // Step 3: Google Shopping search → get top product_id
+    const searchUrl = 'https://serpapi.com/search.json'
       + '?engine=google_shopping'
       + '&q=' + encodeURIComponent(searchQuery)
-      + '&gl=in'           // Country: India
-      + '&hl=en'           // Language: English
-      + '&currency=INR'    // Prices in ₹
-      + '&num=40'          // Get max results
+      + '&gl=in&hl=en&currency=INR&num=40'
       + '&api_key=' + SERP_API_KEY;
 
-    console.log('[SerpAPI] Query:', searchQuery);
-    const r = await fetch(serpUrl, { signal: AbortSignal.timeout(20000) });
-    if (!r.ok) {
-      const errText = await r.text();
-      throw new Error('SerpAPI ' + r.status + ': ' + errText.substring(0, 200));
-    }
-    const data = await r.json();
-    const results = data.shopping_results || [];
-
-    // Log first 3 raw results so we can debug store names and prices
-    console.log('[SerpAPI] Total results:', results.length, 'for:', searchQuery);
-    results.slice(0, 5).forEach((item, i) => {
-      console.log('[SerpAPI] result[' + i + ']:', JSON.stringify({
-        source: item.source,
-        price: item.price,
-        extracted_price: item.extracted_price,
-        link: (item.link||'').substring(0,80),
-        product_link: (item.product_link||'').substring(0,80),
-        title: (item.title||'').substring(0,60)
-      }));
-    });
+    const sr = await fetch(searchUrl, { signal: AbortSignal.timeout(15000) });
+    if (!sr.ok) throw new Error('SerpAPI search ' + sr.status);
+    const searchData = await sr.json();
+    const results = searchData.shopping_results || [];
+    console.log('[Compare] Shopping results:', results.length, 'for:', searchQuery);
 
     if (results.length === 0) {
       return res.json({ stores: [], productName: searchQuery, productImage: '', noResults: true });
     }
 
     const top = results[0];
+    const productTitle = fullTitle || top.title || searchQuery;
+    const productImage = top.thumbnail || '';
 
-    // Parse price — extracted_price is a clean number from SerpAPI
-    function parsePrice(item) {
-      if (item.extracted_price && item.extracted_price > 0) return Math.round(item.extracted_price);
-      const raw = (item.price || '').toString().replace(/[₹,]/g, '').trim();
-      const parsed = parseFloat(raw);
-      return parsed > 0 ? Math.round(parsed) : 0;
-    }
+    // Step 4: Try to get product_id for direct store URLs
+    // Find first result that has a product_id (not all do)
+    const productResult = results.find(r => r.product_id) || results[0];
+    const productId = productResult?.product_id;
 
-    // Build a direct store search/product URL from store name + query
-    // SerpAPI product_links are Google redirects — useless. Construct real ones.
-    function buildStoreUrl(storeName, productQuery) {
-      const q = encodeURIComponent(productQuery);
-      const s = storeName.toLowerCase();
-      if (s.includes('amazon'))         return 'https://www.amazon.in/s?k=' + q;
-      if (s.includes('flipkart'))       return 'https://www.flipkart.com/search?q=' + q;
-      if (s.includes('myntra'))         return 'https://www.myntra.com/' + q;
-      if (s.includes('ajio'))           return 'https://www.ajio.com/search/?text=' + q;
-      if (s.includes('nykaa'))          return 'https://www.nykaa.com/search/result/?q=' + q;
-      if (s.includes('tatacliq'))       return 'https://www.tatacliq.com/search/?searchCategory=all&text=' + q;
-      if (s.includes('croma'))          return 'https://www.croma.com/searchB?q=' + q;
-      if (s.includes('snapdeal'))       return 'https://www.snapdeal.com/search?keyword=' + q;
-      if (s.includes('meesho'))         return 'https://www.meesho.com/search?q=' + q;
-      if (s.includes('jiomart'))        return 'https://www.jiomart.com/catalogsearch/result/?q=' + q;
-      if (s.includes('reliance'))       return 'https://www.reliancedigital.in/search?q=' + q;
-      if (s.includes('vijay'))          return 'https://www.vijaysales.com/search/' + q;
-      if (s.includes('shopsy'))         return 'https://shopsy.in/search?q=' + q;
-      if (s.includes('bigbasket'))      return 'https://www.bigbasket.com/ps/?q=' + q;
-      if (s.includes('firstcry'))       return 'https://www.firstcry.com/search?q=' + q;
-      if (s.includes('netmeds'))        return 'https://www.netmeds.com/catalogsearch/result/' + q;
-      if (s.includes('lenskart'))       return 'https://www.lenskart.com/search/?q=' + q;
-      if (s.includes('boat'))           return 'https://www.boat-lifestyle.com/pages/search-results?q=' + q;
-      if (s.includes('mamaearth'))      return 'https://mamaearth.in/search?q=' + q;
-      // Unknown store — fallback to Google Shopping
-      return 'https://www.google.com/search?tbm=shop&q=' + q + '+' + encodeURIComponent(storeName);
-    }
+    let storeMap = {};
 
-    // Group by normalized store name — keep lowest price
-    const storeMap = {};
-    results.forEach(item => {
-      const rawName = (item.source || '').trim();
-      if (!rawName) return;
-      const normalized = normalizeStoreName(rawName);
-      const storeName = normalized || rawName;
-      const price = parsePrice(item);
-      if (price === 0) return;
+    if (productId) {
+      console.log('[Compare] Got product_id:', productId, '— fetching direct store URLs');
 
-      if (!storeMap[storeName] || price < storeMap[storeName].price) {
-        // Build real store URL using product title for accurate search
-        const productQ = item.title || searchQuery;
-        storeMap[storeName] = {
-          name: storeName,
-          normalizedName: normalized || rawName,
-          rawSource: rawName,
-          price,
-          url: buildStoreUrl(storeName, productQ),
-          image: item.thumbnail || top.thumbnail || '',
-          title: item.title || top.title,
-        };
+      // Step 5: Use google_product engine to get EXACT direct URLs per store
+      const productUrl2 = 'https://serpapi.com/search.json'
+        + '?engine=google_product'
+        + '&product_id=' + productId
+        + '&gl=in&hl=en&currency=INR'
+        + '&api_key=' + SERP_API_KEY;
+
+      try {
+        const pr = await fetch(productUrl2, { signal: AbortSignal.timeout(15000) });
+        if (pr.ok) {
+          const pd = await pr.json();
+          console.log('[Compare] Product detail keys:', Object.keys(pd));
+
+          // sellers_results contains direct product URLs per store
+          const sellers = pd.sellers_results?.online_sellers || [];
+          console.log('[Compare] Direct sellers:', sellers.length);
+
+          sellers.forEach(seller => {
+            const rawName = seller.name || '';
+            const name = normalizeStoreName(rawName) || rawName;
+            if (!name) return;
+            const price = parseFloat((seller.base_price || seller.total_price || '').toString().replace(/[^0-9.]/g, '')) || 0;
+            if (price === 0) return;
+            const directUrl = seller.link || seller.direct_link || '';
+            if (!storeMap[name] || price < storeMap[name].price) {
+              storeMap[name] = { name, normalizedName: name, price, url: directUrl, image: productImage, title: productTitle };
+            }
+          });
+
+          // Also check buying_options for more stores
+          const buying = pd.buying_options || [];
+          buying.forEach(opt => {
+            opt.sellers?.forEach(seller => {
+              const rawName = seller.name || '';
+              const name = normalizeStoreName(rawName) || rawName;
+              if (!name) return;
+              const price = parseFloat((seller.price || '').toString().replace(/[^0-9.]/g, '')) || 0;
+              if (price === 0) return;
+              const directUrl = seller.link || '';
+              if (!storeMap[name] || price < storeMap[name].price) {
+                storeMap[name] = { name, normalizedName: name, price, url: directUrl, image: productImage, title: productTitle };
+              }
+            });
+          });
+
+          console.log('[Compare] Stores from product API:', Object.keys(storeMap).length);
+        }
+      } catch(e) {
+        console.log('[Compare] Product API failed:', e.message, '— using shopping results');
       }
-    });
+    }
 
-    let stores = Object.values(storeMap)
-      .filter(s => s.price > 0)
-      .sort((a, b) => a.price - b.price);
+    // Step 6: Fall back to shopping results if product API gave nothing
+    if (Object.keys(storeMap).length === 0) {
+      console.log('[Compare] Using shopping results with constructed URLs');
+      results.forEach(item => {
+        const rawName = (item.source || '').trim();
+        if (!rawName) return;
+        const normalized = normalizeStoreName(rawName);
+        const name = normalized || rawName;
+        const price = item.extracted_price || parseFloat((item.price || '').replace(/[^0-9.]/g, '')) || 0;
+        if (price === 0) return;
+        // Build direct search URL for that store
+        const productQ = (fullTitle || item.title || searchQuery).substring(0, 100);
+        const storeSearchUrl = buildStoreUrl(name, productQ);
+        if (!storeMap[name] || price < storeMap[name].price) {
+          storeMap[name] = { name, normalizedName: normalized || rawName, price, url: storeSearchUrl, image: item.thumbnail || productImage, title: item.title || productTitle };
+        }
+      });
+    }
 
+    let stores = Object.values(storeMap).filter(s => s.price > 0).sort((a, b) => a.price - b.price);
     if (stores.length > 0) stores[0].isBest = true;
 
-    console.log('[SerpAPI] Parsed stores:', stores.map(s => s.name + ':₹' + s.price + ' → ' + s.url.substring(0,50)).join(' | '));
+    console.log('[Compare] Final stores:', stores.map(s => s.name + ':₹' + s.price).join(', '));
 
-    // Build final response — include source store info for frontend
     return res.json({
       stores,
-      productName: top.title || searchQuery,
-      productImage: top.thumbnail || '',
+      productName: productTitle,
+      productImage,
       totalStores: stores.length,
       searchQuery,
-      sourceUrl: url,  // original URL so frontend can mark "you came from here"
+      sourceUrl: url,
     });
 
   } catch(e) {
@@ -409,6 +400,32 @@ app.get('/compare/search', async (req, res) => {
 
 
 // Normalize store names to match our known stores
+function buildStoreUrl(storeName, productQuery) {
+  const q = encodeURIComponent(productQuery);
+  const s = storeName.toLowerCase();
+  if (s.includes('amazon'))         return 'https://www.amazon.in/s?k=' + q;
+  if (s.includes('flipkart'))       return 'https://www.flipkart.com/search?q=' + q;
+  if (s.includes('myntra'))         return 'https://www.myntra.com/' + q;
+  if (s.includes('ajio'))           return 'https://www.ajio.com/search/?text=' + q;
+  if (s.includes('nykaa'))          return 'https://www.nykaa.com/search/result/?q=' + q;
+  if (s.includes('tatacliq'))       return 'https://www.tatacliq.com/search/?text=' + q;
+  if (s.includes('croma'))          return 'https://www.croma.com/searchB?q=' + q;
+  if (s.includes('snapdeal'))       return 'https://www.snapdeal.com/search?keyword=' + q;
+  if (s.includes('meesho'))         return 'https://www.meesho.com/search?q=' + q;
+  if (s.includes('jiomart'))        return 'https://www.jiomart.com/catalogsearch/result/?q=' + q;
+  if (s.includes('reliance'))       return 'https://www.reliancedigital.in/search?q=' + q;
+  if (s.includes('vijay'))          return 'https://www.vijaysales.com/search/' + q;
+  if (s.includes('shopsy'))         return 'https://shopsy.in/search?q=' + q;
+  if (s.includes('blinkit'))        return 'https://blinkit.com/s/?q=' + q;
+  if (s.includes('swiggy'))         return 'https://www.swiggy.com/search?query=' + q;
+  if (s.includes('bigbasket'))      return 'https://www.bigbasket.com/ps/?q=' + q;
+  if (s.includes('netmeds'))        return 'https://www.netmeds.com/catalogsearch/result/' + q;
+  if (s.includes('lenskart'))       return 'https://www.lenskart.com/search/?q=' + q;
+  if (s.includes('poorvika'))       return 'https://www.poorvika.com/search?search=' + q;
+  if (s.includes('93mobiles'))      return 'https://www.93mobiles.com/search?q=' + q;
+  return 'https://www.google.com/search?tbm=shop&q=' + q + '+site:' + encodeURIComponent(storeName.toLowerCase().replace(/\s/g,'') + '.com');
+}
+
 function normalizeStoreName(source) {
   const s = source.toLowerCase();
   if (s.includes('amazon')) return 'Amazon';
@@ -463,15 +480,30 @@ app.get('/serp/debug', async (req, res) => {
   try {
     const r = await fetch(serpUrl);
     const data = await r.json();
-    const results = (data.shopping_results || []).slice(0, 15).map(item => ({
+    const shopResults = data.shopping_results || [];
+    const results = shopResults.slice(0, 10).map(item => ({
       source: item.source,
       price: item.price,
       extracted_price: item.extracted_price,
+      product_id: item.product_id || null,
       title: (item.title||'').substring(0,60),
       product_link: (item.product_link||'').substring(0,80),
-      link: (item.link||'').substring(0,80),
     }));
-    res.json({ searchQuery, totalResults: (data.shopping_results||[]).length, results });
+
+    // If first result has product_id, also fetch sellers
+    const topId = shopResults.find(r => r.product_id)?.product_id;
+    let sellers = [];
+    if (topId) {
+      const pr2 = await fetch('https://serpapi.com/search.json?engine=google_product&product_id=' + topId + '&gl=in&hl=en&currency=INR&api_key=' + SERP_API_KEY);
+      if (pr2.ok) {
+        const pd = await pr2.json();
+        sellers = (pd.sellers_results?.online_sellers || []).map(s => ({
+          name: s.name, price: s.base_price || s.total_price, link: (s.link||'').substring(0,100)
+        }));
+      }
+    }
+
+    res.json({ searchQuery, totalResults: shopResults.length, topProductId: topId, sellers, results });
   } catch(e) {
     res.json({ error: e.message });
   }
