@@ -231,164 +231,152 @@ async function fetchProductTitle(productUrl) {
 app.get('/compare/search', async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: 'Pass ?url=' });
-
-  if (!SERP_API_KEY) {
-    return res.status(503).json({
-      error: 'SERP_API_KEY not configured. Get free key at serpapi.com',
-      needsKey: true
-    });
-  }
+  if (!SERP_API_KEY) return res.status(503).json({ error: 'SERP_API_KEY not configured', needsKey: true });
 
   try {
     console.log('[Compare] Searching:', url);
 
-    // Step 1: Fetch real product title from page
-    let fullTitle = '';
+    // Step 1: Get real product title
     const title = await fetchProductTitle(url);
+    let shortQuery = '';
     if (title && title.length > 5) {
-      fullTitle = title;
-      console.log('[Compare] Full title:', fullTitle);
-    }
-
-    // Step 2: Build SHORT core query (5 words max) for broad results
-    let searchQuery = '';
-    if (fullTitle) {
-      let core = fullTitle
+      const core = title
         .replace(/\|.*/g, '')
         .replace(/[\(\[].*?[\)\]]/g, '')
         .replace(/\b(with|for|up to|upto|comes|get|buy|online|india|featuring)\b.*/i, '')
         .replace(/,.*/, '')
         .replace(/[^a-zA-Z0-9 ]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      searchQuery = core.split(' ').filter(w => w.length > 0).slice(0, 5).join(' ');
+        .replace(/\s+/g, ' ').trim();
+      shortQuery = core.split(' ').filter(w => w.length > 0).slice(0, 5).join(' ');
     } else {
       try {
-        const parsed = new URL(url);
-        const segs = parsed.pathname.split('/')
+        const segs = new URL(url).pathname.split('/')
           .filter(s => s.length > 3 && !/^[A-Z0-9]{6,}$/.test(s) && !/^(dp|p|product|item|buy|s|ip|d)$/i.test(s));
-        searchQuery = (segs[0] || '').replace(/-/g, ' ').trim().split(' ').slice(0, 5).join(' ');
+        shortQuery = (segs[0]||'').replace(/-/g,' ').trim().split(' ').slice(0,5).join(' ');
       } catch(e) {}
     }
+    if (!shortQuery || shortQuery.length < 3) return res.status(400).json({ error: 'Could not determine product name' });
 
-    if (!searchQuery || searchQuery.length < 3) {
-      return res.status(400).json({ error: 'Could not determine product name' });
-    }
-    console.log('[Compare] Search query:', searchQuery);
+    console.log('[Compare] Short query:', shortQuery);
+    const fullTitle = title || shortQuery;
 
-    // Step 3: Google Shopping search → get top product_id
-    const searchUrl = 'https://serpapi.com/search.json'
-      + '?engine=google_shopping'
-      + '&q=' + encodeURIComponent(searchQuery)
-      + '&gl=in&hl=en&currency=INR&num=40'
-      + '&api_key=' + SERP_API_KEY;
+    // Step 2: Search each major Indian store with site: filter → exact product URLs
+    const TARGET_STORES = [
+      { name: 'Flipkart',        site: 'flipkart.com' },
+      { name: 'Amazon',          site: 'amazon.in' },
+      { name: 'Meesho',          site: 'meesho.com' },
+      { name: 'Croma',           site: 'croma.com' },
+      { name: 'Reliance Digital',site: 'reliancedigital.in' },
+      { name: 'TataCliq',        site: 'tatacliq.com' },
+      { name: 'JioMart',         site: 'jiomart.com' },
+      { name: 'Snapdeal',        site: 'snapdeal.com' },
+      { name: 'Vijay Sales',     site: 'vijaysales.com' },
+    ];
 
-    const sr = await fetch(searchUrl, { signal: AbortSignal.timeout(15000) });
-    if (!sr.ok) throw new Error('SerpAPI search ' + sr.status);
-    const searchData = await sr.json();
-    const results = searchData.shopping_results || [];
-    console.log('[Compare] Shopping results:', results.length, 'for:', searchQuery);
-
-    if (results.length === 0) {
-      return res.json({ stores: [], productName: searchQuery, productImage: '', noResults: true });
-    }
-
-    const top = results[0];
-    const productTitle = fullTitle || top.title || searchQuery;
-    const productImage = top.thumbnail || '';
-
-    // Step 4: Try to get product_id for direct store URLs
-    // Find first result that has a product_id (not all do)
-    const productResult = results.find(r => r.product_id) || results[0];
-    const productId = productResult?.product_id;
-
-    let storeMap = {};
-
-    if (productId) {
-      console.log('[Compare] Got product_id:', productId, '— fetching direct store URLs');
-
-      // Step 5: Use google_product engine to get EXACT direct URLs per store
-      const productUrl2 = 'https://serpapi.com/search.json'
-        + '?engine=google_product'
-        + '&product_id=' + productId
-        + '&gl=in&hl=en&currency=INR'
-        + '&api_key=' + SERP_API_KEY;
-
+    // Run all store searches in parallel
+    const storePromises = TARGET_STORES.map(async store => {
       try {
-        const pr = await fetch(productUrl2, { signal: AbortSignal.timeout(15000) });
-        if (pr.ok) {
-          const pd = await pr.json();
-          console.log('[Compare] Product detail keys:', Object.keys(pd));
+        const q = shortQuery + ' site:' + store.site;
+        const serpUrl = 'https://serpapi.com/search.json'
+          + '?engine=google'
+          + '&q=' + encodeURIComponent(q)
+          + '&gl=in&hl=en&num=3'
+          + '&api_key=' + SERP_API_KEY;
 
-          // sellers_results contains direct product URLs per store
-          const sellers = pd.sellers_results?.online_sellers || [];
-          console.log('[Compare] Direct sellers:', sellers.length);
+        const r = await fetch(serpUrl, { signal: AbortSignal.timeout(12000) });
+        if (!r.ok) return null;
+        const data = await r.json();
+        const organic = data.organic_results || [];
+        if (organic.length === 0) return null;
 
-          sellers.forEach(seller => {
-            const rawName = seller.name || '';
-            const name = normalizeStoreName(rawName) || rawName;
-            if (!name) return;
-            const price = parseFloat((seller.base_price || seller.total_price || '').toString().replace(/[^0-9.]/g, '')) || 0;
-            if (price === 0) return;
-            const directUrl = seller.link || seller.direct_link || '';
-            if (!storeMap[name] || price < storeMap[name].price) {
-              storeMap[name] = { name, normalizedName: name, price, url: directUrl, image: productImage, title: productTitle };
-            }
-          });
+        // Get first result — exact product page on that store
+        const top = organic[0];
+        const productUrl2 = top.link || '';
+        if (!productUrl2 || !productUrl2.includes(store.site)) return null;
 
-          // Also check buying_options for more stores
-          const buying = pd.buying_options || [];
-          buying.forEach(opt => {
-            opt.sellers?.forEach(seller => {
-              const rawName = seller.name || '';
-              const name = normalizeStoreName(rawName) || rawName;
-              if (!name) return;
-              const price = parseFloat((seller.price || '').toString().replace(/[^0-9.]/g, '')) || 0;
-              if (price === 0) return;
-              const directUrl = seller.link || '';
-              if (!storeMap[name] || price < storeMap[name].price) {
-                storeMap[name] = { name, normalizedName: name, price, url: directUrl, image: productImage, title: productTitle };
-              }
-            });
-          });
+        // Extract price from snippet or title
+        const snippet = (top.snippet || top.title || '');
+        const priceMatch = snippet.match(/₹([0-9,]+)/);
+        const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) : 0;
 
-          console.log('[Compare] Stores from product API:', Object.keys(storeMap).length);
-        }
+        console.log('[Compare]', store.name, '→', price ? '₹' + price : 'no price', '|', productUrl2.substring(0, 70));
+        return { name: store.name, normalizedName: store.name, price, url: productUrl2,
+          image: top.thumbnail || '', title: top.title || fullTitle };
       } catch(e) {
-        console.log('[Compare] Product API failed:', e.message, '— using shopping results');
+        console.log('[Compare]', store.name, 'failed:', e.message);
+        return null;
       }
-    }
+    });
 
-    // Step 6: Fall back to shopping results if product API gave nothing
-    if (Object.keys(storeMap).length === 0) {
-      console.log('[Compare] Using shopping results with constructed URLs');
-      results.forEach(item => {
-        const rawName = (item.source || '').trim();
-        if (!rawName) return;
-        const normalized = normalizeStoreName(rawName);
-        const name = normalized || rawName;
-        const price = item.extracted_price || parseFloat((item.price || '').replace(/[^0-9.]/g, '')) || 0;
-        if (price === 0) return;
-        // Build direct search URL for that store
-        const productQ = (fullTitle || item.title || searchQuery).substring(0, 100);
-        const storeSearchUrl = buildStoreUrl(name, productQ);
-        if (!storeMap[name] || price < storeMap[name].price) {
-          storeMap[name] = { name, normalizedName: normalized || rawName, price, url: storeSearchUrl, image: item.thumbnail || productImage, title: item.title || productTitle };
-        }
+    // Also run Google Shopping for product image and prices
+    const shoppingPromise = (async () => {
+      try {
+        const serpUrl = 'https://serpapi.com/search.json'
+          + '?engine=google_shopping'
+          + '&q=' + encodeURIComponent(shortQuery)
+          + '&gl=in&hl=en&currency=INR&num=40'
+          + '&api_key=' + SERP_API_KEY;
+        const r = await fetch(serpUrl, { signal: AbortSignal.timeout(12000) });
+        if (!r.ok) return null;
+        return await r.json();
+      } catch(e) { return null; }
+    })();
+
+    const [storeResults, shoppingData] = await Promise.all([
+      Promise.all(storePromises),
+      shoppingPromise
+    ]);
+
+    // Build price map from Google Shopping for stores that didn't get a price
+    const shoppingPrices = {};
+    const shoppingImage = shoppingData?.shopping_results?.[0]?.thumbnail || '';
+    const shoppingTitle = shoppingData?.shopping_results?.[0]?.title || '';
+    (shoppingData?.shopping_results || []).forEach(item => {
+      const n = normalizeStoreName(item.source || '');
+      if (n && item.extracted_price > 0 && !shoppingPrices[n]) {
+        shoppingPrices[n] = item.extracted_price;
+      }
+    });
+    console.log('[Compare] Shopping prices:', JSON.stringify(shoppingPrices));
+
+    // Merge: use per-store search URL + shopping price if needed
+    let stores = storeResults
+      .filter(s => s !== null)
+      .map(s => {
+        // If per-store search didn't get price, use shopping price
+        const price = s.price > 0 ? s.price : (shoppingPrices[s.name] || 0);
+        return { ...s, price };
+      })
+      .filter(s => s.price > 0);
+
+    // Add any stores from shopping that weren't in per-store search
+    (shoppingData?.shopping_results || []).forEach(item => {
+      const rawName = item.source || '';
+      const name = normalizeStoreName(rawName) || rawName;
+      if (!name || stores.find(s => s.name === name)) return;
+      const price = item.extracted_price || 0;
+      if (price === 0) return;
+      stores.push({
+        name, normalizedName: name,
+        price,
+        url: buildStoreUrl(name, fullTitle),  // search URL as fallback
+        image: item.thumbnail || shoppingImage,
+        title: item.title || fullTitle,
+        isFallback: true
       });
-    }
+    });
 
-    let stores = Object.values(storeMap).filter(s => s.price > 0).sort((a, b) => a.price - b.price);
+    stores.sort((a, b) => a.price - b.price);
     if (stores.length > 0) stores[0].isBest = true;
 
-    console.log('[Compare] Final stores:', stores.map(s => s.name + ':₹' + s.price).join(', '));
+    console.log('[Compare] Final stores:', stores.map(s => s.name + ':₹' + s.price + (s.isFallback ? '(search)' : '(direct)')).join(' | '));
 
     return res.json({
       stores,
-      productName: productTitle,
-      productImage,
+      productName: fullTitle || shoppingTitle,
+      productImage: shoppingImage,
       totalStores: stores.length,
-      searchQuery,
+      searchQuery: shortQuery,
       sourceUrl: url,
     });
 
@@ -460,12 +448,16 @@ app.get('/serp/debug', async (req, res) => {
   let searchQuery = q || '';
   if (url && !q) {
     const title = await fetchProductTitle(url).catch(() => null);
-    if (title) searchQuery = title.substring(0, 80);
-    else {
+    if (title && title.length > 5) {
+      const core = title
+        .replace(/\|.*/g, '').replace(/[\(\[].*?[\)\]]/g, '')
+        .replace(/\b(with|for|up to|upto|comes|get|buy|online|india|featuring)\b.*/i, '')
+        .replace(/,.*/, '').replace(/[^a-zA-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+      searchQuery = core.split(' ').filter(w => w.length > 0).slice(0, 5).join(' ');
+    } else {
       try {
-        const parsed = new URL(url);
-        const segs = parsed.pathname.split('/').filter(s => s.length > 4 && !/^[A-Z0-9]{6,}$/.test(s));
-        searchQuery = (segs[0]||'').replace(/-/g,' ').trim();
+        const segs = new URL(url).pathname.split('/').filter(s => s.length > 3 && !/^[A-Z0-9]{6,}$/.test(s));
+        searchQuery = (segs[0]||'').replace(/-/g,' ').trim().split(' ').slice(0,5).join(' ');
       } catch(e) {}
     }
   }
