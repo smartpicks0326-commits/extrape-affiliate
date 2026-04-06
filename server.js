@@ -257,123 +257,90 @@ app.get('/compare/search', async (req, res) => {
     const fullTitle = title || shortQuery;
     console.log('[Compare] Short query:', shortQuery);
 
-    // Only ExtraPe-supported stores + Meesho
-    // ExtraPe affiliate links work for all these stores
+    // ExtraPe-supported stores only — all get affiliate links
     const TARGET_STORES = [
-      { name: 'Amazon',    site: 'amazon.in',          extrape: true  },
-      { name: 'Flipkart',  site: 'flipkart.com',        extrape: true  },
-      { name: 'Myntra',    site: 'myntra.com',          extrape: true  },
-      { name: 'Ajio',      site: 'ajio.com',            extrape: true  },
-      { name: 'Nykaa',     site: 'nykaa.com',           extrape: true  },
-      { name: 'TataCliq',  site: 'tatacliq.com',        extrape: true  },
-      { name: 'Croma',     site: 'croma.com',           extrape: true  },
-      { name: 'Snapdeal',  site: 'snapdeal.com',        extrape: true  },
-      { name: 'Netmeds',   site: 'netmeds.com',         extrape: true  },
-      { name: 'Lenskart',  site: 'lenskart.com',        extrape: true  },
-      { name: 'Meesho',    site: 'meesho.com',          extrape: false }, // no affiliate but include prices
+      { name: 'Amazon',    site: 'amazon.in'         },
+      { name: 'Flipkart',  site: 'flipkart.com'      },
+      { name: 'Myntra',    site: 'myntra.com'         },
+      { name: 'Ajio',      site: 'ajio.com'           },
+      { name: 'Nykaa',     site: 'nykaa.com'          },
+      { name: 'TataCliq',  site: 'tatacliq.com'       },
+      { name: 'Croma',     site: 'croma.com'          },
+      { name: 'Snapdeal',  site: 'snapdeal.com'       },
+      { name: 'Netmeds',   site: 'netmeds.com'        },
+      { name: 'Lenskart',  site: 'lenskart.com'       },
     ];
 
-    // Detect source store to skip re-searching it (we already have affiliate link)
-    const srcHost = (() => { try { return new URL(url).hostname.replace('www.',''); } catch(e) { return ''; } })();
-    const srcStoreName = normalizeStoreName(srcHost.split('.')[0]) || '';
+    // Step 2: Google Shopping — MOST ACCURATE prices, direct from store feeds
+    // Run this first as it's the single most important call
+    const shoppingUrl = 'https://serpapi.com/search.json'
+      + '?engine=google_shopping'
+      + '&q=' + encodeURIComponent(shortQuery)
+      + '&gl=in&hl=en&currency=INR&num=40'
+      + '&api_key=' + SERP_API_KEY;
 
-    // Search each store in parallel using Google site: search
-    const storePromises = TARGET_STORES.map(async store => {
+    // Step 3: Per-store site: searches for DIRECT product page URLs
+    const siteSearches = TARGET_STORES.map(async store => {
       try {
         const q = shortQuery + ' site:' + store.site;
-        const serpUrl = 'https://serpapi.com/search.json'
-          + '?engine=google'
-          + '&q=' + encodeURIComponent(q)
-          + '&gl=in&hl=en&num=3'
-          + '&api_key=' + SERP_API_KEY;
-
-        const r = await fetch(serpUrl, { signal: AbortSignal.timeout(12000) });
-        if (!r.ok) return null;
-        const data = await r.json();
-        const organic = data.organic_results || [];
-        if (organic.length === 0) return null;
-
-        const top = organic[0];
-        const productPageUrl = top.link || '';
-        if (!productPageUrl || !productPageUrl.includes(store.site)) return null;
-
-        // Extract price from snippet — Google often shows price in snippet
-        const snippet = (top.snippet || top.rich_snippet?.top?.detected_extensions?.price || '');
-        const priceMatch = snippet.match(/[₹Rs\.\s]([0-9][0-9,]+)/);
-        let price = priceMatch ? parseInt(priceMatch[1].replace(/,/g,'')) : 0;
-
-        // If no price in snippet, try the rich snippet extensions
-        if (!price && top.rich_snippet?.top?.detected_extensions?.price) {
-          price = parseInt(top.rich_snippet.top.detected_extensions.price.toString().replace(/[^0-9]/g,'')) || 0;
-        }
-
-        console.log('[Compare]', store.name, price ? '₹'+price : 'no price', productPageUrl.substring(0,70));
-        return { name: store.name, normalizedName: store.name, price, url: productPageUrl, extrape: store.extrape, image: '', title: top.title || fullTitle };
-      } catch(e) {
-        console.log('[Compare]', store.name, 'error:', e.message);
-        return null;
-      }
+        const r = await fetch('https://serpapi.com/search.json'
+          + '?engine=google&q=' + encodeURIComponent(q)
+          + '&gl=in&hl=en&num=3&api_key=' + SERP_API_KEY,
+          { signal: AbortSignal.timeout(12000) });
+        if (!r.ok) return { name: store.name, url: null };
+        const d = await r.json();
+        const top = (d.organic_results || [])[0];
+        if (!top?.link?.includes(store.site)) return { name: store.name, url: null };
+        return { name: store.name, url: top.link };
+      } catch(e) { return { name: store.name, url: null }; }
     });
 
-    // Also run Google Shopping for prices + product image (single API call)
-    const shoppingPromise = (async () => {
-      try {
-        const serpUrl = 'https://serpapi.com/search.json'
-          + '?engine=google_shopping'
-          + '&q=' + encodeURIComponent(shortQuery)
-          + '&gl=in&hl=en&currency=INR&num=20'
-          + '&api_key=' + SERP_API_KEY;
-        const r = await fetch(serpUrl, { signal: AbortSignal.timeout(12000) });
-        if (!r.ok) return null;
-        return await r.json();
-      } catch(e) { return null; }
-    })();
+    // Run shopping + all site searches in parallel
+    const [shoppingResp, ...siteResults] = await Promise.all([
+      fetch(shoppingUrl, { signal: AbortSignal.timeout(15000) }).then(r => r.json()).catch(() => null),
+      ...siteSearches
+    ]);
 
-    const [storeResults, shoppingData] = await Promise.all([Promise.all(storePromises), shoppingPromise]);
-
-    // Build shopping price map — use as ground-truth prices
-    // Google Shopping prices are accurate (taken from structured data on store pages)
+    // Extract VERIFIED prices from Google Shopping
+    // extracted_price = clean number pulled from store's structured data = ACCURATE
     const shoppingPrices = {};
-    const shoppingImage = shoppingData?.shopping_results?.[0]?.thumbnail || '';
-    (shoppingData?.shopping_results || []).forEach(item => {
+    const shoppingUrls = {};
+    const shoppingImage = shoppingResp?.shopping_results?.[0]?.thumbnail || '';
+
+    (shoppingResp?.shopping_results || []).forEach(item => {
       const n = normalizeStoreName(item.source || '');
-      if (n && item.extracted_price > 0) {
-        // Keep lowest price found per store (some stores have multiple listings)
-        if (!shoppingPrices[n] || item.extracted_price < shoppingPrices[n]) {
-          shoppingPrices[n] = item.extracted_price;
+      if (!n) return;
+      const price = item.extracted_price || 0;
+      if (price > 0 && (!shoppingPrices[n] || price < shoppingPrices[n])) {
+        shoppingPrices[n] = price;
+        // Also store the product link from shopping result if available
+        if (item.product_link && !item.product_link.includes('google.com')) {
+          shoppingUrls[n] = item.product_link;
         }
       }
     });
     console.log('[Compare] Shopping prices:', JSON.stringify(shoppingPrices));
 
-    // Merge results — shopping price is more reliable than snippet price
-    let stores = storeResults
-      .filter(s => s !== null)
-      .map(s => {
-        // Shopping price overrides snippet price — it's scraped directly from store
-        const verifiedPrice = shoppingPrices[s.name] || s.price;
-        return { ...s, price: verifiedPrice };
+    // Build URL map from per-store site: searches
+    const siteUrlMap = {};
+    siteResults.forEach(r => { if (r.url) siteUrlMap[r.name] = r.url; });
+    console.log('[Compare] Direct URLs found:', Object.keys(siteUrlMap).join(', '));
+
+    // Merge: shopping price (accurate) + site: URL (direct product page)
+    const stores = TARGET_STORES
+      .map(store => {
+        const price = shoppingPrices[store.name] || 0;
+        if (price === 0) return null; // skip if product not on this store
+        // Priority: site:search URL > shopping URL > search fallback
+        const productUrl = siteUrlMap[store.name] || shoppingUrls[store.name] || buildStoreUrl(store.name, fullTitle);
+        return { name: store.name, normalizedName: store.name, price, url: productUrl };
       })
-      .filter(s => s.price > 0);
+      .filter(s => s !== null)
+      .sort((a, b) => a.price - b.price);
 
-    // If a store had no direct URL but we have shopping price, add with search URL
-    TARGET_STORES.forEach(store => {
-      const already = stores.find(s => s.name === store.name);
-      if (!already && shoppingPrices[store.name]) {
-        stores.push({
-          name: store.name, normalizedName: store.name,
-          price: shoppingPrices[store.name],
-          url: buildStoreUrl(store.name, fullTitle),
-          extrape: store.extrape, image: shoppingImage,
-          title: fullTitle, isFallback: true
-        });
-      }
-    });
-
-    stores.sort((a, b) => a.price - b.price);
     if (stores.length > 0) stores[0].isBest = true;
 
-    console.log('[Compare] Final:', stores.map(s => s.name + ':₹' + s.price + (s.isFallback?'(search)':'(direct)')).join(' | '));
+    console.log('[Compare] Final stores:', stores.map(s => s.name + ':₹' + s.price).join(' | '));
 
     return res.json({
       stores,

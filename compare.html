@@ -4,7 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Smart Pick Deals — Compare Prices</title>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 :root{
@@ -13,14 +13,14 @@
   --text:#f0ede8; --muted:#6b6878;
   --success:#29d87a; --error:#ff4b6e;
 }
-body{font-family:'Syne',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;}
 body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:48px 48px;opacity:.35;pointer-events:none;z-index:0;}
 body::after{content:'';position:fixed;top:-200px;left:50%;transform:translateX(-50%);width:700px;height:500px;background:radial-gradient(ellipse,rgba(255,107,43,.1) 0%,transparent 70%);pointer-events:none;z-index:0;}
 nav{position:relative;z-index:10;display:flex;align-items:center;justify-content:space-between;padding:12px 24px;border-bottom:1px solid var(--border);background:rgba(10,10,15,.95);backdrop-filter:blur(12px);}
 .logo{font-size:15px;font-weight:800;text-decoration:none;color:var(--text);}
 .logo em{font-style:normal;color:var(--accent);}
 .nav-btns{display:flex;gap:8px;}
-.nav-btn{font-family:'Syne',sans-serif;font-size:12px;font-weight:700;padding:7px 14px;border-radius:8px;text-decoration:none;transition:all .2s;}
+.nav-btn{font-family:'Inter',sans-serif;font-size:12px;font-weight:700;padding:7px 14px;border-radius:8px;text-decoration:none;transition:all .2s;}
 .nb-outline{color:var(--muted);border:1px solid var(--border);background:transparent;}
 .nb-outline:hover{color:var(--text);border-color:rgba(255,107,43,.35);}
 .nb-fill{background:var(--accent);color:#fff;border:1px solid transparent;box-shadow:0 2px 12px rgba(255,107,43,.25);}
@@ -38,7 +38,7 @@ section{position:relative;z-index:1;}
 #urlInput{flex:1;background:var(--surface);border:1.5px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:13px;padding:13px 18px;border-radius:12px;outline:none;transition:border-color .2s;}
 #urlInput:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(255,107,43,.1);}
 #urlInput::placeholder{color:var(--muted);}
-.btn-go{background:var(--accent);color:#fff;border:none;font-family:'Syne',sans-serif;font-weight:700;font-size:14px;padding:13px 24px;border-radius:12px;cursor:pointer;white-space:nowrap;transition:background .2s;box-shadow:0 4px 18px rgba(255,107,43,.28);}
+.btn-go{background:var(--accent);color:#fff;border:none;font-family:'Inter',sans-serif;font-weight:700;font-size:14px;padding:13px 24px;border-radius:12px;cursor:pointer;white-space:nowrap;transition:background .2s;box-shadow:0 4px 18px rgba(255,107,43,.28);}
 .btn-go:hover{background:var(--accent2);}
 
 /* LOADING */
@@ -64,7 +64,7 @@ section{position:relative;z-index:1;}
 
 /* RESULTS */
 #results{display:none;padding:24px 0 60px;}
-.back-btn{display:inline-flex;align-items:center;gap:6px;background:none;border:none;color:var(--muted);font-family:'Syne',sans-serif;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:18px;padding:0;}
+.back-btn{display:inline-flex;align-items:center;gap:6px;background:none;border:none;color:var(--muted);font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:18px;padding:0;}
 .back-btn:hover{color:var(--text);}
 .prod-card{display:flex;gap:14px;align-items:center;}
 .prod-img{width:70px;height:70px;border-radius:13px;background:rgba(255,255,255,.04);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;}
@@ -92,12 +92,12 @@ section{position:relative;z-index:1;}
 .tg-purple{color:#a78bfa;background:rgba(167,139,250,.1);border:1px solid rgba(167,139,250,.2);}
 .price{font-family:'DM Mono',monospace;font-size:17px;font-weight:700;flex-shrink:0;min-width:80px;text-align:right;}
 .store-acts{display:flex;flex-direction:column;gap:5px;flex-shrink:0;}
-.btn-visit{background:var(--accent);color:#fff;border:none;font-family:'Syne',sans-serif;font-weight:700;font-size:11px;padding:7px 14px;border-radius:7px;cursor:pointer;white-space:nowrap;transition:background .2s;}
+.btn-visit{background:var(--accent);color:#fff;border:none;font-family:'Inter',sans-serif;font-weight:700;font-size:11px;padding:7px 14px;border-radius:7px;cursor:pointer;white-space:nowrap;transition:background .2s;}
 .btn-visit:hover{background:var(--accent2);}
-.btn-copy{background:transparent;color:var(--muted);border:1px solid var(--border);font-family:'Syne',sans-serif;font-weight:600;font-size:11px;padding:6px 14px;border-radius:7px;cursor:pointer;white-space:nowrap;transition:all .2s;}
+.btn-copy{background:transparent;color:var(--muted);border:1px solid var(--border);font-family:'Inter',sans-serif;font-weight:600;font-size:11px;padding:6px 14px;border-radius:7px;cursor:pointer;white-space:nowrap;transition:all .2s;}
 .btn-copy:hover{color:var(--text);border-color:rgba(255,107,43,.3);}
 .btn-copy.ok{color:var(--success);border-color:rgba(41,216,122,.3);}
-.view-all{width:100%;background:var(--surface);border:1px solid var(--border);color:var(--muted);font-family:'Syne',sans-serif;font-weight:600;font-size:13px;padding:14px;border-radius:14px;cursor:pointer;margin-top:4px;display:flex;align-items:center;justify-content:center;gap:8px;transition:all .2s;}
+.view-all{width:100%;background:var(--surface);border:1px solid var(--border);color:var(--muted);font-family:'Inter',sans-serif;font-weight:600;font-size:13px;padding:14px;border-radius:14px;cursor:pointer;margin-top:4px;display:flex;align-items:center;justify-content:center;gap:8px;transition:all .2s;}
 .view-all:hover{border-color:rgba(255,107,43,.3);color:var(--text);}
 .view-all svg{transition:transform .3s;}
 .note{font-size:11px;color:var(--muted);text-align:center;padding:10px 0;}
@@ -672,18 +672,15 @@ function renderList(id, stores) {
     if (savingAmt > 0) tags += '<span class="tag tg-purple">Save ₹' + savingAmt.toLocaleString('en-IN') + '</span>';
 
     var priceDisplay = (s.isAffiliateOnly || s.price === 0) ? '' : ('₹' + Number(s.price).toLocaleString('en-IN'));
-    // Meesho: extrape=false → show Visit only, no Copy (no affiliate link)
-    var hasAffiliate = s.extrape !== false;
-    var actionsHTML = '<button class="btn-visit">Visit ↗</button>' +
-      (hasAffiliate ? '<button class="btn-copy">Copy</button>' : '');
-    if (!hasAffiliate) tags += '<span class="tag" style="color:var(--muted);background:rgba(255,255,255,.04);border:1px solid var(--border);">No affiliate</span>';
-
     var div = document.createElement('div');
     div.className = 'store-card' + (s.isBest ? ' best' : '');
     div.innerHTML = '<div class="store-logo">' + logoHTML(name, 24) + '</div>' +
       '<div class="store-body"><div class="store-name">' + name + '</div><div class="tags">' + tags + '</div></div>' +
       '<div class="price">' + priceDisplay + '</div>' +
-      '<div class="store-acts">' + actionsHTML + '</div>';
+      '<div class="store-acts">' +
+        '<button class="btn-visit">Visit ↗</button>' +
+        '<button class="btn-copy">Copy</button>' +
+      '</div>';
 
     var visitBtn = div.querySelector('.btn-visit');
     var copyBtn = div.querySelector('.btn-copy');
