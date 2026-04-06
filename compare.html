@@ -615,7 +615,9 @@ function showResults(storeName, url, affiliateLink, data) {
   stores = stores.map(function(s) {
     var n = (s.normalizedName || s.name || '').toLowerCase();
     var isSource = n === detectedSrcName || n.includes(detectedSrcName) || detectedSrcName.includes(n);
-    return Object.assign({}, s, { isSource: isSource });
+    // extrape flag from backend — false means no affiliate link available
+    var extrape = s.extrape !== false; // default true unless explicitly false
+    return Object.assign({}, s, { isSource: isSource, extrape: extrape });
   });
 
   // Savings calculation
@@ -669,21 +671,24 @@ function renderList(id, stores) {
     if (s.isBest && !s.isSource) tags += '<span class="tag tg-green">🏆 Best Price</span>';
     if (savingAmt > 0) tags += '<span class="tag tg-purple">Save ₹' + savingAmt.toLocaleString('en-IN') + '</span>';
 
-    var priceDisplay = s.isAffiliateOnly ? '' : ('₹' + Number(s.price).toLocaleString('en-IN'));
+    var priceDisplay = (s.isAffiliateOnly || s.price === 0) ? '' : ('₹' + Number(s.price).toLocaleString('en-IN'));
+    // Meesho: extrape=false → show Visit only, no Copy (no affiliate link)
+    var hasAffiliate = s.extrape !== false;
+    var actionsHTML = '<button class="btn-visit">Visit ↗</button>' +
+      (hasAffiliate ? '<button class="btn-copy">Copy</button>' : '');
+    if (!hasAffiliate) tags += '<span class="tag" style="color:var(--muted);background:rgba(255,255,255,.04);border:1px solid var(--border);">No affiliate</span>';
+
     var div = document.createElement('div');
     div.className = 'store-card' + (s.isBest ? ' best' : '');
     div.innerHTML = '<div class="store-logo">' + logoHTML(name, 24) + '</div>' +
       '<div class="store-body"><div class="store-name">' + name + '</div><div class="tags">' + tags + '</div></div>' +
       '<div class="price">' + priceDisplay + '</div>' +
-      '<div class="store-acts">' +
-        '<button class="btn-visit">Visit ↗</button>' +
-        '<button class="btn-copy">Copy</button>' +
-      '</div>';
+      '<div class="store-acts">' + actionsHTML + '</div>';
 
     var visitBtn = div.querySelector('.btn-visit');
     var copyBtn = div.querySelector('.btn-copy');
-    visitBtn.addEventListener('click', function() { window.open(link, '_blank'); });
-    copyBtn.addEventListener('click', function() {
+    if (visitBtn) visitBtn.addEventListener('click', function() { window.open(link, '_blank'); });
+    if (copyBtn) copyBtn.addEventListener('click', function() {
       navigator.clipboard.writeText(link).then(function() {
         copyBtn.textContent = 'Copied!'; copyBtn.classList.add('ok');
         setTimeout(function() { copyBtn.textContent = 'Copy'; copyBtn.classList.remove('ok'); }, 2000);
