@@ -325,128 +325,143 @@ app.get('/compare/search', async (req, res) => {
   if (!SERP_API_KEY) return res.status(503).json({ error: 'SERP_API_KEY not configured', needsKey: true });
 
   try {
-    console.log('[Compare] Searching:', url);
+    console.log('[Compare] URL:', url);
 
-    // Step 1: Get real product title from the source URL
+    // ── Extract product identifier ──
+    // For Amazon: get ASIN (B0XXXXXXXX) — most reliable cross-store identifier
+    // For others: get product title
+    let productId = null;
+    let productQuery = '';
+    let fullTitle = '';
+
+    try {
+      const parsed = new URL(url);
+      const host = parsed.hostname.replace('www.','');
+
+      if (host.includes('amazon') || host.includes('amzn')) {
+        // Extract ASIN from Amazon URL
+        const asinMatch = parsed.pathname.match(/\/dp\/([A-Z0-9]{10})/i) ||
+                          parsed.pathname.match(/\/([A-Z0-9]{10})(?:\/|$)/i);
+        if (asinMatch) {
+          productId = asinMatch[1];
+          console.log('[Compare] Amazon ASIN:', productId);
+        }
+      } else if (host.includes('flipkart')) {
+        // Extract Flipkart PID from URL params
+        const pid = parsed.searchParams.get('pid');
+        if (pid) productId = pid;
+      }
+    } catch(e) {}
+
+    // Get product title
     const title = await fetchProductTitle(url);
-    let shortQuery = '';
     if (title && title.length > 5) {
+      fullTitle = title;
       const core = title
         .replace(/\|.*/g, '').replace(/[\(\[].*?[\)\]]/g, '')
         .replace(/\b(with|for|up to|upto|comes|get|buy|online|india|featuring)\b.*/i, '')
         .replace(/,.*/, '').replace(/[^a-zA-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
-      shortQuery = core.split(' ').filter(w => w.length > 0).slice(0, 5).join(' ');
+      productQuery = core.split(' ').filter(w => w.length > 0).slice(0, 5).join(' ');
     } else {
       try {
         const segs = new URL(url).pathname.split('/')
           .filter(s => s.length > 3 && !/^[A-Z0-9]{6,}$/.test(s) && !/^(dp|p|product|item|buy|s|ip|d)$/i.test(s));
-        shortQuery = (segs[0]||'').replace(/-/g,' ').trim().split(' ').slice(0,5).join(' ');
+        productQuery = (segs[0]||'').replace(/-/g,' ').trim().split(' ').slice(0,5).join(' ');
       } catch(e) {}
     }
-    if (!shortQuery || shortQuery.length < 3) return res.status(400).json({ error: 'Could not determine product name' });
+    if (!productQuery) return res.status(400).json({ error: 'Could not identify product' });
+    fullTitle = fullTitle || productQuery;
+    console.log('[Compare] Product:', fullTitle, '| ASIN:', productId || 'none');
 
-    const fullTitle = title || shortQuery;
-    console.log('[Compare] Product:', fullTitle);
-    console.log('[Compare] Query:', shortQuery);
+    // ── Search query strategy ──
+    // If we have ASIN: search "B0XXXXXX" — extremely specific, finds same product cross-store
+    // If no ASIN: search product title (less precise)
+    const exactQuery = productId ? productId + ' ' + productQuery.split(' ').slice(0,3).join(' ') : productQuery;
+    const broadQuery = productQuery;
 
-    // Build keywords from title for similarity matching
-    // These are the key words that must appear in a result title to be considered the same product
-    const titleKeywords = shortQuery.toLowerCase().split(' ').filter(w => w.length > 2);
-
-    // Similarity: what % of query keywords appear in a result title
-    function titleMatch(resultTitle) {
-      if (!resultTitle) return 0;
-      const rt = resultTitle.toLowerCase();
-      const matches = titleKeywords.filter(kw => rt.includes(kw));
-      return matches.length / titleKeywords.length;
-    }
-
-    const MATCH_THRESHOLD = 0.5; // at least 50% of keywords must match
-
-    // Source store detection
+    // Source store
     const srcHost = (() => { try { return new URL(url).hostname.replace('www.',''); } catch(e) { return ''; } })();
-    const srcStoreName = normalizeStoreName(srcHost.split('.')[0]) ||
-      ['amazon','flipkart','myntra','ajio','nykaa','tatacliq','croma','snapdeal']
-        .find(s => srcHost.includes(s)) || '';
+    const srcStoreName = (() => {
+      if (srcHost.includes('amazon') || srcHost.includes('amzn')) return 'Amazon';
+      if (srcHost.includes('flipkart')) return 'Flipkart';
+      return normalizeStoreName(srcHost.split('.')[0]) || '';
+    })();
 
-    // ExtraPe-supported stores
     const TARGET_STORES = ['Amazon','Flipkart','Myntra','Ajio','Nykaa','TataCliq','Croma','Snapdeal'];
 
-    // Step 2: Google Shopping — run with full title for best matching
-    // Also try with short query to get more results
+    // ── Run two Google Shopping searches in parallel ──
+    // 1. Exact query (with ASIN if available) — very precise
+    // 2. Broad query (title only) — catches more stores
+    console.log('[Compare] Exact query:', exactQuery);
+    console.log('[Compare] Broad query:', broadQuery);
+
     const [r1, r2] = await Promise.all([
       fetch('https://serpapi.com/search.json?engine=google_shopping'
-        + '&q=' + encodeURIComponent(shortQuery)
+        + '&q=' + encodeURIComponent(exactQuery)
         + '&gl=in&hl=en&currency=INR&num=40&api_key=' + SERP_API_KEY,
         { signal: AbortSignal.timeout(15000) }).then(r => r.json()).catch(() => null),
-      // Also search with brand+model only (first 3 words) for broader coverage
       fetch('https://serpapi.com/search.json?engine=google_shopping'
-        + '&q=' + encodeURIComponent(shortQuery.split(' ').slice(0,3).join(' '))
+        + '&q=' + encodeURIComponent(broadQuery)
         + '&gl=in&hl=en&currency=INR&num=40&api_key=' + SERP_API_KEY,
         { signal: AbortSignal.timeout(15000) }).then(r => r.json()).catch(() => null),
     ]);
 
-    // Merge both result sets
-    const allResults = [
-      ...(r1?.shopping_results || []),
-      ...(r2?.shopping_results || []),
-    ];
-    console.log('[Compare] Total shopping results:', allResults.length);
-
+    const all = [...(r1?.shopping_results||[]), ...(r2?.shopping_results||[])];
     const productImage = r1?.shopping_results?.[0]?.thumbnail || r2?.shopping_results?.[0]?.thumbnail || '';
+    console.log('[Compare] Total shopping results:', all.length);
 
-    // Group by store — keep ONLY results where title matches our product
-    // This prevents showing ₹500 knockoffs when the real product is ₹1799
-    const storeMap = {};
-    allResults.forEach(item => {
-      const storeName = normalizeStoreName(item.source || '');
-      if (!TARGET_STORES.includes(storeName)) return;
-
-      const price = item.extracted_price || 0;
-      if (price === 0) return;
-
-      const match = titleMatch(item.title);
-      console.log('[Compare]', storeName, '₹'+price, 'match:'+Math.round(match*100)+'%', item.title?.substring(0,50));
-
-      if (match < MATCH_THRESHOLD) {
-        console.log('[Compare] → SKIPPED (title mismatch)');
-        return;
-      }
-
-      // Keep lowest matching price per store
-      if (!storeMap[storeName] || price < storeMap[storeName].price) {
-        // Use product_link only if it's a real store URL (not a Google redirect)
-        const storeUrl = (item.product_link && !item.product_link.includes('google.com'))
-          ? item.product_link
-          : buildStoreUrl(storeName, fullTitle);
-        storeMap[storeName] = { name: storeName, normalizedName: storeName, price, url: storeUrl, title: item.title };
+    // Log all results for debugging
+    all.slice(0,10).forEach(item => {
+      const store = normalizeStoreName(item.source||'');
+      if (TARGET_STORES.includes(store)) {
+        console.log('[Compare]', store, '₹'+item.extracted_price, item.title?.substring(0,50));
       }
     });
 
-    let stores = Object.values(storeMap).sort((a, b) => a.price - b.price);
-
-    // Mark source store and best price
-    stores = stores.map(s => ({ ...s, isSource: s.name.toLowerCase() === srcStoreName.toLowerCase() }));
-    if (stores.length > 0) stores[0].isBest = true;
-
-    const srcStore = stores.find(s => s.isSource);
-    const savings = srcStore && !srcStore.isBest ? srcStore.price - stores[0].price : 0;
-
-    console.log('[Compare] Final stores:', stores.map(s =>
-      s.name + ':₹' + s.price + (s.isSource?' (src)':'') + (s.isBest?' (best)':'')).join(' | '));
-
-    // Warn if source store not found (might be price mismatch between Google Shopping and real price)
-    if (srcStoreName && !srcStore) {
-      console.log('[Compare] WARNING: Source store', srcStoreName, 'not found in results');
+    // ── Title similarity filter — only accept results matching our product ──
+    const queryWords = productQuery.toLowerCase().split(' ').filter(w => w.length > 2);
+    function similarity(t) {
+      if (!t) return 0;
+      const tl = t.toLowerCase();
+      // If we have ASIN and it appears in the title/description, very high confidence
+      if (productId && tl.includes(productId.toLowerCase())) return 1.0;
+      return queryWords.filter(w => tl.includes(w)).length / queryWords.length;
     }
 
+    // Build store map — keep only results with >50% title match
+    const storeMap = {};
+    all.forEach(item => {
+      const store = normalizeStoreName(item.source || '');
+      if (!TARGET_STORES.includes(store)) return;
+      const price = item.extracted_price || 0;
+      if (price === 0) return;
+      const sim = similarity(item.title);
+      if (sim < 0.5) return; // skip mismatches
+
+      // Use product_link only if it's a real direct store link
+      const link = (item.product_link && !item.product_link.startsWith('https://www.google'))
+        ? item.product_link : buildStoreUrl(store, fullTitle);
+
+      if (!storeMap[store] || price < storeMap[store].price) {
+        storeMap[store] = { name: store, normalizedName: store, price, url: link, sim };
+      }
+    });
+
+    let stores = Object.values(storeMap)
+      .sort((a, b) => a.price - b.price)
+      .map(s => ({ ...s, isSource: s.name === srcStoreName }));
+
+    if (stores.length > 0) stores[0].isBest = true;
+    const src = stores.find(s => s.isSource);
+    const savings = src && !src.isBest ? src.price - stores[0].price : 0;
+
+    console.log('[Compare] FINAL stores:', stores.map(s =>
+      s.name + ':₹' + s.price + (s.isSource?' [src]':'') + (s.isBest?' [best]':'')).join(' | '));
+
     return res.json({
-      stores,
-      productName: fullTitle,
-      productImage,
-      totalStores: stores.length,
-      savings: savings > 0 ? savings : 0,
-      searchQuery: shortQuery,
+      stores, productName: fullTitle, productImage,
+      totalStores: stores.length, savings: savings > 0 ? savings : 0,
+      searchQuery: productQuery,
     });
 
   } catch(e) {
@@ -638,6 +653,7 @@ app.get('/resolve/:code', (req, res) => {
 });
 
 app.get('/', (req, res) => res.send('Smart Pick Deals backend ✅'));
+app.get('/ping', (req, res) => res.json({ status: 'awake', time: new Date().toISOString() }));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('Server on port ' + PORT));
