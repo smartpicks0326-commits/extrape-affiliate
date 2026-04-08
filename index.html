@@ -620,23 +620,57 @@
       loader.classList.add('show');
 
       try {
-        const res = await fetch(BACKEND_URL + '/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, store: store.name })
-        });
-        const data = await res.json();
+        // Wake up Render first if sleeping (free tier sleeps after 15min)
+        document.getElementById('loaderTitle').textContent = 'Connecting...';
+        document.getElementById('loaderSub').textContent = 'Starting up — may take 20-30 seconds on first use';
+
+        // Try with 35 second timeout to handle Render cold start
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 35000);
+
+        let res, data;
+        try {
+          res = await fetch(BACKEND_URL + '/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, store: store.name }),
+            signal: controller.signal
+          });
+          clearTimeout(timer);
+          data = await res.json();
+        } catch(fetchErr) {
+          clearTimeout(timer);
+          if (fetchErr.name === 'AbortError') {
+            throw new Error('Backend is starting up. Please click Convert again in 10 seconds.');
+          }
+          // Network error — backend probably sleeping, wake it up
+          document.getElementById('loaderTitle').textContent = 'Waking up server...';
+          document.getElementById('loaderSub').textContent = 'Free server needs 30 seconds to start. Please wait...';
+          // Retry once after 8 seconds
+          await new Promise(r => setTimeout(r, 8000));
+          const res2 = await fetch(BACKEND_URL + '/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, store: store.name })
+          });
+          data = await res2.json();
+          res = res2;
+        }
+
         if (!res.ok || data.error) throw new Error(data.error || 'Something went wrong.');
+
+        document.getElementById('loaderTitle').textContent = 'Generating affiliate link...';
+        document.getElementById('loaderSub').textContent = 'Fetching your ' + store.name + ' deal link';
 
         // Start polling every 2 seconds
         pollInterval = setInterval(() => pollStatus(data.requestId, store.name), 2000);
-        pollStatus(data.requestId, store.name); // immediate first check
+        pollStatus(data.requestId, store.name);
 
       } catch(err) {
         loader.classList.remove('show');
         input.disabled = false;
         btn.disabled = false;
-        showError(err.message || 'Failed to connect. Make sure the backend is running.');
+        showError(err.message || 'Connection failed. The server may be starting up — please try again in 30 seconds.');
       }
     }
 

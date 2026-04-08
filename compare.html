@@ -353,20 +353,39 @@ async function runSearch(url) {
   showResults(storeName, url, affiliateLink, compareData);
 }
 
+async function wakeBackend() {
+  // Ping backend — if it's sleeping, this starts the wake-up process
+  try { await fetch(BACKEND + '/ping', { signal: AbortSignal.timeout(35000) }); } catch(e) {}
+}
+
 async function getAffiliateLink(url, store) {
-  var r = await fetch(BACKEND + '/generate', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({url: url, store: store})
-  });
-  var d = await r.json();
-  if (!d.requestId) return url;
-  for (var i = 0; i < 25; i++) {
-    await sleep(2000);
-    var s = await fetch(BACKEND + '/status/' + d.requestId);
-    var sd = await s.json();
-    if (sd.state === 'done') return sd.affiliateLink || url;
-    if (sd.state === 'error') return url;
+  var maxAttempts = 2;
+  for (var attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      var r = await fetch(BACKEND + '/generate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({url: url, store: store}),
+        signal: AbortSignal.timeout(35000)
+      });
+      var d = await r.json();
+      if (!d.requestId) return url;
+      for (var i = 0; i < 25; i++) {
+        await sleep(2000);
+        var s = await fetch(BACKEND + '/status/' + d.requestId, { signal: AbortSignal.timeout(10000) });
+        var sd = await s.json();
+        if (sd.state === 'done') return sd.affiliateLink || url;
+        if (sd.state === 'error') return url;
+      }
+      return url;
+    } catch(e) {
+      console.log('[Affiliate] Attempt ' + (attempt+1) + ' failed:', e.message);
+      if (attempt < maxAttempts - 1) {
+        // Wake up backend and retry
+        await wakeBackend();
+        await sleep(5000);
+      }
+    }
   }
   return url;
 }
@@ -505,6 +524,8 @@ function parseFlashStores(priceData) {
 }
 
 async function getCompareData(url) {
+  // Wake backend first if needed
+  try { await fetch(BACKEND + '/ping', { signal: AbortSignal.timeout(5000) }); } catch(e) {}
   // 1. Try flash.co directly from browser (user's IP — no 401)
   var token = getFlashCookieVal('flash_auth_token');
   if (token) {
