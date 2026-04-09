@@ -38,37 +38,39 @@ function isSupported(url) {
   catch { return false; }
 }
 
-// ── Clean affiliate URL → branded go link ──
+// ── Clean affiliate URL ──
+// Rule: only wrap URLs that expose the affiliate tag visibly.
+// Native short links (fkrt.co, amzn.in, amzn.to) look clean already → pass through.
+// Long Amazon URLs with ?tag= → hide tag behind branded /go/ link.
 function cleanLink(rawUrl) {
   try {
     const parsed = new URL(rawUrl);
     const host   = parsed.hostname;
 
-    // Amazon native shorts (amzn.in/amzn.to) — wrap in go link
-    if (host === 'amzn.in' || host === 'amzn.to') return makeGoLink(rawUrl);
+    // Flipkart native short link — already clean, return as-is
+    if (host === 'fkrt.co') return rawUrl;
 
-    // Flipkart native short — wrap in go link
-    if (host === 'fkrt.co') return makeGoLink(rawUrl);
+    // Amazon native short links — already clean, return as-is
+    if (host === 'amzn.in' || host === 'amzn.to') return rawUrl;
 
-    // Short URL (< 55 chars, not wrapped yet) — wrap in go link
-    if (rawUrl.length < 55) return makeGoLink(rawUrl);
+    // Any other short URL (< 55 chars) — return as-is
+    if (rawUrl.length < 55) return rawUrl;
 
-    // Long Amazon URL with affiliate tag
+    // Long Amazon URL — hide affiliate tag behind branded /go/ link
     if (host.includes('amazon')) {
       const asin = (parsed.pathname.match(/\/dp\/([A-Z0-9]{10})/i) || [])[1];
       const tag  = parsed.searchParams.get('tag');
-      if (asin) {
-        const affiliateUrl = 'https://www.amazon.in/dp/' + asin + (tag ? '?tag=' + tag : '');
-        // Display: clean amazon URL (no tag visible)
-        // Click: go link (encodes the full affiliate URL with tag)
+      if (asin && tag) {
+        const affiliateUrl = 'https://www.amazon.in/dp/' + asin + '?tag=' + tag;
         return {
-          displayUrl: 'https://www.amazon.in/dp/' + asin,
-          clickUrl:   makeGoLink(affiliateUrl),
+          displayUrl: 'https://www.amazon.in/dp/' + asin, // clean, no tag shown
+          clickUrl:   makeGoLink(affiliateUrl),            // tag hidden in base64
         };
       }
+      if (asin) return 'https://www.amazon.in/dp/' + asin;
     }
 
-    // All other long URLs — wrap in go link
+    // Other long URLs — wrap to hide any tokens
     return makeGoLink(rawUrl);
 
   } catch(e) { return rawUrl; }
