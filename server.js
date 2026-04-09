@@ -39,41 +39,66 @@ function isSupported(url) {
 }
 
 // ── Clean affiliate URL ──
-// Rule: only wrap URLs that expose the affiliate tag visibly.
-// Native short links (fkrt.co, amzn.in, amzn.to) look clean already → pass through.
-// Long Amazon URLs with ?tag= → hide tag behind branded /go/ link.
+// Returns { displayUrl, clickUrl } or a plain string.
+// displayUrl = what user SEES and COPIES — always clean (no tag, no redirect domain)
+// clickUrl   = what Visit button uses — contains affiliate tag for commission
 function cleanLink(rawUrl) {
   try {
     const parsed = new URL(rawUrl);
     const host   = parsed.hostname;
 
-    // Flipkart native short link — already clean, return as-is
-    if (host === 'fkrt.co') return rawUrl;
+    // ── Flipkart native short (fkrt.co/xxxxx) ──
+    // Clean already. Display & click are the same.
+    if (host === 'fkrt.co') {
+      return { displayUrl: rawUrl, clickUrl: rawUrl };
+    }
 
-    // Amazon native short links — already clean, return as-is
-    if (host === 'amzn.in' || host === 'amzn.to') return rawUrl;
+    // ── Amazon native short (amzn.in/d/xxx or amzn.to/xxx) ──
+    // ExtraPe already embedded the tag inside these — they're clean-looking.
+    if (host === 'amzn.in' || host === 'amzn.to') {
+      return { displayUrl: rawUrl, clickUrl: rawUrl };
+    }
 
-    // Any other short URL (< 55 chars) — return as-is
-    if (rawUrl.length < 55) return rawUrl;
-
-    // Long Amazon URL — hide affiliate tag behind branded /go/ link
+    // ── Long Amazon URL (amazon.in/dp/ASIN?tag=xxx&...) ──
     if (host.includes('amazon')) {
       const asin = (parsed.pathname.match(/\/dp\/([A-Z0-9]{10})/i) || [])[1];
       const tag  = parsed.searchParams.get('tag');
-      if (asin && tag) {
-        const affiliateUrl = 'https://www.amazon.in/dp/' + asin + '?tag=' + tag;
+      if (asin) {
+        const cleanDisplay  = 'https://www.amazon.in/dp/' + asin;       // no tag
+        const affiliateClick = cleanDisplay + (tag ? '?tag=' + tag : ''); // with tag
         return {
-          displayUrl: 'https://www.amazon.in/dp/' + asin, // clean, no tag shown
-          clickUrl:   makeGoLink(affiliateUrl),            // tag hidden in base64
+          displayUrl: cleanDisplay,       // user sees/copies this — perfectly clean
+          clickUrl:   makeGoLink(affiliateClick), // Visit button — tag hidden in base64
         };
       }
-      if (asin) return 'https://www.amazon.in/dp/' + asin;
     }
 
-    // Other long URLs — wrap to hide any tokens
-    return makeGoLink(rawUrl);
+    // ── Flipkart long URL ──
+    if (host.includes('flipkart')) {
+      // Extract pid for clean product URL
+      const pid = parsed.searchParams.get('pid');
+      const slug = parsed.pathname.split('/').filter(s => s && s !== 'p')[0] || '';
+      if (pid && slug) {
+        const cleanDisplay = 'https://www.flipkart.com/' + slug + '/p/' + pid;
+        return {
+          displayUrl: cleanDisplay,
+          clickUrl:   makeGoLink(rawUrl), // full affiliate URL hidden
+        };
+      }
+    }
 
-  } catch(e) { return rawUrl; }
+    // ── Other short URLs (< 55 chars, e.g. other store short links) ──
+    if (rawUrl.length < 55) {
+      return { displayUrl: rawUrl, clickUrl: rawUrl };
+    }
+
+    // ── Everything else ── wrap in go link, display the domain only
+    return {
+      displayUrl: rawUrl,           // best we can do
+      clickUrl:   makeGoLink(rawUrl),
+    };
+
+  } catch(e) { return { displayUrl: rawUrl, clickUrl: rawUrl }; }
 }
 
 // ── Request queue ──
@@ -143,9 +168,10 @@ async function processQueue() {
   req.state = 'processing';
   try {
     const result = await convertExtraPe(req.url);
+    // cleanLink always returns an object now
     if (result && typeof result === 'object') {
-      req.affiliateLink = result.clickUrl;
-      req.displayLink   = result.displayUrl;
+      req.affiliateLink = result.clickUrl;   // Visit button — earns commission
+      req.displayLink   = result.displayUrl; // shown to user — always clean
     } else {
       req.affiliateLink = req.displayLink = result;
     }

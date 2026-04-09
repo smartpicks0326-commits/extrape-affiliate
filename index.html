@@ -576,10 +576,14 @@
           document.getElementById('loader').classList.remove('show');
           document.getElementById('productUrl').disabled = false;
           document.getElementById('convertBtn').disabled = false;
-          // Show clean display URL, store actual click URL separately
+
+          // displayLink = clean URL shown to user and copied (no tag, no pages.dev)
+          // affiliateLink = actual click URL with commission (used only for Visit button)
           const displayUrl = data.displayLink || data.affiliateLink;
           const clickUrl   = data.affiliateLink;
+
           document.getElementById('affiliateLink').textContent = displayUrl;
+          // Store click URL separately — only Visit button uses it
           document.getElementById('affiliateLink').dataset.clickUrl = clickUrl;
           document.getElementById('result').classList.add('show');
 
@@ -682,8 +686,9 @@
 
     function copyLink() {
       const el   = document.getElementById('affiliateLink');
-      // Always copy the commission-earning link (displayUrl = clickUrl now)
-      const link = el.dataset.clickUrl || el.textContent.trim();
+      // Copy the CLEAN display URL — no tag, no redirect domain visible
+      // Commission is earned when user clicks Visit from our page, not from copied links
+      const link = el.textContent.trim();
       const btn  = document.getElementById('copyBtn');
       navigator.clipboard.writeText(link).then(() => {
         btn.textContent = 'Copied!';
@@ -694,6 +699,7 @@
 
     function openLink() {
       const el   = document.getElementById('affiliateLink');
+      // Visit uses affiliate link (with commission) — user goes through our redirect
       const link = el.dataset.clickUrl || el.textContent;
       window.open(link, '_blank');
     }
