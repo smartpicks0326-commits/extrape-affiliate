@@ -122,7 +122,12 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
     <input id="urlInput" type="text" placeholder="https://www.flipkart.com/... or amzn.in/..." autocomplete="off"/>
     <button class="btn-go" id="compareBtn">Compare →</button>
   </div>
-
+  <div id="flashLoginBanner" style="display:none;margin-top:14px;background:rgba(255,107,43,.07);border:1px solid rgba(255,107,43,.2);border-radius:10px;padding:10px 16px;font-size:12px;color:var(--accent2);max-width:560px;width:100%;text-align:center;">
+    ⚡ For 15+ stores &amp; accurate prices —
+    <a href="https://flash.co/home" target="_blank" style="color:var(--accent);font-weight:700;text-decoration:none;">Log in to flash.co</a>
+    in this browser, then compare again.
+    <span style="color:var(--muted);font-size:11px;display:block;margin-top:2px;">Without login we use Google Shopping (fewer stores)</span>
+  </div>
 </section>
 
 <!-- LOADING -->
@@ -241,6 +246,13 @@ function sleep(ms) { return new Promise(function(r){ setTimeout(r, ms); }); }
 document.getElementById('compareBtn').addEventListener('click', function() {
   doCompare();
 });
+
+// Show flash.co login prompt if not logged in
+(function() {
+  const hasFlash = document.cookie.indexOf('flash_auth_token') !== -1;
+  const banner = document.getElementById('flashLoginBanner');
+  if (banner && !hasFlash) banner.style.display = 'block';
+})();
 
 
 document.getElementById('urlInput').addEventListener('keydown', function(e) {
@@ -524,188 +536,239 @@ function parseFlashStores(priceData) {
 }
 
 async function getCompareData(url) {
-  // Wake backend first if needed
+  // Wake backend
   try { await fetch(BACKEND + '/ping', { signal: AbortSignal.timeout(5000) }); } catch(e) {}
-  // 1. Try flash.co directly from browser (user's IP — no 401)
-  var token = getFlashCookieVal('flash_auth_token');
-  if (token) {
+
+  // ── Strategy 1: Flash.co from user browser (if user is logged in) ──
+  // Their browser IP is trusted by flash.co — no 401
+  const flashToken = getCookie('flash_auth_token');
+  const flashDevice = getCookie('flash_device_id') || 'web-' + Math.random().toString(36).slice(2);
+
+  if (flashToken) {
     console.log('[Flash] User is logged in — calling flash.co from browser');
     try {
-      var streamResult = await callFlashStream(url);
-      if (streamResult && streamResult.pageHash) {
-        var priceData = await callFlashPrices(streamResult.pageHash);
-        if (priceData) {
-          var stores = parseFlashStores(priceData);
-          var productName = streamResult.productName ||
-            priceData.productName || priceData.name || priceData.data && priceData.data.name || null;
-          var productImage = streamResult.productImage ||
-            priceData.image || priceData.imageUrl || null;
-          if (stores.length > 0) {
-            console.log('[Flash] Got', stores.length, 'stores from flash.co!');
-            stores.sort(function(a,b) { return a.price - b.price; });
-            stores[0].isBest = true;
-            return { stores: stores, productName: productName, productImage: productImage,
-              totalStores: stores.length, source: 'flash' };
-          }
-        }
+      const flashResult = await callFlashFromBrowser(url, flashToken, flashDevice);
+      if (flashResult && flashResult.stores && flashResult.stores.length > 0) {
+        console.log('[Flash] ✅ Got', flashResult.stores.length, 'stores from flash.co');
+        return { ...flashResult, source: 'flash' };
       }
+      console.log('[Flash] Got response but no stores — falling back to SerpAPI');
     } catch(e) {
-      console.log('[Flash] Browser call failed:', e.message);
+      console.log('[Flash] Browser call failed:', e.message, '— falling back to SerpAPI');
     }
   } else {
-    console.log('[Flash] Not logged in to flash.co — using SerpAPI fallback');
+    console.log('[Flash] Not logged into flash.co — using SerpAPI');
   }
 
-  // 2. Fallback: SerpAPI via our backend
-  var r = await fetch(BACKEND + '/compare/search?url=' + encodeURIComponent(url));
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  var d = await r.json();
+  // ── Strategy 2: SerpAPI via our backend ──
+  const r = await fetch(BACKEND + '/compare/search?url=' + encodeURIComponent(url),
+    { signal: AbortSignal.timeout(35000) });
+  if (!r.ok) throw new Error('Compare HTTP ' + r.status);
+  const d = await r.json();
   d.source = 'serpapi';
-  console.log('[SerpAPI] Stores:', (d.stores || []).length);
-  if (d.debug) console.log('[SerpAPI] Debug:', JSON.stringify(d.debug).substring(0, 400));
   return d;
 }
 
-function showResults(storeName, url, affiliateLink, data) {
-  document.getElementById('loading').style.display = 'none';
-  document.getElementById('results').style.display = 'block';
-  window.scrollTo(0, 0);
-
-  var stores = (data && data.stores) ? data.stores : [];
-  var productName = (data && data.productName) ? data.productName : ('Product from ' + storeName);
-  var productImage = (data && data.productImage) ? data.productImage : null;
-  var savings = (data && data.savings) ? data.savings : 0;
-
-  // Product header
-  var imgEl = document.getElementById('prodImg');
-  if (productImage) {
-    imgEl.innerHTML = '<img src="' + productImage + '" onerror="this.parentElement.innerHTML=\'<span style=font-size:28px>📦</span>\'" style="width:62px;height:62px;object-fit:contain;border-radius:8px;">';
-  }
-  document.getElementById('prodTitle').textContent = productName;
-  var src = (data && data.source === 'flash') ? 'flash.co' : 'Google Shopping';
-  document.getElementById('prodMeta').textContent = stores.length > 0
-    ? 'Found ' + stores.length + ' stores via ' + src + ' · Sorted lowest to highest'
-    : 'Your affiliate link is ready';
-
-  // Deal banner
-  var banner = document.getElementById('dealBanner');
-  if (stores.length === 0) {
-    banner.style.display = 'flex';
-    if (data && data.needsKey) {
-      banner.className = 'banner banner-warn';
-      banner.innerHTML = '🔑 Add <b>SERP_API_KEY</b> to Render environment (free at serpapi.com) to see all store prices.';
-    } else {
-      banner.className = 'banner banner-warn';
-      banner.innerHTML = '⚠️ Price comparison unavailable. Your affiliate link is ready below.';
-    }
-    // Always show source store affiliate link even when flash fails
-    if (affiliateLink && affiliateLink !== url) {
-      stores = [{
-        name: storeName, normalizedName: storeName,
-        price: 0, url: affiliateLink, isSource: true, isBest: false, isAffiliateOnly: true
-      }];
-    }
-  } else {
-    banner.className = 'banner banner-green';
-    var srcStore2 = stores.find(function(s) { return s.isSource; });
-    var bestStore2 = stores[0];
-    var calcSavings = (srcStore2 && bestStore2 && !srcStore2.isBest)
-      ? srcStore2.price - bestStore2.price : 0;
-    if (srcStore2 && srcStore2.isBest) {
-      banner.innerHTML = '✅ You already have the best deal!';
-    } else if (calcSavings > 0) {
-      banner.innerHTML = '✅ Smart Pick Deals just saved you ₹' + calcSavings.toLocaleString('en-IN') + '!';
-    } else if (bestStore2) {
-      banner.innerHTML = '✅ ' + (bestStore2.normalizedName || bestStore2.name) + ' has the best price!';
-    }
-    banner.style.display = 'flex';
-  }
-
-  // Mark source store by matching storeName to the store we came from
-  var detectedSrcName = storeName.toLowerCase();
-  stores = stores.map(function(s) {
-    var n = (s.normalizedName || s.name || '').toLowerCase();
-    var isSource = n === detectedSrcName || n.includes(detectedSrcName) || detectedSrcName.includes(n);
-    // extrape flag from backend — false means no affiliate link available
-    var extrape = s.extrape !== false; // default true unless explicitly false
-    return Object.assign({}, s, { isSource: isSource, extrape: extrape });
-  });
-
-  // Savings calculation
-  var srcStore = stores.find(function(s) { return s.isSource; });
-  var bestStore = stores[0];
-  if (bestStore) {
-    // recalculate isBest after sorting
-    stores.forEach(function(s) { delete s.isBest; });
-    stores[0].isBest = true;
-  }
-
-  // Map stores with affiliate links
-  // Source store uses the ExtraPe affiliate link, others use their constructed store URLs
-  allStores = stores.map(function(s) {
-    return Object.assign({}, s, {
-      displayLink: s.isSource ? affiliateLink : (s.url || url)
-    });
-  });
-
-  var rec = allStores.slice(0, 9);
-  var oth = allStores.slice(9);
-
-  document.getElementById('recCount').textContent = '(' + rec.length + ')';
-  document.getElementById('othCount').textContent = '(' + oth.length + ')';
-
-  renderList('recList', rec);
-  renderList('othList', oth);
-
-  if (oth.length > 0) {
-    document.getElementById('viewAllBtn').style.display = 'flex';
-    document.getElementById('viewAllTxt').textContent = 'View all ' + oth.length + ' more stores';
-  } else {
-    document.getElementById('viewAllBtn').style.display = 'none';
-  }
-
-  // Background affiliate loading
-  loadBgLinks(url, affiliateLink);
+function getCookie(name) {
+  const m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
+  return m ? decodeURIComponent(m[1]) : null;
 }
 
-function renderList(id, stores) {
-  var el = document.getElementById(id);
-  if (!el) return;
-  el.innerHTML = '';
-  var srcStore = allStores.find(function(s) { return s.isSource; });
-  stores.forEach(function(s) {
-    var savingAmt = (srcStore && !s.isBest && srcStore.price > s.price) ? (srcStore.price - s.price) : 0;
-    var name = s.normalizedName || s.name;
-    var link = s.displayLink || s.url || '#';
-    var tags = '';
-    if (s.isSource) tags += '<span class="tag tg-orange">You came from here</span>';
-    if (s.isBest && !s.isSource) tags += '<span class="tag tg-green">🏆 Best Price</span>';
-    if (savingAmt > 0) tags += '<span class="tag tg-purple">Save ₹' + savingAmt.toLocaleString('en-IN') + '</span>';
+async function callFlashFromBrowser(productUrl, token, deviceId) {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Calcutta';
 
-    var priceDisplay = (s.isAffiliateOnly || s.price === 0) ? '' : ('₹' + Number(s.price).toLocaleString('en-IN'));
-    var div = document.createElement('div');
-    div.className = 'store-card' + (s.isBest ? ' best' : '');
-    div.innerHTML = '<div class="store-logo">' + logoHTML(name, 24) + '</div>' +
-      '<div class="store-body"><div class="store-name">' + name + '</div><div class="tags">' + tags + '</div></div>' +
-      '<div class="price">' + priceDisplay + '</div>' +
-      '<div class="store-acts">' +
-        '<button class="btn-visit">Visit ↗</button>' +
-        '<button class="btn-copy">Copy</button>' +
-      '</div>';
+  // Step 1: POST to flash stream — identify product
+  const streamParams = new URLSearchParams({
+    source: 'APPEND',
+    context: 'HOME_URL_PASTE',
+    user_agent: navigator.userAgent,
+    device_type: window.innerWidth < 768 ? 'MOBILE' : 'DESKTOP',
+    country_code: 'IN',
+  });
 
-    var visitBtn = div.querySelector('.btn-visit');
-    var copyBtn = div.querySelector('.btn-copy');
-    if (visitBtn) visitBtn.addEventListener('click', function() { window.open(link, '_blank'); });
-    if (copyBtn) copyBtn.addEventListener('click', function() {
-      navigator.clipboard.writeText(link).then(function() {
-        copyBtn.textContent = 'Copied!'; copyBtn.classList.add('ok');
-        setTimeout(function() { copyBtn.textContent = 'Copy'; copyBtn.classList.remove('ok'); }, 2000);
+  const flashHeaders = {
+    'Accept': 'text/event-stream, application/json, */*',
+    'Authorization': 'Bearer ' + token,
+    'Channel-Type': 'web',
+    'Content-Type': 'application/json',
+    'Origin': 'https://flash.co',
+    'X-Country-Code': 'IN',
+    'X-Device-Id': deviceId,
+    'X-Timezone': tz,
+  };
+
+  console.log('[Flash] POSTing URL to stream...');
+  const streamResp = await fetch(
+    'https://apiv3.flash.tech/agents/chat/stream?' + streamParams.toString(),
+    {
+      method: 'POST',
+      headers: flashHeaders,
+      body: JSON.stringify({ message: productUrl, context: 'HOME_URL_PASTE' }),
+      signal: AbortSignal.timeout(30000),
+    }
+  );
+
+  if (!streamResp.ok) {
+    const errText = await streamResp.text().catch(() => '');
+    throw new Error('Flash stream ' + streamResp.status + ': ' + errText.substring(0, 100));
+  }
+
+  const streamText = await streamResp.text();
+  console.log('[Flash] Stream response length:', streamText.length);
+  console.log('[Flash] Stream sample:', streamText.substring(0, 400));
+
+  // Parse SSE stream — extract pageHash / referenceId / product URL
+  let pageHash = null;
+  let productName = null;
+  let productImage = null;
+
+  // Try URL patterns first
+  const urlPatterns = [
+    /flash\.co\/(?:price-compare|item)\/\d+\/[^\/\s"']+\/h\/([A-Za-z0-9_-]{4,})/g,
+    /flash\.co\/(?:price-compare|item)\/[^\/\s"']+\/h\/([A-Za-z0-9_-]{4,})/g,
+  ];
+  for (const pat of urlPatterns) {
+    const m = pat.exec(streamText);
+    if (m) { pageHash = m[1]; console.log('[Flash] pageHash from URL:', pageHash); break; }
+  }
+
+  // Parse SSE lines for JSON data
+  const lines = streamText.split('\n');
+  for (const line of lines) {
+    if (!line.startsWith('data:')) continue;
+    try {
+      const data = JSON.parse(line.slice(5).trim());
+      if (!pageHash) {
+        pageHash = data.pageHash || data.referenceId || data.page_hash ||
+          data.data?.pageHash || data.data?.referenceId || null;
+      }
+      if (!productName) productName = data.productName || data.name || data.data?.name || null;
+      if (!productImage) productImage = data.image || data.imageUrl || data.data?.image || null;
+    } catch(e) {}
+  }
+
+  if (!pageHash) {
+    // Try regex fallback for any hash-like string after /h/
+    const hMatch = streamText.match(/\/h\/([A-Za-z0-9_-]{6,})/);
+    if (hMatch) pageHash = hMatch[1];
+  }
+
+  console.log('[Flash] pageHash:', pageHash, '| product:', productName);
+  if (!pageHash) throw new Error('Could not extract pageHash from flash stream');
+
+  // Step 2: Fetch price comparison data using pageHash
+  // Try both API endpoints flash.co uses
+  const priceEndpoints = [
+    'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
+    'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash,
+    'https://apiv3.flash.tech/api/v1/price-compare/' + pageHash,
+  ];
+
+  let priceData = null;
+  for (const endpoint of priceEndpoints) {
+    try {
+      const pr = await fetch(endpoint, {
+        headers: { ...flashHeaders, 'Content-Type': undefined },
+        signal: AbortSignal.timeout(15000),
       });
-    });
+      if (!pr.ok) { console.log('[Flash] Endpoint', endpoint.substring(50), 'returned', pr.status); continue; }
+      priceData = await pr.json();
+      console.log('[Flash] Price data keys:', Object.keys(priceData || {}));
+      console.log('[Flash] Price data sample:', JSON.stringify(priceData).substring(0, 500));
+      break;
+    } catch(e) {
+      console.log('[Flash] Endpoint failed:', e.message);
+    }
+  }
 
-    el.appendChild(div);
-  });
+  if (!priceData) throw new Error('Could not fetch price data from flash.co');
+
+  // Step 3: Parse stores from flash.co response
+  // Flash returns stores in various nested structures — deep search
+  const stores = extractFlashStores(priceData);
+  console.log('[Flash] Extracted stores:', stores.length);
+
+  // Get product image if not from stream
+  if (!productImage) {
+    productImage = priceData.imageUrl || priceData.image ||
+      priceData.data?.imageUrl || priceData.data?.image ||
+      priceData.product?.image || null;
+  }
+  if (!productName) {
+    productName = priceData.productName || priceData.name ||
+      priceData.data?.name || priceData.product?.name || null;
+  }
+
+  return { stores, productName, productImage, source: 'flash' };
 }
+
+function extractFlashStores(data) {
+  // Flash.co stores can be in many different locations in the response
+  const candidates = [];
+
+  function deepSearch(obj, depth) {
+    if (!obj || depth > 6 || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) {
+      // Check if this array looks like a stores array
+      if (obj.length > 0) {
+        const first = obj[0];
+        if (first && (
+          first.price !== undefined || first.amount !== undefined ||
+          first.storeName || first.name || first.retailer ||
+          first.store || first.source || first.seller
+        )) {
+          candidates.push(obj);
+        }
+      }
+      obj.forEach(item => deepSearch(item, depth + 1));
+    } else {
+      Object.values(obj).forEach(v => deepSearch(v, depth + 1));
+    }
+  }
+
+  deepSearch(data, 0);
+  console.log('[Flash] Store array candidates:', candidates.length, candidates.map(c => c.length + ' items').join(', '));
+
+  // Use the largest candidate array that has prices
+  const best = candidates.sort((a, b) => b.length - a.length)[0] || [];
+
+  const EXTRAPE_STORES = ['Amazon', 'Flipkart', 'Myntra', 'Ajio', 'Nykaa', 'TataCliq', 'Croma', 'Snapdeal', 'Netmeds', 'Lenskart'];
+
+  return best.map(s => {
+    const rawName = s.storeName || s.name || s.store || s.retailer || s.source || s.seller || '';
+    const normalName = normalizeFlashStore(rawName);
+    const priceRaw = s.price || s.amount || s.salePrice || s.offerPrice || s.mrp || s.finalPrice || 0;
+    const price = parseInt(String(priceRaw).replace(/[^0-9]/g, '')) || 0;
+    const storeUrl = s.url || s.link || s.buyUrl || s.productUrl || s.storeUrl || '';
+    return {
+      name: normalName || rawName,
+      normalizedName: normalName || rawName,
+      price,
+      url: storeUrl,
+      logo: s.logo || s.storeLogo || s.icon || '',
+    };
+  }).filter(s => s.price > 0 && s.name);
+}
+
+function normalizeFlashStore(s) {
+  const l = s.toLowerCase();
+  if (l.includes('amazon'))   return 'Amazon';
+  if (l.includes('flipkart')) return 'Flipkart';
+  if (l.includes('myntra'))   return 'Myntra';
+  if (l.includes('ajio'))     return 'Ajio';
+  if (l.includes('nykaa'))    return 'Nykaa';
+  if (l.includes('tatacliq') || l.includes('tata cliq')) return 'TataCliq';
+  if (l.includes('croma'))    return 'Croma';
+  if (l.includes('snapdeal')) return 'Snapdeal';
+  if (l.includes('reliance')) return 'Reliance Digital';
+  if (l.includes('meesho'))   return 'Meesho';
+  if (l.includes('jiomart'))  return 'JioMart';
+  if (l.includes('blinkit'))  return 'Blinkit';
+  if (l.includes('vijay'))    return 'Vijay Sales';
+  if (l.includes('poorvika')) return 'Poorvika';
+  return '';
+}
+
 
 async function loadBgLinks(srcUrl, srcAffiliate) {
   document.getElementById('linkNote').style.display = 'block';
