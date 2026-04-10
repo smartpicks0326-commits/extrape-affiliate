@@ -1,6 +1,7 @@
-const express = require('express');
-const cors    = require('cors');
+const express  = require('express');
+const cors     = require('cors');
 const { v4: uuidv4 } = require('uuid');
+const mongoose = require('mongoose');
 
 const app = express();
 app.use(express.json());
@@ -101,6 +102,103 @@ function cleanLink(rawUrl) {
   } catch(e) { return { displayUrl: rawUrl, clickUrl: rawUrl }; }
 }
 
+// ── MongoDB Atlas connection ──
+const MONGO_URI = process.env.MONGO_URI || '';
+
+// ── Mongoose Schemas ──
+const counterSchema = new mongoose.Schema({
+  _id:     { type: String },   // 'main'
+  pageVisits:  { type: Number, default: 0 },
+  conversions: { type: Number, default: 0 },
+  clicks:      { type: Number, default: 0 },
+  compares:    { type: Number, default: 0 },
+  storeBreakdown: { type: Map, of: Number, default: {} },
+}, { timestamps: true });
+
+const eventSchema = new mongoose.Schema({
+  type:   { type: String, enum: ['conversion', 'click', 'compare'] },
+  url:    String,
+  store:  String,
+  state:  String,
+  dest:   String,
+  ts:     { type: Date, default: Date.now },
+});
+eventSchema.index({ ts: -1 });  // fast recent queries
+
+let Counter, Event;
+let dbConnected = false;
+
+// In-memory fallback (used if MongoDB not configured or connection fails)
+const memAnalytics = {
+  pageVisits: 0, conversions: 0, clicks: 0, compares: 0,
+  storeBreakdown: {}, recentConversions: [], recentClicks: [],
+};
+
+async function connectDB() {
+  if (!MONGO_URI) {
+    console.log('[DB] MONGO_URI not set — using in-memory analytics');
+    return;
+  }
+  try {
+    await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 5000 });
+    Counter = mongoose.model('Counter', counterSchema);
+    Event   = mongoose.model('Event',   eventSchema);
+    // Ensure the main counter document exists
+    await Counter.findOneAndUpdate(
+      { _id: 'main' },
+      { $setOnInsert: { _id: 'main' } },
+      { upsert: true, new: true }
+    );
+    dbConnected = true;
+    console.log('[DB] MongoDB connected ✅');
+  } catch(e) {
+    console.error('[DB] MongoDB connection failed:', e.message, '— using in-memory fallback');
+  }
+}
+connectDB();
+
+// ── Track functions ──
+async function trackVisit() {
+  if (dbConnected) {
+    await Counter.updateOne({ _id: 'main' }, { $inc: { pageVisits: 1 } }).catch(e => console.error('[DB] trackVisit:', e.message));
+  } else {
+    memAnalytics.pageVisits++;
+  }
+}
+
+async function trackConversion(url, store, state) {
+  if (dbConnected) {
+    const inc = { conversions: 1 };
+    if (store && state === 'done') inc['storeBreakdown.' + store] = 1;
+    await Counter.updateOne({ _id: 'main' }, { $inc: inc }).catch(e => console.error('[DB] trackConversion:', e.message));
+    await new Event({ type: 'conversion', url, store, state, ts: new Date() }).save().catch(() => {});
+  } else {
+    memAnalytics.conversions++;
+    if (store && state === 'done') memAnalytics.storeBreakdown[store] = (memAnalytics.storeBreakdown[store]||0) + 1;
+    memAnalytics.recentConversions.unshift({ url, store, state, ts: Date.now() });
+    if (memAnalytics.recentConversions.length > 50) memAnalytics.recentConversions.pop();
+  }
+}
+
+async function trackClick(dest) {
+  if (dbConnected) {
+    await Counter.updateOne({ _id: 'main' }, { $inc: { clicks: 1 } }).catch(e => console.error('[DB] trackClick:', e.message));
+    await new Event({ type: 'click', dest, ts: new Date() }).save().catch(() => {});
+  } else {
+    memAnalytics.clicks++;
+    memAnalytics.recentClicks.unshift({ dest, ts: Date.now() });
+    if (memAnalytics.recentClicks.length > 50) memAnalytics.recentClicks.pop();
+  }
+}
+
+async function trackCompare() {
+  if (dbConnected) {
+    await Counter.updateOne({ _id: 'main' }, { $inc: { compares: 1 } }).catch(e => console.error('[DB] trackCompare:', e.message));
+  } else {
+    memAnalytics.compares++;
+  }
+}
+
 // ── Request queue ──
 const queue    = [];
 const requests = {};
@@ -176,8 +274,10 @@ async function processQueue() {
       req.affiliateLink = req.displayLink = result;
     }
     req.state = 'done';
+    trackConversion(req.url, req.store, 'done');
   } catch(e) {
     req.state = 'error'; req.error = e.message;
+    trackConversion(req.url, req.store, 'error');
     console.error('Queue error:', e.message);
   } finally {
     processing = false; processQueue();
@@ -230,6 +330,62 @@ function storeSearchUrl(store, q) {
 app.get('/', (req, res) => res.send('Smart Pick Deals ✅'));
 app.get('/ping', (req, res) => res.json({ status:'ok', time:new Date().toISOString() }));
 
+// Track page visits (called from frontend on load)
+app.post('/track/visit', async (req, res) => {
+  await trackVisit().catch(() => {});
+  res.json({ ok: true });
+});
+
+// Dashboard stats endpoint — reads from MongoDB if connected
+app.get('/dashboard/stats', async (req, res) => {
+  try {
+    if (dbConnected) {
+      const counter = await Counter.findById('main').lean();
+      const recentConversions = await Event.find({ type: 'conversion' })
+        .sort({ ts: -1 }).limit(50).lean();
+      const recentClicks = await Event.find({ type: 'click' })
+        .sort({ ts: -1 }).limit(50).lean();
+
+      // Convert Map to plain object for JSON
+      const storeBreakdown = {};
+      if (counter?.storeBreakdown) {
+        for (const [k, v] of Object.entries(counter.storeBreakdown)) {
+          storeBreakdown[k] = v;
+        }
+      }
+
+      return res.json({
+        pageVisits:        counter?.pageVisits   || 0,
+        conversions:       counter?.conversions  || 0,
+        clicks:            counter?.clicks       || 0,
+        compares:          counter?.compares     || 0,
+        storeBreakdown,
+        recentConversions: recentConversions.map(e => ({ url: e.url, store: e.store, state: e.state, ts: e.ts?.getTime() })),
+        recentClicks:      recentClicks.map(e => ({ dest: e.dest, ts: e.ts?.getTime() })),
+        dbConnected:       true,
+        serverUptime:      Math.round(process.uptime() / 60) + ' min',
+        generatedAt:       new Date().toISOString(),
+      });
+    }
+  } catch(e) {
+    console.error('[DB] dashboard/stats error:', e.message);
+  }
+
+  // Fallback: return in-memory data
+  res.json({
+    pageVisits:        memAnalytics.pageVisits,
+    conversions:       memAnalytics.conversions,
+    clicks:            memAnalytics.clicks,
+    compares:          memAnalytics.compares,
+    storeBreakdown:    memAnalytics.storeBreakdown,
+    recentConversions: memAnalytics.recentConversions,
+    recentClicks:      memAnalytics.recentClicks,
+    dbConnected:       false,
+    serverUptime:      Math.round(process.uptime() / 60) + ' min',
+    generatedAt:       new Date().toISOString(),
+  });
+});
+
 app.post('/generate', (req, res) => {
   const { url, store } = req.body;
   if (!url) return res.status(400).json({ error:'No URL.' });
@@ -255,11 +411,17 @@ app.get('/go/:code', (req, res) => {
     const decoded = Buffer.from(
       req.params.code.replace(/-/g,'+').replace(/_/g,'/'), 'base64'
     ).toString();
-    if (decoded.startsWith('http')) return res.redirect(302, decoded);
+    if (decoded.startsWith('http')) {
+      trackClick(decoded.substring(0, 80));
+      return res.redirect(302, decoded);
+    }
   } catch(e) {}
   // Fall back to in-memory short code (old format)
   const url = shortLinks[req.params.code];
-  if (url) return res.redirect(301, url);
+  if (url) {
+    trackClick(url.substring(0, 80));
+    return res.redirect(301, url);
+  }
   return res.status(404).send('Link not found.');
 });
 
@@ -288,6 +450,7 @@ app.get('/compare/search', async (req, res) => {
 
   try {
     console.log('[Compare] URL:', url);
+    trackCompare().catch(() => {});
 
     // Get title
     const title = await fetchTitle(url);
