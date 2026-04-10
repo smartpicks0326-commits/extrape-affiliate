@@ -144,6 +144,9 @@ async function connectDB() {
     console.error('[DB] MONGO_URI still has placeholder <password> — replace it with real password in Render env vars');
     return;
   }
+  // Log URI shape for debugging (hide password)
+  const uriSafe = MONGO_URI.replace(/:([^@]+)@/, ':****@');
+  console.log('[DB] URI shape:', uriSafe);
   try {
     console.log('[DB] Connecting to MongoDB...');
     await mongoose.connect(MONGO_URI, {
@@ -352,11 +355,29 @@ function storeSearchUrl(store, q) {
 app.get('/', (req, res) => res.send('Smart Pick Deals ✅'));
 app.get('/ping', (req, res) => res.json({ status:'ok', time:new Date().toISOString() }));
 
-// Track page visits (called from frontend on load)
+// Track page visits
 app.post('/track/visit', async (req, res) => {
   const page = req.body?.page || req.headers?.referer || '/';
   await trackVisit(page).catch(() => {});
   res.json({ ok: true });
+});
+
+// Track link clicks — called by Cloudflare Pages function after /go/ redirect
+// This fires BEFORE the redirect so we capture every click
+app.post('/track/click', async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  const dest = req.body?.dest || req.body?.url || 'unknown';
+  await trackClick(dest).catch(e => console.error('[DB] /track/click:', e.message));
+  res.json({ ok: true });
+});
+
+app.options('/track/click', (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.sendStatus(204);
 });
 
 // Dashboard stats — supports ?from=ISO&to=ISO date range
@@ -460,7 +481,7 @@ app.get('/go/:code', (req, res) => {
       req.params.code.replace(/-/g,'+').replace(/_/g,'/'), 'base64'
     ).toString();
     if (decoded.startsWith('http')) {
-      trackClick(decoded.substring(0, 80));
+      trackClick(decoded); // full URL
       return res.redirect(302, decoded);
     }
   } catch(e) {}

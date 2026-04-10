@@ -770,6 +770,149 @@ function normalizeFlashStore(s) {
 }
 
 
+
+var EXTRAPE_OK = ['Amazon','Flipkart','Myntra','Ajio','Nykaa','TataCliq','Croma','Snapdeal','Netmeds','Lenskart'];
+
+var LOGOS = {
+  'Amazon':'https://www.amazon.in/favicon.ico',
+  'Flipkart':'https://static-assets-web.flixcart.com/fk-p-linchpin-web/fk-icons/v2/favicon-32x32.png',
+  'Myntra':'https://constant.myntassets.com/web/assets/img/favicon.ico',
+  'Ajio':'https://assets.ajio.com/static/img/Ajio-Favicon.png',
+  'Nykaa':'https://adn-static1.nykaa.com/nykdesignstudio-images/pub/media/favicon/stores/2/fav_nykaa_new.png',
+  'TataCliq':'https://www.tatacliq.com/favicon.ico',
+  'Croma':'https://media.croma.com/image/upload/v1637759004/Croma%20Assets/CMS/Category%20Banners/favicon_b7jkfc.png',
+  'Snapdeal':'https://www.snapdeal.com/favicon.ico',
+  'Meesho':'https://images.meesho.com/images/logo/1x/logo_hd.webp',
+  'JioMart':'https://www.jiomart.com/images/favicon/32X32/apple-touch-icon.png',
+  'Reliance Digital':'https://www.reliancedigital.in/favicon.ico',
+  'Vijay Sales':'https://www.vijaysales.com/favicon.ico',
+  'Poorvika':'https://www.poorvika.com/favicon.ico',
+  'Blinkit':'https://blinkit.com/favicon.ico',
+};
+
+function logoHTML(name, size) {
+  size = size || 24;
+  var url = LOGOS[name];
+  var init = (name||'?')[0].toUpperCase();
+  if (url) return '<img src="'+url+'" width="'+size+'" height="'+size+'" style="object-fit:contain;border-radius:3px;" onerror="this.parentElement.innerHTML='<span style=font-size:14px;font-weight:700>'+init+'</span>'">';
+  return '<span style="font-size:14px;font-weight:700;">'+init+'</span>';
+}
+
+function showResults(storeName, url, affiliateLink, data) {
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('results').style.display = 'block';
+  window.scrollTo(0, 0);
+  showOther = false;
+
+  var stores = (data && data.stores) ? data.stores : [];
+  var productName = (data && data.productName) ? data.productName : ('Product from ' + storeName);
+  var productImage = (data && data.productImage) ? data.productImage : null;
+  var savings = (data && data.savings) ? data.savings : 0;
+  var flashError = (data && data.flashError) ? data.flashError : null;
+  var source = (data && data.source) ? data.source : 'serpapi';
+
+  // Product header
+  var imgEl = document.getElementById('prodImg');
+  if (productImage) {
+    imgEl.innerHTML = '<img src="'+productImage+'" style="width:62px;height:62px;object-fit:contain;border-radius:8px;" onerror="this.parentElement.innerHTML='<span style=font-size:28px>📦</span>'">';
+  }
+  document.getElementById('prodTitle').textContent = productName;
+  var srcLabel = source === 'flash' ? '⚡ flash.co' : '🔍 Google Shopping';
+  document.getElementById('prodMeta').textContent = stores.length > 0
+    ? 'Found '+stores.length+' stores via '+srcLabel+' · Sorted lowest to highest'
+    : 'Your affiliate link is ready';
+
+  // Banner
+  var banner = document.getElementById('dealBanner');
+  if (stores.length === 0) {
+    banner.className = 'banner banner-warn';
+    banner.innerHTML = '⚠️ No matching stores found. Try a different product URL.';
+    banner.style.display = 'flex';
+  } else {
+    banner.className = 'banner banner-green';
+    var src = stores.find(function(s){ return s.isSource; });
+    var best = stores[0];
+    var calcSave = (src && !src.isBest) ? src.price - best.price : 0;
+    if (src && src.isBest) banner.innerHTML = '✅ You already have the best deal!';
+    else if (calcSave > 0) banner.innerHTML = '✅ Smart Pick Deals saved you ₹'+calcSave.toLocaleString('en-IN')+'!';
+    else if (best) banner.innerHTML = '✅ '+(best.normalizedName||best.name)+' has the best price!';
+    banner.style.display = 'flex';
+  }
+
+  // Mark source store
+  var detectedSrc = storeName.toLowerCase();
+  allStores = stores.map(function(s) {
+    var n = (s.normalizedName||s.name||'').toLowerCase();
+    var isSrc = n === detectedSrc || n.includes(detectedSrc) || detectedSrc.includes(n);
+    return Object.assign({}, s, {
+      isSource: isSrc,
+      displayLink: isSrc ? affiliateLink : (s.url || url)
+    });
+  });
+
+  var rec = allStores.slice(0, 9);
+  var oth = allStores.slice(9);
+  document.getElementById('recCount').textContent = '('+rec.length+')';
+  document.getElementById('othCount').textContent = '('+oth.length+')';
+  renderList('recList', rec);
+  renderList('othList', oth);
+
+  if (oth.length > 0) {
+    document.getElementById('viewAllBtn').style.display = 'flex';
+    document.getElementById('viewAllTxt').textContent = 'View all '+oth.length+' more stores';
+  } else {
+    document.getElementById('viewAllBtn').style.display = 'none';
+  }
+
+  loadBgLinks(url, affiliateLink);
+}
+
+function renderList(id, stores) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = '';
+  var srcStore = allStores.find(function(s){ return s.isSource; });
+
+  stores.forEach(function(s) {
+    var name = s.normalizedName || s.name;
+    var link = s.displayLink || s.url || '#';
+    var savingAmt = (srcStore && !s.isBest && srcStore.price > s.price) ? (srcStore.price - s.price) : 0;
+
+    var tags = '';
+    if (s.isSource)            tags += '<span class="tag tg-orange">You came from here</span>';
+    if (s.isBest && !s.isSource) tags += '<span class="tag tg-green">🏆 Best Price</span>';
+    if (savingAmt > 0)         tags += '<span class="tag tg-purple">Save ₹'+savingAmt.toLocaleString('en-IN')+'</span>';
+
+    var priceStr = (s.price > 0) ? '₹'+Number(s.price).toLocaleString('en-IN') : '';
+
+    var div = document.createElement('div');
+    div.className = 'store-card'+(s.isBest?' best':'');
+    div.innerHTML =
+      '<div class="store-logo">'+logoHTML(name,24)+'</div>'+
+      '<div class="store-body"><div class="store-name">'+name+'</div><div class="tags">'+tags+'</div></div>'+
+      '<div class="price">'+priceStr+'</div>'+
+      '<div class="store-acts">'+
+        '<button class="btn-visit">Visit ↗</button>'+
+        '<button class="btn-copy">Copy</button>'+
+      '</div>';
+
+    var vBtn = div.querySelector('.btn-visit');
+    var cBtn = div.querySelector('.btn-copy');
+    (function(l){ // closure to capture link
+      if (vBtn) vBtn.addEventListener('click', function(){ window.open(l,'_blank'); });
+      if (cBtn) cBtn.addEventListener('click', function(){
+        navigator.clipboard.writeText(l).then(function(){
+          cBtn.textContent='Copied!'; cBtn.classList.add('ok');
+          setTimeout(function(){ cBtn.textContent='Copy'; cBtn.classList.remove('ok'); }, 2000);
+        });
+      });
+    })(link);
+
+    el.appendChild(div);
+  });
+}
+
+
 async function loadBgLinks(srcUrl, srcAffiliate) {
   document.getElementById('linkNote').style.display = 'block';
   for (var i = 0; i < allStores.length; i++) {
