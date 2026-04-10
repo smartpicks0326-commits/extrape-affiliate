@@ -116,14 +116,15 @@ const counterSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const eventSchema = new mongoose.Schema({
-  type:   { type: String, enum: ['conversion', 'click', 'compare'] },
+  type:   { type: String, enum: ['conversion', 'click', 'visit', 'compare'] },
   url:    String,
   store:  String,
   state:  String,
   dest:   String,
   ts:     { type: Date, default: Date.now },
 });
-eventSchema.index({ ts: -1 });  // fast recent queries
+eventSchema.index({ ts: -1 });        // fast recent queries
+eventSchema.index({ type: 1, ts: -1 }); // fast type+date queries
 
 let Counter, Event;
 let dbConnected = false;
@@ -139,30 +140,49 @@ async function connectDB() {
     console.log('[DB] MONGO_URI not set — using in-memory analytics');
     return;
   }
+  if (MONGO_URI.includes('<password>')) {
+    console.error('[DB] MONGO_URI still has placeholder <password> — replace it with real password in Render env vars');
+    return;
+  }
   try {
-    await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 5000 });
+    console.log('[DB] Connecting to MongoDB...');
+    await mongoose.connect(MONGO_URI, {
+      serverSelectionTimeoutMS: 15000,
+      socketTimeoutMS: 30000,
+      connectTimeoutMS: 15000,
+    });
     Counter = mongoose.model('Counter', counterSchema);
     Event   = mongoose.model('Event',   eventSchema);
-    // Ensure the main counter document exists
+    // Ensure main counter doc exists
     await Counter.findOneAndUpdate(
       { _id: 'main' },
-      { $setOnInsert: { _id: 'main' } },
+      { $setOnInsert: { _id: 'main', pageVisits: 0, conversions: 0, clicks: 0, compares: 0 } },
       { upsert: true, new: true }
     );
     dbConnected = true;
-    console.log('[DB] MongoDB connected ✅');
+    console.log('[DB] ✅ MongoDB connected successfully');
+    // Log DB name
+    console.log('[DB] Database:', mongoose.connection.name);
   } catch(e) {
-    console.error('[DB] MongoDB connection failed:', e.message, '— using in-memory fallback');
+    console.error('[DB] ❌ MongoDB connection failed:', e.message);
+    console.error('[DB] Check: 1) Password replaced in URI  2) IP 0.0.0.0/0 whitelisted in Atlas  3) Cluster is running');
+    console.log('[DB] Falling back to in-memory analytics');
+    // Retry after 30 seconds
+    setTimeout(connectDB, 30000);
   }
 }
 connectDB();
 
 // ── Track functions ──
-async function trackVisit() {
+async function trackVisit(page) {
   if (dbConnected) {
-    await Counter.updateOne({ _id: 'main' }, { $inc: { pageVisits: 1 } }).catch(e => console.error('[DB] trackVisit:', e.message));
+    await Counter.updateOne({ _id: 'main' }, { $inc: { pageVisits: 1 } })
+      .catch(e => console.error('[DB] trackVisit:', e.message));
+    await new Event({ type: 'visit', url: page || '/', ts: new Date() }).save()
+      .catch(e => console.error('[DB] visit event:', e.message));
   } else {
     memAnalytics.pageVisits++;
+    memAnalytics.recentConversions; // keep in sync
   }
 }
 
@@ -182,8 +202,10 @@ async function trackConversion(url, store, state) {
 
 async function trackClick(dest) {
   if (dbConnected) {
-    await Counter.updateOne({ _id: 'main' }, { $inc: { clicks: 1 } }).catch(e => console.error('[DB] trackClick:', e.message));
-    await new Event({ type: 'click', dest, ts: new Date() }).save().catch(() => {});
+    await Counter.updateOne({ _id: 'main' }, { $inc: { clicks: 1 } })
+      .catch(e => console.error('[DB] trackClick:', e.message));
+    await new Event({ type: 'click', dest: dest.substring(0, 200), ts: new Date() }).save()
+      .catch(e => console.error('[DB] click event:', e.message));
   } else {
     memAnalytics.clicks++;
     memAnalytics.recentClicks.unshift({ dest, ts: Date.now() });
@@ -332,46 +354,71 @@ app.get('/ping', (req, res) => res.json({ status:'ok', time:new Date().toISOStri
 
 // Track page visits (called from frontend on load)
 app.post('/track/visit', async (req, res) => {
-  await trackVisit().catch(() => {});
+  const page = req.body?.page || req.headers?.referer || '/';
+  await trackVisit(page).catch(() => {});
   res.json({ ok: true });
 });
 
-// Dashboard stats endpoint — reads from MongoDB if connected
+// Dashboard stats — supports ?from=ISO&to=ISO date range
 app.get('/dashboard/stats', async (req, res) => {
+  // Default: today from midnight to now (IST = UTC+5:30)
+  const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+  const nowUTC = Date.now();
+  const nowIST = nowUTC + IST_OFFSET;
+  const midnightIST = nowIST - (nowIST % (24*60*60*1000));
+  const defaultFrom = new Date(midnightIST - IST_OFFSET); // back to UTC
+  const defaultTo   = new Date(nowUTC);
+
+  const from = req.query.from ? new Date(req.query.from) : defaultFrom;
+  const to   = req.query.to   ? new Date(req.query.to)   : defaultTo;
+  const dateFilter = { ts: { $gte: from, $lte: to } };
+
   try {
     if (dbConnected) {
-      const counter = await Counter.findById('main').lean();
-      const recentConversions = await Event.find({ type: 'conversion' })
-        .sort({ ts: -1 }).limit(50).lean();
-      const recentClicks = await Event.find({ type: 'click' })
-        .sort({ ts: -1 }).limit(50).lean();
+      // Count events in date range
+      const [visitsCount, conversionsCount, clicksCount, comparesCount] = await Promise.all([
+        Event.countDocuments({ type: 'visit',      ...dateFilter }),
+        Event.countDocuments({ type: 'conversion', state: 'done', ...dateFilter }),
+        Event.countDocuments({ type: 'click',      ...dateFilter }),
+        Event.countDocuments({ type: 'compare',    ...dateFilter }),
+      ]);
 
-      // Convert Map to plain object for JSON
+      // Store breakdown in date range
+      const storeAgg = await Event.aggregate([
+        { $match: { type: 'conversion', state: 'done', ...dateFilter } },
+        { $group: { _id: '$store', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]);
       const storeBreakdown = {};
-      if (counter?.storeBreakdown) {
-        for (const [k, v] of Object.entries(counter.storeBreakdown)) {
-          storeBreakdown[k] = v;
-        }
-      }
+      storeAgg.forEach(s => { if (s._id) storeBreakdown[s._id] = s.count; });
+
+      // Recent events in date range
+      const [recentConversions, recentClicks, recentVisits] = await Promise.all([
+        Event.find({ type: 'conversion', ...dateFilter }).sort({ ts: -1 }).limit(50).lean(),
+        Event.find({ type: 'click',      ...dateFilter }).sort({ ts: -1 }).limit(50).lean(),
+        Event.find({ type: 'visit',      ...dateFilter }).sort({ ts: -1 }).limit(50).lean(),
+      ]);
 
       return res.json({
-        pageVisits:        counter?.pageVisits   || 0,
-        conversions:       counter?.conversions  || 0,
-        clicks:            counter?.clicks       || 0,
-        compares:          counter?.compares     || 0,
+        pageVisits:   visitsCount,
+        conversions:  conversionsCount,
+        clicks:       clicksCount,
+        compares:     comparesCount,
         storeBreakdown,
         recentConversions: recentConversions.map(e => ({ url: e.url, store: e.store, state: e.state, ts: e.ts?.getTime() })),
         recentClicks:      recentClicks.map(e => ({ dest: e.dest, ts: e.ts?.getTime() })),
-        dbConnected:       true,
-        serverUptime:      Math.round(process.uptime() / 60) + ' min',
-        generatedAt:       new Date().toISOString(),
+        recentVisits:      recentVisits.map(e => ({ url: e.url, ts: e.ts?.getTime() })),
+        dbConnected:  true,
+        dateRange:    { from: from.toISOString(), to: to.toISOString() },
+        serverUptime: Math.round(process.uptime() / 60) + ' min',
+        generatedAt:  new Date().toISOString(),
       });
     }
   } catch(e) {
     console.error('[DB] dashboard/stats error:', e.message);
   }
 
-  // Fallback: return in-memory data
+  // Fallback in-memory
   res.json({
     pageVisits:        memAnalytics.pageVisits,
     conversions:       memAnalytics.conversions,
@@ -380,6 +427,7 @@ app.get('/dashboard/stats', async (req, res) => {
     storeBreakdown:    memAnalytics.storeBreakdown,
     recentConversions: memAnalytics.recentConversions,
     recentClicks:      memAnalytics.recentClicks,
+    recentVisits:      [],
     dbConnected:       false,
     serverUptime:      Math.round(process.uptime() / 60) + ' min',
     generatedAt:       new Date().toISOString(),
