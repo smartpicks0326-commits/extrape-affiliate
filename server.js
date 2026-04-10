@@ -203,17 +203,20 @@ async function trackConversion(url, store, state) {
   }
 }
 
-async function trackClick(dest) {
+async function trackClick(dest, store) {
+  const d = (dest || 'unknown').substring(0, 300);
+  const s = store || '';
   if (dbConnected) {
     await Counter.updateOne({ _id: 'main' }, { $inc: { clicks: 1 } })
       .catch(e => console.error('[DB] trackClick:', e.message));
-    await new Event({ type: 'click', dest: dest.substring(0, 200), ts: new Date() }).save()
+    await new Event({ type: 'click', dest: d, store: s, ts: new Date() }).save()
       .catch(e => console.error('[DB] click event:', e.message));
   } else {
     memAnalytics.clicks++;
-    memAnalytics.recentClicks.unshift({ dest, ts: Date.now() });
+    memAnalytics.recentClicks.unshift({ dest: d, store: s, ts: Date.now() });
     if (memAnalytics.recentClicks.length > 50) memAnalytics.recentClicks.pop();
   }
+  console.log('[Track] Click:', s || 'unknown', d.substring(0, 60));
 }
 
 async function trackCompare() {
@@ -362,22 +365,31 @@ app.post('/track/visit', async (req, res) => {
   res.json({ ok: true });
 });
 
-// Track link clicks — called by Cloudflare Pages function after /go/ redirect
-// This fires BEFORE the redirect so we capture every click
+// Track link clicks — called from frontend before opening affiliate link
+// Accepts POST (from Cloudflare function) and GET (from index.html img-beacon)
+const clickCors = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+app.options('/track/click', (req, res) => res.set(clickCors).sendStatus(204));
+
 app.post('/track/click', async (req, res) => {
-  res.set('Access-Control-Allow-Origin', '*');
-  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.set('Access-Control-Allow-Headers', 'Content-Type');
-  const dest = req.body?.dest || req.body?.url || 'unknown';
-  await trackClick(dest).catch(e => console.error('[DB] /track/click:', e.message));
+  res.set(clickCors);
+  const dest = (req.body?.dest || req.body?.url || req.query?.dest || 'unknown').substring(0, 300);
+  const store = req.body?.store || req.query?.store || '';
+  await trackClick(dest, store).catch(e => console.error('[DB] /track/click POST:', e.message));
   res.json({ ok: true });
 });
 
-app.options('/track/click', (req, res) => {
-  res.set('Access-Control-Allow-Origin', '*');
-  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.set('Access-Control-Allow-Headers', 'Content-Type');
-  res.sendStatus(204);
+// GET version — called as a fire-and-forget beacon from frontend
+app.get('/track/click', async (req, res) => {
+  res.set(clickCors);
+  const dest = (req.query?.dest || req.query?.url || 'unknown').substring(0, 300);
+  const store = req.query?.store || '';
+  await trackClick(dest, store).catch(e => console.error('[DB] /track/click GET:', e.message));
+  res.json({ ok: true });
 });
 
 // Dashboard stats — supports ?from=ISO&to=ISO date range

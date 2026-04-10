@@ -698,10 +698,21 @@
     }
 
     function openLink() {
-      const el   = document.getElementById('affiliateLink');
-      // Visit uses affiliate link (with commission) — user goes through our redirect
-      const link = el.dataset.clickUrl || el.textContent;
-      window.open(link, '_blank');
+      const el       = document.getElementById('affiliateLink');
+      const clickUrl = el.dataset.clickUrl || el.textContent.trim();
+      const dispUrl  = el.textContent.trim();
+      const store    = document.getElementById('storeDetected')?.textContent || '';
+
+      // Track the click BEFORE opening (fire-and-forget, doesn't delay open)
+      try {
+        fetch('https://extrape-affiliate.onrender.com/track/click', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ dest: dispUrl, store: store })
+        }).catch(()=>{});
+      } catch(e) {}
+
+      window.open(clickUrl, '_blank');
     }
 
     document.getElementById('productUrl').addEventListener('keydown', e => {

@@ -536,58 +536,51 @@ function parseFlashStores(priceData) {
 }
 
 async function getCompareData(url) {
-  // Wake backend
-  try { await fetch(BACKEND + '/ping', { signal: AbortSignal.timeout(5000) }); } catch(e) {}
+  // Wake backend first
+  try { await fetch(BACKEND + '/ping', { signal: AbortSignal.timeout(8000) }); } catch(e) {}
 
-  // ── Strategy 1: Flash.co from user browser (if user is logged in) ──
-  // Their browser IP is trusted by flash.co — no 401
-  const flashToken = getCookie('flash_auth_token');
-  const flashDevice = getCookie('flash_device_id') || 'web-' + Math.random().toString(36).slice(2);
-
+  // Strategy 1: Flash.co from browser (if logged in — their IP, no 401)
+  var flashToken = getCookie('flash_auth_token');
   if (flashToken) {
-    console.log('[Flash] User is logged in — calling flash.co from browser');
+    console.log('[Flash] Token found — trying flash.co from browser');
     try {
-      const flashResult = await callFlashFromBrowser(url, flashToken, flashDevice);
+      var flashResult = await callFlashFromBrowser(url, flashToken);
       if (flashResult && flashResult.stores && flashResult.stores.length > 0) {
-        console.log('[Flash] ✅ Got', flashResult.stores.length, 'stores from flash.co');
-        return { ...flashResult, source: 'flash' };
+        console.log('[Flash] ✅ Got', flashResult.stores.length, 'stores');
+        return Object.assign(flashResult, { source: 'flash' });
       }
-      console.log('[Flash] Got response but no stores — falling back to SerpAPI');
+      console.log('[Flash] No stores returned — falling back to SerpAPI');
     } catch(e) {
-      console.log('[Flash] Browser call failed:', e.message, '— falling back to SerpAPI');
+      console.log('[Flash] Failed:', e.message, '— falling back to SerpAPI');
     }
   } else {
-    console.log('[Flash] Not logged into flash.co — using SerpAPI');
+    console.log('[Flash] Not logged in — using SerpAPI');
   }
 
-  // ── Strategy 2: SerpAPI via our backend ──
-  const r = await fetch(BACKEND + '/compare/search?url=' + encodeURIComponent(url),
-    { signal: AbortSignal.timeout(35000) });
+  // Strategy 2: SerpAPI via backend
+  var r = await fetch(BACKEND + '/compare/search?url=' + encodeURIComponent(url), {
+    signal: AbortSignal.timeout(45000)
+  });
   if (!r.ok) throw new Error('Compare HTTP ' + r.status);
-  const d = await r.json();
+  var d = await r.json();
   d.source = 'serpapi';
   return d;
 }
 
 function getCookie(name) {
-  const m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
-  return m ? decodeURIComponent(m[1]) : null;
+  try {
+    var m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
+    return m ? decodeURIComponent(m[1]) : null;
+  } catch(e) { return null; }
 }
 
-async function callFlashFromBrowser(productUrl, token, deviceId) {
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Calcutta';
+async function callFlashFromBrowser(productUrl, token) {
+  var deviceId = getCookie('flash_device_id') || ('web-' + Date.now());
+  var tz = 'Asia/Calcutta';
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch(e) {}
 
-  // Step 1: POST to flash stream — identify product
-  const streamParams = new URLSearchParams({
-    source: 'APPEND',
-    context: 'HOME_URL_PASTE',
-    user_agent: navigator.userAgent,
-    device_type: window.innerWidth < 768 ? 'MOBILE' : 'DESKTOP',
-    country_code: 'IN',
-  });
-
-  const flashHeaders = {
-    'Accept': 'text/event-stream, application/json, */*',
+  var headers = {
+    'Accept': 'application/json, text/event-stream, */*',
     'Authorization': 'Bearer ' + token,
     'Channel-Type': 'web',
     'Content-Type': 'application/json',
@@ -597,161 +590,97 @@ async function callFlashFromBrowser(productUrl, token, deviceId) {
     'X-Timezone': tz,
   };
 
-  console.log('[Flash] POSTing URL to stream...');
-  const streamResp = await fetch(
-    'https://apiv3.flash.tech/agents/chat/stream?' + streamParams.toString(),
-    {
-      method: 'POST',
-      headers: flashHeaders,
-      body: JSON.stringify({ message: productUrl, context: 'HOME_URL_PASTE' }),
-      signal: AbortSignal.timeout(30000),
-    }
-  );
+  // Step 1: POST to flash stream to identify product
+  var params = 'source=APPEND&context=HOME_URL_PASTE&device_type=DESKTOP&country_code=IN&user_agent=' + encodeURIComponent(navigator.userAgent);
+  var sr = await fetch('https://apiv3.flash.tech/agents/chat/stream?' + params, {
+    method: 'POST',
+    headers: headers,
+    body: JSON.stringify({ message: productUrl, context: 'HOME_URL_PASTE' }),
+    signal: AbortSignal.timeout(30000),
+  });
 
-  if (!streamResp.ok) {
-    const errText = await streamResp.text().catch(() => '');
-    throw new Error('Flash stream ' + streamResp.status + ': ' + errText.substring(0, 100));
-  }
+  if (!sr.ok) throw new Error('Flash stream ' + sr.status);
+  var streamText = await sr.text();
+  console.log('[Flash] Stream length:', streamText.length, 'sample:', streamText.substring(0, 200));
 
-  const streamText = await streamResp.text();
-  console.log('[Flash] Stream response length:', streamText.length);
-  console.log('[Flash] Stream sample:', streamText.substring(0, 400));
-
-  // Parse SSE stream — extract pageHash / referenceId / product URL
-  let pageHash = null;
-  let productName = null;
-  let productImage = null;
-
-  // Try URL patterns first
-  const urlPatterns = [
-    /flash\.co\/(?:price-compare|item)\/\d+\/[^\/\s"']+\/h\/([A-Za-z0-9_-]{4,})/g,
-    /flash\.co\/(?:price-compare|item)\/[^\/\s"']+\/h\/([A-Za-z0-9_-]{4,})/g,
-  ];
-  for (const pat of urlPatterns) {
-    const m = pat.exec(streamText);
-    if (m) { pageHash = m[1]; console.log('[Flash] pageHash from URL:', pageHash); break; }
-  }
-
-  // Parse SSE lines for JSON data
-  const lines = streamText.split('\n');
-  for (const line of lines) {
-    if (!line.startsWith('data:')) continue;
-    try {
-      const data = JSON.parse(line.slice(5).trim());
-      if (!pageHash) {
-        pageHash = data.pageHash || data.referenceId || data.page_hash ||
-          data.data?.pageHash || data.data?.referenceId || null;
-      }
-      if (!productName) productName = data.productName || data.name || data.data?.name || null;
-      if (!productImage) productImage = data.image || data.imageUrl || data.data?.image || null;
-    } catch(e) {}
-  }
-
+  // Extract pageHash from stream
+  var pageHash = null;
+  var hMatch = streamText.match(/\/h\/([A-Za-z0-9_-]{6,})/);
+  if (hMatch) pageHash = hMatch[1];
   if (!pageHash) {
-    // Try regex fallback for any hash-like string after /h/
-    const hMatch = streamText.match(/\/h\/([A-Za-z0-9_-]{6,})/);
-    if (hMatch) pageHash = hMatch[1];
+    // Try parsing SSE lines
+    streamText.split('\n').forEach(function(line) {
+      if (pageHash || !line.startsWith('data:')) return;
+      try {
+        var d = JSON.parse(line.slice(5).trim());
+        pageHash = d.pageHash || d.referenceId || d.page_hash ||
+          (d.data && (d.data.pageHash || d.data.referenceId)) || null;
+      } catch(e) {}
+    });
   }
 
-  console.log('[Flash] pageHash:', pageHash, '| product:', productName);
-  if (!pageHash) throw new Error('Could not extract pageHash from flash stream');
+  console.log('[Flash] pageHash:', pageHash);
+  if (!pageHash) throw new Error('No pageHash in flash stream');
 
-  // Step 2: Fetch price comparison data using pageHash
-  // Try both API endpoints flash.co uses
-  const priceEndpoints = [
+  // Step 2: Fetch prices for this product
+  var priceData = null;
+  var endpoints = [
     'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
     'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash,
-    'https://apiv3.flash.tech/api/v1/price-compare/' + pageHash,
   ];
 
-  let priceData = null;
-  for (const endpoint of priceEndpoints) {
+  for (var i = 0; i < endpoints.length; i++) {
     try {
-      const pr = await fetch(endpoint, {
-        headers: { ...flashHeaders, 'Content-Type': undefined },
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!pr.ok) { console.log('[Flash] Endpoint', endpoint.substring(50), 'returned', pr.status); continue; }
-      priceData = await pr.json();
-      console.log('[Flash] Price data keys:', Object.keys(priceData || {}));
-      console.log('[Flash] Price data sample:', JSON.stringify(priceData).substring(0, 500));
-      break;
-    } catch(e) {
-      console.log('[Flash] Endpoint failed:', e.message);
-    }
+      var pr = await fetch(endpoints[i], { headers: headers, signal: AbortSignal.timeout(12000) });
+      if (pr.ok) {
+        priceData = await pr.json();
+        console.log('[Flash] Price data keys:', Object.keys(priceData || {}));
+        console.log('[Flash] Price data:', JSON.stringify(priceData).substring(0, 400));
+        if (priceData) break;
+      }
+    } catch(e) { console.log('[Flash] endpoint', i, 'failed:', e.message); }
   }
 
-  if (!priceData) throw new Error('Could not fetch price data from flash.co');
+  if (!priceData) throw new Error('No price data from flash');
 
-  // Step 3: Parse stores from flash.co response
-  // Flash returns stores in various nested structures — deep search
-  const stores = extractFlashStores(priceData);
-  console.log('[Flash] Extracted stores:', stores.length);
+  // Step 3: Extract stores from response
+  var stores = extractFlashStores(priceData);
+  var productName = priceData.productName || priceData.name || (priceData.data && priceData.data.name) || null;
+  var productImage = priceData.imageUrl || priceData.image || (priceData.data && priceData.data.imageUrl) || null;
 
-  // Get product image if not from stream
-  if (!productImage) {
-    productImage = priceData.imageUrl || priceData.image ||
-      priceData.data?.imageUrl || priceData.data?.image ||
-      priceData.product?.image || null;
-  }
-  if (!productName) {
-    productName = priceData.productName || priceData.name ||
-      priceData.data?.name || priceData.product?.name || null;
-  }
-
-  return { stores, productName, productImage, source: 'flash' };
+  return { stores: stores, productName: productName, productImage: productImage };
 }
 
 function extractFlashStores(data) {
-  // Flash.co stores can be in many different locations in the response
-  const candidates = [];
-
-  function deepSearch(obj, depth) {
-    if (!obj || depth > 6 || typeof obj !== 'object') return;
+  var candidates = [];
+  function search(obj, depth) {
+    if (!obj || depth > 7 || typeof obj !== 'object') return;
     if (Array.isArray(obj)) {
-      // Check if this array looks like a stores array
       if (obj.length > 0) {
-        const first = obj[0];
-        if (first && (
-          first.price !== undefined || first.amount !== undefined ||
-          first.storeName || first.name || first.retailer ||
-          first.store || first.source || first.seller
-        )) {
+        var f = obj[0];
+        if (f && (f.price !== undefined || f.amount !== undefined || f.storeName || f.retailer || f.seller || f.store)) {
           candidates.push(obj);
         }
       }
-      obj.forEach(item => deepSearch(item, depth + 1));
+      obj.forEach(function(item) { search(item, depth+1); });
     } else {
-      Object.values(obj).forEach(v => deepSearch(v, depth + 1));
+      Object.values(obj).forEach(function(v) { search(v, depth+1); });
     }
   }
-
-  deepSearch(data, 0);
-  console.log('[Flash] Store array candidates:', candidates.length, candidates.map(c => c.length + ' items').join(', '));
-
-  // Use the largest candidate array that has prices
-  const best = candidates.sort((a, b) => b.length - a.length)[0] || [];
-
-  const EXTRAPE_STORES = ['Amazon', 'Flipkart', 'Myntra', 'Ajio', 'Nykaa', 'TataCliq', 'Croma', 'Snapdeal', 'Netmeds', 'Lenskart'];
-
-  return best.map(s => {
-    const rawName = s.storeName || s.name || s.store || s.retailer || s.source || s.seller || '';
-    const normalName = normalizeFlashStore(rawName);
-    const priceRaw = s.price || s.amount || s.salePrice || s.offerPrice || s.mrp || s.finalPrice || 0;
-    const price = parseInt(String(priceRaw).replace(/[^0-9]/g, '')) || 0;
-    const storeUrl = s.url || s.link || s.buyUrl || s.productUrl || s.storeUrl || '';
-    return {
-      name: normalName || rawName,
-      normalizedName: normalName || rawName,
-      price,
-      url: storeUrl,
-      logo: s.logo || s.storeLogo || s.icon || '',
-    };
-  }).filter(s => s.price > 0 && s.name);
+  search(data, 0);
+  candidates.sort(function(a,b){ return b.length - a.length; });
+  var best = candidates[0] || [];
+  console.log('[Flash] Store candidates:', candidates.map(function(c){ return c.length + ' items'; }));
+  return best.map(function(s) {
+    var rawName = s.storeName || s.name || s.store || s.retailer || s.seller || s.source || '';
+    var normName = normalizeFlashStore(rawName) || rawName;
+    var price = parseInt(String(s.price || s.amount || s.salePrice || s.offerPrice || s.finalPrice || 0).replace(/[^0-9]/g,'')) || 0;
+    return { name: normName, normalizedName: normName, price: price, url: s.url || s.link || s.buyUrl || s.productUrl || '' };
+  }).filter(function(s){ return s.price > 0 && s.name; });
 }
 
 function normalizeFlashStore(s) {
-  const l = s.toLowerCase();
+  var l = (s||'').toLowerCase();
   if (l.includes('amazon'))   return 'Amazon';
   if (l.includes('flipkart')) return 'Flipkart';
   if (l.includes('myntra'))   return 'Myntra';
@@ -765,38 +694,9 @@ function normalizeFlashStore(s) {
   if (l.includes('jiomart'))  return 'JioMart';
   if (l.includes('blinkit'))  return 'Blinkit';
   if (l.includes('vijay'))    return 'Vijay Sales';
-  if (l.includes('poorvika')) return 'Poorvika';
   return '';
 }
 
-
-
-var EXTRAPE_OK = ['Amazon','Flipkart','Myntra','Ajio','Nykaa','TataCliq','Croma','Snapdeal','Netmeds','Lenskart'];
-
-var LOGOS = {
-  'Amazon':'https://www.amazon.in/favicon.ico',
-  'Flipkart':'https://static-assets-web.flixcart.com/fk-p-linchpin-web/fk-icons/v2/favicon-32x32.png',
-  'Myntra':'https://constant.myntassets.com/web/assets/img/favicon.ico',
-  'Ajio':'https://assets.ajio.com/static/img/Ajio-Favicon.png',
-  'Nykaa':'https://adn-static1.nykaa.com/nykdesignstudio-images/pub/media/favicon/stores/2/fav_nykaa_new.png',
-  'TataCliq':'https://www.tatacliq.com/favicon.ico',
-  'Croma':'https://media.croma.com/image/upload/v1637759004/Croma%20Assets/CMS/Category%20Banners/favicon_b7jkfc.png',
-  'Snapdeal':'https://www.snapdeal.com/favicon.ico',
-  'Meesho':'https://images.meesho.com/images/logo/1x/logo_hd.webp',
-  'JioMart':'https://www.jiomart.com/images/favicon/32X32/apple-touch-icon.png',
-  'Reliance Digital':'https://www.reliancedigital.in/favicon.ico',
-  'Vijay Sales':'https://www.vijaysales.com/favicon.ico',
-  'Poorvika':'https://www.poorvika.com/favicon.ico',
-  'Blinkit':'https://blinkit.com/favicon.ico',
-};
-
-function logoHTML(name, size) {
-  size = size || 24;
-  var url = LOGOS[name];
-  var init = (name||'?')[0].toUpperCase();
-  if (url) return '<img src="'+url+'" width="'+size+'" height="'+size+'" style="object-fit:contain;border-radius:3px;" onerror="this.parentElement.innerHTML='<span style=font-size:14px;font-weight:700>'+init+'</span>'">';
-  return '<span style="font-size:14px;font-weight:700;">'+init+'</span>';
-}
 
 function showResults(storeName, url, affiliateLink, data) {
   document.getElementById('loading').style.display = 'none';
