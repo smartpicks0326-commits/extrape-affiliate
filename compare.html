@@ -8,10 +8,10 @@
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 :root{
-  --bg:#0a0a0f; --surface:#13131a; --border:#1e1e2e;
-  --accent:#ff6b2b; --accent2:#ff9a5c;
-  --text:#f0ede8; --muted:#6b6878;
-  --success:#29d87a; --error:#ff4b6e;
+  --bg:#0a0a0f;--surface:#13131a;--border:#1e1e2e;
+  --accent:#ff6b2b;--accent2:#ff9a5c;
+  --text:#f0ede8;--muted:#6b6878;
+  --success:#29d87a;--error:#ff4b6e;
 }
 body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;}
 body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:48px 48px;opacity:.35;pointer-events:none;z-index:0;}
@@ -21,13 +21,12 @@ nav{position:relative;z-index:10;display:flex;align-items:center;justify-content
 .logo em{font-style:normal;color:var(--accent);}
 .nav-btns{display:flex;gap:8px;}
 .nav-btn{font-family:'Inter',sans-serif;font-size:12px;font-weight:700;padding:7px 14px;border-radius:8px;text-decoration:none;transition:all .2s;}
-.nb-outline{color:var(--muted);border:1px solid var(--border);background:transparent;}
-.nb-outline:hover{color:var(--text);border-color:rgba(255,107,43,.35);}
-.nb-fill{background:var(--accent);color:#fff;border:1px solid transparent;box-shadow:0 2px 12px rgba(255,107,43,.25);}
+.nb-out{color:var(--muted);border:1px solid var(--border);background:transparent;}
+.nb-out:hover{color:var(--text);}
+.nb-fill{background:var(--accent);color:#fff;border:1px solid transparent;}
 .nb-fill:hover{background:var(--accent2);}
 section{position:relative;z-index:1;}
 .wrap{max-width:560px;margin:0 auto;padding:0 20px;}
-.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px;margin-bottom:12px;box-shadow:0 8px 40px rgba(0,0,0,.35);}
 
 /* HERO */
 #hero{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:calc(100vh - 52px);text-align:center;padding:40px 20px;}
@@ -40,14 +39,18 @@ section{position:relative;z-index:1;}
 #urlInput::placeholder{color:var(--muted);}
 .btn-go{background:var(--accent);color:#fff;border:none;font-family:'Inter',sans-serif;font-weight:700;font-size:14px;padding:13px 24px;border-radius:12px;cursor:pointer;white-space:nowrap;transition:background .2s;box-shadow:0 4px 18px rgba(255,107,43,.28);}
 .btn-go:hover{background:var(--accent2);}
+.flash-tip{display:none;margin-top:14px;background:rgba(255,107,43,.07);border:1px solid rgba(255,107,43,.2);border-radius:10px;padding:10px 16px;font-size:12px;color:var(--accent2);max-width:560px;width:100%;text-align:center;}
+.flash-tip a{color:var(--accent);font-weight:700;text-decoration:none;}
+.flash-tip span{color:var(--muted);font-size:11px;display:block;margin-top:2px;}
 
 /* LOADING */
 #loading{display:none;padding:36px 0 60px;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px;margin-bottom:12px;box-shadow:0 8px 40px rgba(0,0,0,.35);}
 .src-row{display:flex;align-items:center;gap:12px;}
 .src-logo{width:40px;height:40px;border-radius:10px;background:rgba(255,255,255,.06);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;}
 .src-logo img{width:26px;height:26px;object-fit:contain;}
 .src-name{font-weight:700;font-size:15px;flex:1;}
-.src-tag{font-size:11px;color:var(--muted);background:rgba(255,255,255,.05);border:1px solid var(--border);padding:3px 10px;border-radius:999px;white-space:nowrap;}
+.src-tag{font-size:11px;color:var(--muted);background:rgba(255,255,255,.05);border:1px solid var(--border);padding:3px 10px;border-radius:999px;}
 .rp-lbl{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:5px;}
 .rp-num{font-size:34px;font-weight:800;letter-spacing:-.02em;margin-bottom:10px;}
 .rp-bar{height:5px;background:var(--border);border-radius:999px;overflow:hidden;margin-bottom:8px;}
@@ -72,35 +75,34 @@ section{position:relative;z-index:1;}
 .prod-title{font-size:15px;font-weight:700;line-height:1.3;margin-bottom:3px;}
 .prod-meta{font-size:11px;color:var(--muted);}
 .banner{border-radius:12px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;}
-.banner-green{background:rgba(41,216,122,.08);border:1px solid rgba(41,216,122,.2);color:var(--success);}
-.banner-warn{background:rgba(255,107,43,.08);border:1px solid rgba(255,107,43,.2);color:var(--accent2);}
+.b-green{background:rgba(41,216,122,.08);border:1px solid rgba(41,216,122,.2);color:var(--success);}
+.b-warn{background:rgba(255,107,43,.08);border:1px solid rgba(255,107,43,.2);color:var(--accent2);}
 .sec-hdr{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
 .sec-hdr-title{font-size:14px;font-weight:700;}
-.sec-hdr-count{font-size:11px;font-weight:600;color:var(--muted);background:rgba(255,255,255,.06);border:1px solid var(--border);padding:2px 8px;border-radius:999px;}
-.store-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;gap:12px;transition:border-color .2s,transform .15s;box-shadow:0 2px 16px rgba(0,0,0,.2);}
-.store-card:hover{border-color:rgba(255,107,43,.3);transform:translateY(-1px);}
+.sec-count{font-size:11px;font-weight:600;color:var(--muted);background:rgba(255,255,255,.06);border:1px solid var(--border);padding:2px 8px;border-radius:999px;}
+.store-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;gap:12px;transition:border-color .2s;box-shadow:0 2px 16px rgba(0,0,0,.2);}
+.store-card:hover{border-color:rgba(255,107,43,.3);}
 .store-card.best{border-color:rgba(41,216,122,.3);background:rgba(41,216,122,.03);}
-.store-logo{width:36px;height:36px;border-radius:9px;background:rgba(255,255,255,.05);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;}
+.store-logo{width:36px;height:36px;border-radius:9px;background:rgba(255,255,255,.05);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;font-size:15px;font-weight:800;}
 .store-logo img{width:24px;height:24px;object-fit:contain;border-radius:3px;}
-.store-logo .fb{font-size:16px;}
 .store-body{flex:1;min-width:0;}
 .store-name{font-size:13px;font-weight:700;margin-bottom:4px;}
 .tags{display:flex;gap:4px;flex-wrap:wrap;}
 .tag{font-size:10px;font-weight:600;padding:2px 7px;border-radius:999px;}
-.tg-orange{color:var(--accent2);background:rgba(255,107,43,.1);border:1px solid rgba(255,107,43,.2);}
-.tg-green{color:var(--success);background:rgba(41,216,122,.1);border:1px solid rgba(41,216,122,.2);}
-.tg-purple{color:#a78bfa;background:rgba(167,139,250,.1);border:1px solid rgba(167,139,250,.2);}
+.tg-o{color:var(--accent2);background:rgba(255,107,43,.1);border:1px solid rgba(255,107,43,.2);}
+.tg-g{color:var(--success);background:rgba(41,216,122,.1);border:1px solid rgba(41,216,122,.2);}
+.tg-p{color:#a78bfa;background:rgba(167,139,250,.1);border:1px solid rgba(167,139,250,.2);}
 .price{font-family:'DM Mono',monospace;font-size:17px;font-weight:700;flex-shrink:0;min-width:80px;text-align:right;}
-.store-acts{display:flex;flex-direction:column;gap:5px;flex-shrink:0;}
-.btn-visit{background:var(--accent);color:#fff;border:none;font-family:'Inter',sans-serif;font-weight:700;font-size:11px;padding:7px 14px;border-radius:7px;cursor:pointer;white-space:nowrap;transition:background .2s;}
-.btn-visit:hover{background:var(--accent2);}
-.btn-copy{background:transparent;color:var(--muted);border:1px solid var(--border);font-family:'Inter',sans-serif;font-weight:600;font-size:11px;padding:6px 14px;border-radius:7px;cursor:pointer;white-space:nowrap;transition:all .2s;}
-.btn-copy:hover{color:var(--text);border-color:rgba(255,107,43,.3);}
-.btn-copy.ok{color:var(--success);border-color:rgba(41,216,122,.3);}
+.acts{display:flex;flex-direction:column;gap:5px;flex-shrink:0;}
+.btn-v{background:var(--accent);color:#fff;border:none;font-family:'Inter',sans-serif;font-weight:700;font-size:11px;padding:7px 14px;border-radius:7px;cursor:pointer;white-space:nowrap;transition:background .2s;}
+.btn-v:hover{background:var(--accent2);}
+.btn-c{background:transparent;color:var(--muted);border:1px solid var(--border);font-family:'Inter',sans-serif;font-weight:600;font-size:11px;padding:6px 14px;border-radius:7px;cursor:pointer;white-space:nowrap;transition:all .2s;}
+.btn-c:hover{color:var(--text);border-color:rgba(255,107,43,.3);}
+.btn-c.ok{color:var(--success);border-color:rgba(41,216,122,.3);}
 .view-all{width:100%;background:var(--surface);border:1px solid var(--border);color:var(--muted);font-family:'Inter',sans-serif;font-weight:600;font-size:13px;padding:14px;border-radius:14px;cursor:pointer;margin-top:4px;display:flex;align-items:center;justify-content:center;gap:8px;transition:all .2s;}
 .view-all:hover{border-color:rgba(255,107,43,.3);color:var(--text);}
-.view-all svg{transition:transform .3s;}
-.note{font-size:11px;color:var(--muted);text-align:center;padding:10px 0;}
+#otherSec{display:none;margin-top:12px;}
+.link-note{font-size:11px;color:var(--muted);text-align:center;padding:10px 0;display:none;}
 footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px;color:var(--muted);}
 @media(max-width:520px){.row{flex-direction:column;}}
 </style>
@@ -109,12 +111,11 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
 <nav>
   <a class="logo" href="index.html">Smart Pick <em>Deals</em></a>
   <div class="nav-btns">
-    <a class="nav-btn nb-outline" href="index.html">🔗 Convert Link</a>
+    <a class="nav-btn nb-out" href="index.html">🔗 Convert Link</a>
     <a class="nav-btn nb-fill" href="compare.html">📊 Compare Prices</a>
   </div>
 </nav>
 
-<!-- HERO -->
 <section id="hero">
   <h1>Never Overpay.<br/><em>Find the Best Deal.</em></h1>
   <p>Paste any product link from Amazon, Flipkart, Myntra or 200+ stores. We compare prices instantly.</p>
@@ -122,20 +123,19 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
     <input id="urlInput" type="text" placeholder="https://www.flipkart.com/... or amzn.in/..." autocomplete="off"/>
     <button class="btn-go" id="compareBtn">Compare →</button>
   </div>
-  <div id="flashLoginBanner" style="display:none;margin-top:14px;background:rgba(255,107,43,.07);border:1px solid rgba(255,107,43,.2);border-radius:10px;padding:10px 16px;font-size:12px;color:var(--accent2);max-width:560px;width:100%;text-align:center;">
-    ⚡ For 15+ stores &amp; accurate prices —
-    <a href="https://flash.co/home" target="_blank" style="color:var(--accent);font-weight:700;text-decoration:none;">Log in to flash.co</a>
+  <div class="flash-tip" id="flashTip">
+    ⚡ For 15+ stores with accurate prices —
+    <a href="https://flash.co/home" target="_blank">Log in to flash.co</a>
     in this browser, then compare again.
-    <span style="color:var(--muted);font-size:11px;display:block;margin-top:2px;">Without login we use Google Shopping (fewer stores)</span>
+    <span>Without login we use Google Shopping (fewer stores)</span>
   </div>
 </section>
 
-<!-- LOADING -->
 <section id="loading">
   <div class="wrap">
     <div class="card">
       <div class="src-row">
-        <div class="src-logo" id="srcLogo"><span style="font-size:18px">🔗</span></div>
+        <div class="src-logo" id="srcLogo"><span>🔗</span></div>
         <div class="src-name" id="srcName">Detecting store...</div>
         <div class="src-tag">You came from here</div>
       </div>
@@ -144,7 +144,7 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
       <div class="rp-lbl">Research Progress</div>
       <div class="rp-num" id="rpNum">0%</div>
       <div class="rp-bar"><div class="rp-fill" id="rpFill"></div></div>
-      <div class="rp-hint" id="rpHint">Starting research...</div>
+      <div class="rp-hint" id="rpHint">Starting...</div>
     </div>
     <div class="card">
       <div class="step"><div class="s-dot" id="s1"></div><div class="s-txt"><strong>Confirming we've got the right product</strong><span>Identifying product details</span></div></div>
@@ -157,7 +157,6 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
   </div>
 </section>
 
-<!-- RESULTS -->
 <section id="results">
   <div class="wrap">
     <button class="back-btn" id="backBtn">← Search again</button>
@@ -171,56 +170,66 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
       </div>
     </div>
     <div class="banner" id="dealBanner" style="display:none;"></div>
-    <div class="sec-hdr"><span class="sec-hdr-title">Recommended Stores</span><span class="sec-hdr-count" id="recCount"></span></div>
+    <div class="sec-hdr"><span class="sec-hdr-title">Recommended Stores</span><span class="sec-count" id="recCount"></span></div>
     <div id="recList"></div>
     <button class="view-all" id="viewAllBtn" style="display:none;">
       <span id="viewAllTxt">View all stores</span>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
     </button>
-    <div id="otherSection" style="display:none;margin-top:12px;">
-      <div class="sec-hdr"><span class="sec-hdr-title">Other Stores</span><span class="sec-hdr-count" id="othCount"></span></div>
+    <div id="otherSec">
+      <div class="sec-hdr" style="margin-top:16px;"><span class="sec-hdr-title">Other Stores</span><span class="sec-count" id="othCount"></span></div>
       <div id="othList"></div>
     </div>
-    <div class="note" id="linkNote" style="display:none;">⏳ Loading affiliate links for other stores...</div>
+    <div class="link-note" id="linkNote">⏳ Loading affiliate links for other stores...</div>
   </div>
 </section>
 
 <footer>Smart Pick Deals — Real prices from 200+ stores</footer>
 
 <script>
+// ── Constants ──
 var BACKEND = 'https://extrape-affiliate.onrender.com';
 
 var LOGOS = {
-  'Amazon':'https://www.amazon.in/favicon.ico',
-  'Flipkart':'https://static-assets-web.flixcart.com/fk-p-linchpin-web/fk-icons/v2/favicon-32x32.png',
-  'Myntra':'https://constant.myntassets.com/web/assets/img/favicon.ico',
-  'Ajio':'https://assets.ajio.com/static/img/Ajio-Favicon.png',
-  'Nykaa':'https://adn-static1.nykaa.com/nykdesignstudio-images/pub/media/favicon/stores/2/fav_nykaa_new.png',
-  'TataCliq':'https://www.tatacliq.com/favicon.ico',
-  'Croma':'https://media.croma.com/image/upload/v1637759004/Croma%20Assets/CMS/Category%20Banners/favicon_b7jkfc.png',
-  'Snapdeal':'https://www.snapdeal.com/favicon.ico',
-  'Meesho':'https://images.meesho.com/images/logo/1x/logo_hd.webp',
-  'JioMart':'https://www.jiomart.com/images/favicon/32X32/apple-touch-icon.png',
-  'Netmeds':'https://www.netmeds.com/images/cms/favicon/apple-touch-icon.png'
+  Amazon:'https://www.amazon.in/favicon.ico',
+  Flipkart:'https://static-assets-web.flixcart.com/fk-p-linchpin-web/fk-icons/v2/favicon-32x32.png',
+  Myntra:'https://constant.myntassets.com/web/assets/img/favicon.ico',
+  Ajio:'https://assets.ajio.com/static/img/Ajio-Favicon.png',
+  Nykaa:'https://adn-static1.nykaa.com/nykdesignstudio-images/pub/media/favicon/stores/2/fav_nykaa_new.png',
+  TataCliq:'https://www.tatacliq.com/favicon.ico',
+  Croma:'https://media.croma.com/image/upload/v1637759004/Croma%20Assets/CMS/Category%20Banners/favicon_b7jkfc.png',
+  Snapdeal:'https://www.snapdeal.com/favicon.ico',
+  Meesho:'https://images.meesho.com/images/logo/1x/logo_hd.webp',
+  JioMart:'https://www.jiomart.com/images/favicon/32X32/apple-touch-icon.png',
 };
 
 var STORE_DOMAINS = [
-  {n:'Amazon',d:['amazon.in','amazon.com','amzn.in','amzn.to']},
-  {n:'Flipkart',d:['flipkart.com','dl.flipkart.com','fkrt.co']},
-  {n:'Myntra',d:['myntra.com']},
-  {n:'Ajio',d:['ajio.com']},
-  {n:'Nykaa',d:['nykaa.com']},
-  {n:'TataCliq',d:['tatacliq.com']},
-  {n:'Croma',d:['croma.com']},
-  {n:'Snapdeal',d:['snapdeal.com']},
-  {n:'Meesho',d:['meesho.com']},
-  {n:'JioMart',d:['jiomart.com']}
+  {n:'Amazon',   d:['amazon.in','amazon.com','amzn.in','amzn.to']},
+  {n:'Flipkart', d:['flipkart.com','dl.flipkart.com','fkrt.co']},
+  {n:'Myntra',   d:['myntra.com']},
+  {n:'Ajio',     d:['ajio.com']},
+  {n:'Nykaa',    d:['nykaa.com']},
+  {n:'TataCliq', d:['tatacliq.com']},
+  {n:'Croma',    d:['croma.com']},
+  {n:'Snapdeal', d:['snapdeal.com']},
+  {n:'Meesho',   d:['meesho.com']},
+  {n:'JioMart',  d:['jiomart.com']},
 ];
 
-var EXTRAPE_OK = ['Amazon','Flipkart','Myntra','Ajio','Nykaa','TataCliq','Croma','Snapdeal','Netmeds'];
+var EXTRAPE_OK = ['Amazon','Flipkart','Myntra','Ajio','Nykaa','TataCliq','Croma','Snapdeal','Netmeds','Lenskart'];
 
 var allStores = [];
 var showOther = false;
+
+// ── Helpers ──
+function sleep(ms) { return new Promise(function(r){ setTimeout(r,ms); }); }
+
+function getCookie(name) {
+  try {
+    var m = document.cookie.match(new RegExp('(?:^|; )'+name+'=([^;]*)'));
+    return m ? decodeURIComponent(m[1]) : null;
+  } catch(e) { return null; }
+}
 
 function detectStore(url) {
   try {
@@ -233,53 +242,46 @@ function detectStore(url) {
 function logoHTML(name, size) {
   size = size || 24;
   var url = LOGOS[name];
-  var init = (name || '?')[0].toUpperCase();
-  if (url) {
-    return '<img src="' + url + '" width="' + size + '" height="' + size + '" style="object-fit:contain;border-radius:3px;" onerror="this.parentElement.innerHTML=\'<span class=fb>' + init + '</span>\'">';
-  }
-  return '<span class="fb">' + init + '</span>';
+  var init = (name||'?')[0].toUpperCase();
+  if (url) return '<img src="'+url+'" width="'+size+'" height="'+size+'" style="object-fit:contain;border-radius:3px;" onerror="this.parentElement.innerHTML=\''+init+'\'">';
+  return init;
 }
 
-function sleep(ms) { return new Promise(function(r){ setTimeout(r, ms); }); }
-
-// Wire up button — simple addEventListener, no inline onclick
-document.getElementById('compareBtn').addEventListener('click', function() {
-  doCompare();
-});
-
-// Show flash.co login prompt if not logged in
-(function() {
-  const hasFlash = document.cookie.indexOf('flash_auth_token') !== -1;
-  const banner = document.getElementById('flashLoginBanner');
-  if (banner && !hasFlash) banner.style.display = 'block';
-})();
-
-
-document.getElementById('urlInput').addEventListener('keydown', function(e) {
-  if (e.key === 'Enter') doCompare();
-});
-
-document.getElementById('backBtn').addEventListener('click', function() {
+// ── Button wiring ──
+document.getElementById('compareBtn').onclick = function() { doCompare(); };
+document.getElementById('urlInput').onkeydown = function(e) { if (e.key==='Enter') doCompare(); };
+document.getElementById('backBtn').onclick = function() {
   document.getElementById('results').style.display = 'none';
   document.getElementById('hero').style.display = 'flex';
   document.getElementById('urlInput').value = '';
-});
-
-document.getElementById('viewAllBtn').addEventListener('click', function() {
+  window.scrollTo(0,0);
+};
+document.getElementById('viewAllBtn').onclick = function() {
   showOther = !showOther;
-  document.getElementById('otherSection').style.display = showOther ? 'block' : 'none';
-  var n = allStores.length - Math.min(allStores.length, 9);
-  document.getElementById('viewAllTxt').textContent = showOther ? 'Hide other stores' : ('View all ' + n + ' more stores');
+  document.getElementById('otherSec').style.display = showOther ? 'block' : 'none';
+  var n = allStores.length - Math.min(allStores.length,9);
+  document.getElementById('viewAllTxt').textContent = showOther ? 'Hide other stores' : 'View all '+n+' more stores';
   var svg = document.querySelector('#viewAllBtn svg');
-  if (svg) svg.style.transform = showOther ? 'rotate(180deg)' : 'rotate(0deg)';
-});
+  if (svg) svg.style.transform = showOther ? 'rotate(180deg)' : '';
+};
 
+// Show flash tip if not logged in
+if (document.cookie.indexOf('flash_auth_token') === -1) {
+  document.getElementById('flashTip').style.display = 'block';
+}
+
+// ── Core compare flow ──
 function doCompare() {
-  var url = document.getElementById('urlInput').value.trim();
-  if (!url) { alert('Please paste a product URL first.'); return; }
-  if (!url.startsWith('http')) { url = 'https://' + url; }
-  try { new URL(url); } catch(e) { alert('Not a valid URL. Try pasting the full link.'); return; }
-  runSearch(url);
+  try {
+    var url = (document.getElementById('urlInput').value||'').trim();
+    if (!url) { alert('Please paste a product URL first.'); return; }
+    if (!url.startsWith('http')) url = 'https://' + url;
+    try { new URL(url); } catch(e) { alert('Not a valid URL.'); return; }
+    runSearch(url);
+  } catch(err) {
+    console.error('doCompare error:', err);
+    alert('Error: ' + err.message);
+  }
 }
 
 async function runSearch(url) {
@@ -287,52 +289,39 @@ async function runSearch(url) {
   showOther = false;
   allStores = [];
 
-  // Switch to loading view
   document.getElementById('hero').style.display = 'none';
   document.getElementById('results').style.display = 'none';
   document.getElementById('loading').style.display = 'block';
-  window.scrollTo(0, 0);
+  window.scrollTo(0,0);
 
-  // Init loading UI
   document.getElementById('srcName').textContent = storeName;
   document.getElementById('srcLogo').innerHTML = logoHTML(storeName, 26);
 
   var stepIds = ['s1','s2','s3','s4','s5','s6'];
-  stepIds.forEach(function(id) {
-    var el = document.getElementById(id);
-    el.className = 's-dot';
-    el.textContent = '';
-  });
-
   var stepData = [
-    {pct:16, hint:'Identifying the product...'},
-    {pct:33, hint:'Comparing prices across all stores...'},
-    {pct:50, hint:'Reading reviews for you...'},
-    {pct:67, hint:'Analysing pros and cons...'},
-    {pct:83, hint:'Checking expert opinions...'},
-    {pct:95, hint:'Building your personalised guide...'},
+    {pct:16,hint:'Identifying the product...'},
+    {pct:33,hint:'Comparing prices across all stores...'},
+    {pct:50,hint:'Reading reviews for you...'},
+    {pct:67,hint:'Analysing pros and cons...'},
+    {pct:83,hint:'Checking expert opinions...'},
+    {pct:95,hint:'Building your personalised guide...'},
   ];
+  stepIds.forEach(function(id){var el=document.getElementById(id);el.className='s-dot';el.textContent='';});
 
   var stepIdx = 0;
   function nextStep() {
     if (stepIdx >= stepData.length) return;
     var s = stepData[stepIdx];
-    document.getElementById('rpFill').style.width = s.pct + '%';
-    document.getElementById('rpNum').textContent = s.pct + '%';
+    document.getElementById('rpFill').style.width = s.pct+'%';
+    document.getElementById('rpNum').textContent = s.pct+'%';
     document.getElementById('rpHint').textContent = s.hint;
-    if (stepIdx > 0) {
-      var prev = document.getElementById(stepIds[stepIdx - 1]);
-      prev.className = 's-dot done';
-      prev.textContent = '✓';
-    }
-    var cur = document.getElementById(stepIds[stepIdx]);
-    cur.className = 's-dot active';
+    if (stepIdx > 0) { var p=document.getElementById(stepIds[stepIdx-1]); p.className='s-dot done'; p.textContent='✓'; }
+    document.getElementById(stepIds[stepIdx]).className = 's-dot active';
     stepIdx++;
   }
   nextStep();
   var timer = setInterval(nextStep, 1800);
 
-  // Fire API calls in parallel
   var affiliateLink = url;
   var compareData = null;
 
@@ -341,352 +330,172 @@ async function runSearch(url) {
       getAffiliateLink(url, storeName),
       getCompareData(url)
     ]);
-    if (results[0].status === 'fulfilled') affiliateLink = results[0].value;
-    if (results[1].status === 'fulfilled') compareData = results[1].value;
+    if (results[0].status==='fulfilled') affiliateLink = results[0].value;
+    if (results[1].status==='fulfilled') compareData = results[1].value;
     console.log('[Compare] affiliateLink:', affiliateLink);
-    console.log('[Compare] compareData:', compareData);
+    console.log('[Compare] compareData stores:', compareData&&compareData.stores?compareData.stores.length:0);
   } catch(e) {
     console.error('[Compare] API error:', e);
   }
 
   clearInterval(timer);
-
-  // Mark all steps done
-  stepIds.forEach(function(id) {
-    var el = document.getElementById(id);
-    el.className = 's-dot done';
-    el.textContent = '✓';
-  });
-  document.getElementById('rpFill').style.width = '100%';
-  document.getElementById('rpNum').textContent = '100%';
-  document.getElementById('rpHint').textContent = 'Done!';
+  stepIds.forEach(function(id){var el=document.getElementById(id);el.className='s-dot done';el.textContent='✓';});
+  document.getElementById('rpFill').style.width='100%';
+  document.getElementById('rpNum').textContent='100%';
+  document.getElementById('rpHint').textContent='Done!';
 
   await sleep(400);
   showResults(storeName, url, affiliateLink, compareData);
 }
 
-async function wakeBackend() {
-  // Ping backend — if it's sleeping, this starts the wake-up process
-  try { await fetch(BACKEND + '/ping', { signal: AbortSignal.timeout(35000) }); } catch(e) {}
-}
-
+// ── Get affiliate link ──
 async function getAffiliateLink(url, store) {
-  var maxAttempts = 2;
-  for (var attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
-      var r = await fetch(BACKEND + '/generate', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({url: url, store: store}),
-        signal: AbortSignal.timeout(35000)
-      });
-      var d = await r.json();
-      if (!d.requestId) return url;
-      for (var i = 0; i < 25; i++) {
-        await sleep(2000);
-        var s = await fetch(BACKEND + '/status/' + d.requestId, { signal: AbortSignal.timeout(10000) });
-        var sd = await s.json();
-        if (sd.state === 'done') return sd.affiliateLink || url;
-        if (sd.state === 'error') return url;
-      }
-      return url;
-    } catch(e) {
-      console.log('[Affiliate] Attempt ' + (attempt+1) + ' failed:', e.message);
-      if (attempt < maxAttempts - 1) {
-        // Wake up backend and retry
-        await wakeBackend();
-        await sleep(5000);
-      }
-    }
-  }
-  return url;
-}
-
-// ── Flash.co called DIRECTLY from browser (user's IP = no 401) ──
-// Gets auth token from flash.co cookies in this browser session
-function getFlashCookieVal(name) {
-  var match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
-async function callFlashStream(productUrl) {
-  var token = getFlashCookieVal('flash_auth_token');
-  var deviceId = getFlashCookieVal('flash_device_id') || 'web-browser';
-
-  if (!token) return null; // not logged in to flash.co
-
-  var params = new URLSearchParams({
-    source: 'APPEND',
-    context: 'HOME_URL_PASTE',
-    user_agent: navigator.userAgent,
-    device_type: 'DESKTOP',
-    country_code: 'IN',
-  });
-
   try {
-    var r = await fetch('https://apiv3.flash.tech/agents/chat/stream?' + params.toString(), {
-      method: 'POST',
-      credentials: 'include', // sends browser cookies automatically
-      headers: {
-        'Accept': 'text/event-stream',
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + token,
-        'Channel-Type': 'web',
-        'Origin': 'https://flash.co',
-        'X-Country-Code': 'IN',
-        'X-Device-Id': deviceId,
-        'X-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Calcutta',
-      },
-      body: JSON.stringify({ message: productUrl, context: 'HOME_URL_PASTE' }),
-      signal: AbortSignal.timeout(35000),
+    var r = await fetch(BACKEND+'/generate', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({url:url,store:store}),
+      signal:AbortSignal.timeout(35000)
     });
-
-    if (!r.ok) {
-      console.log('[Flash] Stream error:', r.status);
-      return null;
+    var d = await r.json();
+    if (!d.requestId) return url;
+    for (var i=0;i<25;i++) {
+      await sleep(2000);
+      var s = await fetch(BACKEND+'/status/'+d.requestId,{signal:AbortSignal.timeout(10000)});
+      var sd = await s.json();
+      if (sd.state==='done') return sd.displayLink || sd.affiliateLink || url;
+      if (sd.state==='error') return url;
     }
-
-    var text = await r.text();
-    console.log('[Flash] Stream raw (first 800):', text.substring(0, 800));
-
-    // Extract pageHash from response
-    var pageHash = null;
-    var m = text.match(/flash\.co\/(?:price-compare|item)\/(\d+)\/[^\/\s"]*\/h\/([A-Za-z0-9_-]{4,})/);
-    if (m) { pageHash = m[2]; console.log('[Flash] pageHash from URL:', pageHash); }
-    if (!pageHash) { var m2 = text.match(/"pageHash"\s*:\s*"([A-Za-z0-9_-]+)"/); if (m2) pageHash = m2[1]; }
-    if (!pageHash) { var m3 = text.match(/"referenceId"\s*:\s*"([A-Za-z0-9_-]+)"/); if (m3) pageHash = m3[1]; }
-
-    // Also try to get product info from SSE lines
-    var productName = null, productImage = null;
-    text.split('\n').forEach(function(line) {
-      if (!line.startsWith('data:')) return;
-      try {
-        var d = JSON.parse(line.slice(5).trim());
-        if (!productName) productName = d.productName || d.name || d.title || null;
-        if (!productImage) productImage = d.image || d.imageUrl || d.thumbnail || null;
-        if (!pageHash) pageHash = d.pageHash || d.referenceId || null;
-      } catch(e) {}
-    });
-
-    if (!pageHash) return null;
-    return { pageHash, productName, productImage };
-  } catch(e) {
-    console.log('[Flash] Stream failed:', e.message);
-    return null;
-  }
+    return url;
+  } catch(e) { console.log('[Affiliate] Failed:', e.message); return url; }
 }
 
-async function callFlashPrices(pageHash) {
-  var token = getFlashCookieVal('flash_auth_token');
-  var deviceId = getFlashCookieVal('flash_device_id') || 'web-browser';
-  if (!token) return null;
-
-  try {
-    var r = await fetch('https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash, {
-      credentials: 'include',
-      headers: {
-        'Accept': 'application/json',
-        'Authorization': 'Bearer ' + token,
-        'Channel-Type': 'web',
-        'Origin': 'https://flash.co',
-        'X-Country-Code': 'IN',
-        'X-Device-Id': deviceId,
-        'X-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Calcutta',
-      },
-    });
-    if (!r.ok) { console.log('[Flash] Prices error:', r.status); return null; }
-    var data = await r.json();
-    console.log('[Flash] Prices response keys:', Object.keys(data || {}));
-    console.log('[Flash] Prices (600):', JSON.stringify(data).substring(0, 600));
-    return data;
-  } catch(e) {
-    console.log('[Flash] Prices failed:', e.message);
-    return null;
-  }
-}
-
-function parseFlashStores(priceData) {
-  // Deep-search for stores array in response
-  function findArr(obj, depth) {
-    if (!obj || depth > 5) return [];
-    if (Array.isArray(obj) && obj.length > 0) {
-      var first = obj[0];
-      if (first && (first.price !== undefined || first.storeName || first.name || first.retailer)) return obj;
-    }
-    if (typeof obj === 'object') {
-      for (var k of Object.keys(obj)) {
-        var r = findArr(obj[k], depth + 1);
-        if (r.length > 0) return r;
-      }
-    }
-    return [];
-  }
-  var raw = findArr(priceData, 0);
-  console.log('[Flash] Raw stores:', raw.length);
-  return raw.map(function(s) {
-    var priceStr = (s.price || s.amount || s.salePrice || s.mrp || s.offerPrice || 0).toString().replace(/[^0-9.]/g, '');
-    return {
-      name: s.storeName || s.name || s.store || s.retailer || s.source || 'Unknown',
-      normalizedName: s.storeName || s.name || s.store || s.retailer || s.source || 'Unknown',
-      price: parseInt(priceStr) || 0,
-      url: s.url || s.link || s.buyUrl || s.productUrl || '',
-      image: s.logo || s.storeLogo || s.icon || '',
-    };
-  }).filter(function(s) { return s.price > 0 && s.name !== 'Unknown'; });
-}
-
+// ── Get compare data ──
 async function getCompareData(url) {
-  // Wake backend first
-  try { await fetch(BACKEND + '/ping', { signal: AbortSignal.timeout(8000) }); } catch(e) {}
+  // Wake backend
+  try { await fetch(BACKEND+'/ping',{signal:AbortSignal.timeout(8000)}); } catch(e) {}
 
-  // Strategy 1: Flash.co from browser (if logged in — their IP, no 401)
+  // Try flash.co from browser if logged in
   var flashToken = getCookie('flash_auth_token');
   if (flashToken) {
-    console.log('[Flash] Token found — trying flash.co from browser');
+    console.log('[Flash] Token found — trying flash.co');
     try {
-      var flashResult = await callFlashFromBrowser(url, flashToken);
-      if (flashResult && flashResult.stores && flashResult.stores.length > 0) {
-        console.log('[Flash] ✅ Got', flashResult.stores.length, 'stores');
-        return Object.assign(flashResult, { source: 'flash' });
+      var fr = await callFlash(url, flashToken);
+      if (fr && fr.stores && fr.stores.length > 0) {
+        console.log('[Flash] Got', fr.stores.length, 'stores');
+        fr.source = 'flash';
+        return fr;
       }
-      console.log('[Flash] No stores returned — falling back to SerpAPI');
-    } catch(e) {
-      console.log('[Flash] Failed:', e.message, '— falling back to SerpAPI');
-    }
-  } else {
-    console.log('[Flash] Not logged in — using SerpAPI');
+    } catch(e) { console.log('[Flash] Failed:', e.message); }
   }
 
-  // Strategy 2: SerpAPI via backend
-  var r = await fetch(BACKEND + '/compare/search?url=' + encodeURIComponent(url), {
-    signal: AbortSignal.timeout(45000)
-  });
-  if (!r.ok) throw new Error('Compare HTTP ' + r.status);
+  // Fallback: SerpAPI via backend
+  console.log('[Compare] Using SerpAPI backend');
+  var r = await fetch(BACKEND+'/compare/search?url='+encodeURIComponent(url), {signal:AbortSignal.timeout(45000)});
+  if (!r.ok) throw new Error('HTTP '+r.status);
   var d = await r.json();
   d.source = 'serpapi';
   return d;
 }
 
-function getCookie(name) {
-  try {
-    var m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
-    return m ? decodeURIComponent(m[1]) : null;
-  } catch(e) { return null; }
-}
-
-async function callFlashFromBrowser(productUrl, token) {
-  var deviceId = getCookie('flash_device_id') || ('web-' + Date.now());
+// ── Flash.co browser integration ──
+async function callFlash(productUrl, token) {
+  var deviceId = getCookie('flash_device_id') || 'web-spd';
   var tz = 'Asia/Calcutta';
   try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch(e) {}
 
-  var headers = {
-    'Accept': 'application/json, text/event-stream, */*',
-    'Authorization': 'Bearer ' + token,
-    'Channel-Type': 'web',
-    'Content-Type': 'application/json',
-    'Origin': 'https://flash.co',
-    'X-Country-Code': 'IN',
-    'X-Device-Id': deviceId,
-    'X-Timezone': tz,
+  var h = {
+    'Authorization':'Bearer '+token,
+    'Channel-Type':'web',
+    'Content-Type':'application/json',
+    'Origin':'https://flash.co',
+    'X-Country-Code':'IN',
+    'X-Device-Id':deviceId,
+    'X-Timezone':tz,
   };
 
-  // Step 1: POST to flash stream to identify product
-  var params = 'source=APPEND&context=HOME_URL_PASTE&device_type=DESKTOP&country_code=IN&user_agent=' + encodeURIComponent(navigator.userAgent);
-  var sr = await fetch('https://apiv3.flash.tech/agents/chat/stream?' + params, {
-    method: 'POST',
-    headers: headers,
-    body: JSON.stringify({ message: productUrl, context: 'HOME_URL_PASTE' }),
-    signal: AbortSignal.timeout(30000),
+  // POST to flash stream
+  var sr = await fetch('https://apiv3.flash.tech/agents/chat/stream?source=APPEND&context=HOME_URL_PASTE&device_type=DESKTOP&country_code=IN', {
+    method:'POST', headers:h,
+    body:JSON.stringify({message:productUrl,context:'HOME_URL_PASTE'}),
+    signal:AbortSignal.timeout(30000),
   });
+  if (!sr.ok) throw new Error('Flash stream '+sr.status);
 
-  if (!sr.ok) throw new Error('Flash stream ' + sr.status);
-  var streamText = await sr.text();
-  console.log('[Flash] Stream length:', streamText.length, 'sample:', streamText.substring(0, 200));
+  var text = await sr.text();
+  console.log('[Flash] Stream sample:', text.substring(0,300));
 
-  // Extract pageHash from stream
+  // Extract pageHash
   var pageHash = null;
-  var hMatch = streamText.match(/\/h\/([A-Za-z0-9_-]{6,})/);
-  if (hMatch) pageHash = hMatch[1];
+  var m = text.match(/\/h\/([A-Za-z0-9_-]{6,})/);
+  if (m) pageHash = m[1];
   if (!pageHash) {
-    // Try parsing SSE lines
-    streamText.split('\n').forEach(function(line) {
+    text.split('\n').forEach(function(line) {
       if (pageHash || !line.startsWith('data:')) return;
       try {
         var d = JSON.parse(line.slice(5).trim());
-        pageHash = d.pageHash || d.referenceId || d.page_hash ||
-          (d.data && (d.data.pageHash || d.data.referenceId)) || null;
+        pageHash = d.pageHash || d.referenceId || (d.data&&(d.data.pageHash||d.data.referenceId)) || null;
       } catch(e) {}
     });
   }
-
+  if (!pageHash) throw new Error('No pageHash from flash');
   console.log('[Flash] pageHash:', pageHash);
-  if (!pageHash) throw new Error('No pageHash in flash stream');
 
-  // Step 2: Fetch prices for this product
-  var priceData = null;
+  // Fetch prices
+  var pd = null;
   var endpoints = [
-    'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
-    'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash,
+    'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId='+pageHash,
+    'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId='+pageHash,
   ];
-
-  for (var i = 0; i < endpoints.length; i++) {
+  for (var i=0;i<endpoints.length;i++) {
     try {
-      var pr = await fetch(endpoints[i], { headers: headers, signal: AbortSignal.timeout(12000) });
-      if (pr.ok) {
-        priceData = await pr.json();
-        console.log('[Flash] Price data keys:', Object.keys(priceData || {}));
-        console.log('[Flash] Price data:', JSON.stringify(priceData).substring(0, 400));
-        if (priceData) break;
-      }
-    } catch(e) { console.log('[Flash] endpoint', i, 'failed:', e.message); }
+      var pr = await fetch(endpoints[i],{headers:h,signal:AbortSignal.timeout(12000)});
+      if (pr.ok) { pd = await pr.json(); if (pd) break; }
+    } catch(e) {}
   }
+  if (!pd) throw new Error('No price data from flash');
+  console.log('[Flash] Price keys:', Object.keys(pd||{}), 'sample:', JSON.stringify(pd).substring(0,300));
 
-  if (!priceData) throw new Error('No price data from flash');
-
-  // Step 3: Extract stores from response
-  var stores = extractFlashStores(priceData);
-  var productName = priceData.productName || priceData.name || (priceData.data && priceData.data.name) || null;
-  var productImage = priceData.imageUrl || priceData.image || (priceData.data && priceData.data.imageUrl) || null;
-
-  return { stores: stores, productName: productName, productImage: productImage };
+  return {
+    stores: parseFlashStores(pd),
+    productName: pd.productName||pd.name||(pd.data&&pd.data.name)||null,
+    productImage: pd.imageUrl||pd.image||(pd.data&&pd.data.imageUrl)||null,
+  };
 }
 
-function extractFlashStores(data) {
+function parseFlashStores(data) {
   var candidates = [];
-  function search(obj, depth) {
-    if (!obj || depth > 7 || typeof obj !== 'object') return;
+  function dig(obj, d) {
+    if (!obj||d>8||typeof obj!=='object') return;
     if (Array.isArray(obj)) {
-      if (obj.length > 0) {
-        var f = obj[0];
-        if (f && (f.price !== undefined || f.amount !== undefined || f.storeName || f.retailer || f.seller || f.store)) {
+      if (obj.length>0) {
+        var f=obj[0];
+        if (f&&(f.price!==undefined||f.amount!==undefined||f.storeName||f.retailer||f.seller))
           candidates.push(obj);
-        }
       }
-      obj.forEach(function(item) { search(item, depth+1); });
-    } else {
-      Object.values(obj).forEach(function(v) { search(v, depth+1); });
-    }
+      obj.forEach(function(x){dig(x,d+1);});
+    } else { Object.values(obj).forEach(function(v){dig(v,d+1);}); }
   }
-  search(data, 0);
-  candidates.sort(function(a,b){ return b.length - a.length; });
-  var best = candidates[0] || [];
-  console.log('[Flash] Store candidates:', candidates.map(function(c){ return c.length + ' items'; }));
-  return best.map(function(s) {
-    var rawName = s.storeName || s.name || s.store || s.retailer || s.seller || s.source || '';
-    var normName = normalizeFlashStore(rawName) || rawName;
-    var price = parseInt(String(s.price || s.amount || s.salePrice || s.offerPrice || s.finalPrice || 0).replace(/[^0-9]/g,'')) || 0;
-    return { name: normName, normalizedName: normName, price: price, url: s.url || s.link || s.buyUrl || s.productUrl || '' };
-  }).filter(function(s){ return s.price > 0 && s.name; });
+  dig(data,0);
+  candidates.sort(function(a,b){return b.length-a.length;});
+  var best = candidates[0]||[];
+  console.log('[Flash] Best candidate:', best.length, 'stores');
+  return best.map(function(s){
+    var raw=s.storeName||s.name||s.store||s.retailer||s.seller||s.source||'';
+    var norm=normalizeStore(raw)||raw;
+    var price=parseInt(String(s.price||s.amount||s.salePrice||s.offerPrice||0).replace(/[^0-9]/g,''))||0;
+    return {name:norm,normalizedName:norm,price:price,url:s.url||s.link||s.buyUrl||''};
+  }).filter(function(s){return s.price>0&&s.name;});
 }
 
-function normalizeFlashStore(s) {
-  var l = (s||'').toLowerCase();
+function normalizeStore(s) {
+  var l=(s||'').toLowerCase();
   if (l.includes('amazon'))   return 'Amazon';
   if (l.includes('flipkart')) return 'Flipkart';
   if (l.includes('myntra'))   return 'Myntra';
   if (l.includes('ajio'))     return 'Ajio';
   if (l.includes('nykaa'))    return 'Nykaa';
-  if (l.includes('tatacliq') || l.includes('tata cliq')) return 'TataCliq';
+  if (l.includes('tatacliq')||l.includes('tata cliq')) return 'TataCliq';
   if (l.includes('croma'))    return 'Croma';
   if (l.includes('snapdeal')) return 'Snapdeal';
   if (l.includes('reliance')) return 'Reliance Digital';
@@ -697,71 +506,70 @@ function normalizeFlashStore(s) {
   return '';
 }
 
-
+// ── Show results ──
 function showResults(storeName, url, affiliateLink, data) {
   document.getElementById('loading').style.display = 'none';
   document.getElementById('results').style.display = 'block';
-  window.scrollTo(0, 0);
-  showOther = false;
+  window.scrollTo(0,0);
 
-  var stores = (data && data.stores) ? data.stores : [];
-  var productName = (data && data.productName) ? data.productName : ('Product from ' + storeName);
-  var productImage = (data && data.productImage) ? data.productImage : null;
-  var savings = (data && data.savings) ? data.savings : 0;
-  var flashError = (data && data.flashError) ? data.flashError : null;
-  var source = (data && data.source) ? data.source : 'serpapi';
+  var stores = (data&&data.stores) ? data.stores : [];
+  var productName = (data&&data.productName) ? data.productName : ('Product from '+storeName);
+  var productImage = (data&&data.productImage) ? data.productImage : null;
+  var source = (data&&data.source) ? data.source : 'serpapi';
 
-  // Product header
-  var imgEl = document.getElementById('prodImg');
+  // Product card
   if (productImage) {
-    imgEl.innerHTML = '<img src="'+productImage+'" style="width:62px;height:62px;object-fit:contain;border-radius:8px;" onerror="this.parentElement.innerHTML='<span style=font-size:28px>📦</span>'">';
+    var imgEl = document.getElementById('prodImg');
+    var img = document.createElement('img');
+    img.src = productImage;
+    img.style = 'width:62px;height:62px;object-fit:contain;border-radius:8px;';
+    img.onerror = function(){ this.parentElement.innerHTML='<span style="font-size:28px">📦</span>'; };
+    imgEl.innerHTML = '';
+    imgEl.appendChild(img);
   }
   document.getElementById('prodTitle').textContent = productName;
-  var srcLabel = source === 'flash' ? '⚡ flash.co' : '🔍 Google Shopping';
-  document.getElementById('prodMeta').textContent = stores.length > 0
+  var srcLabel = source==='flash' ? '⚡ flash.co' : '🔍 Google Shopping';
+  document.getElementById('prodMeta').textContent = stores.length>0
     ? 'Found '+stores.length+' stores via '+srcLabel+' · Sorted lowest to highest'
     : 'Your affiliate link is ready';
 
   // Banner
   var banner = document.getElementById('dealBanner');
-  if (stores.length === 0) {
-    banner.className = 'banner banner-warn';
-    banner.innerHTML = '⚠️ No matching stores found. Try a different product URL.';
-    banner.style.display = 'flex';
+  if (stores.length===0) {
+    banner.className='banner b-warn';
+    banner.innerHTML='⚠️ No prices found. Try a different URL or check Render logs.';
+    banner.style.display='flex';
   } else {
-    banner.className = 'banner banner-green';
-    var src = stores.find(function(s){ return s.isSource; });
-    var best = stores[0];
-    var calcSave = (src && !src.isBest) ? src.price - best.price : 0;
-    if (src && src.isBest) banner.innerHTML = '✅ You already have the best deal!';
-    else if (calcSave > 0) banner.innerHTML = '✅ Smart Pick Deals saved you ₹'+calcSave.toLocaleString('en-IN')+'!';
-    else if (best) banner.innerHTML = '✅ '+(best.normalizedName||best.name)+' has the best price!';
-    banner.style.display = 'flex';
+    banner.className='banner b-green';
+    var src=stores.find(function(s){return s.isSource;});
+    var best=stores[0];
+    var save=(src&&!src.isBest&&src.price>best.price)?src.price-best.price:0;
+    if (src&&src.isBest) banner.innerHTML='✅ You already have the best deal!';
+    else if (save>0) banner.innerHTML='✅ Smart Pick Deals saved you ₹'+save.toLocaleString('en-IN')+'!';
+    else banner.innerHTML='✅ '+(best.normalizedName||best.name)+' has the best price!';
+    banner.style.display='flex';
   }
 
-  // Mark source store
-  var detectedSrc = storeName.toLowerCase();
-  allStores = stores.map(function(s) {
-    var n = (s.normalizedName||s.name||'').toLowerCase();
-    var isSrc = n === detectedSrc || n.includes(detectedSrc) || detectedSrc.includes(n);
-    return Object.assign({}, s, {
-      isSource: isSrc,
-      displayLink: isSrc ? affiliateLink : (s.url || url)
-    });
+  // Mark source store, set display links
+  var srcNorm = storeName.toLowerCase();
+  allStores = stores.map(function(s){
+    var n=(s.normalizedName||s.name||'').toLowerCase();
+    var isSrc = n===srcNorm||n.includes(srcNorm)||srcNorm.includes(n);
+    return Object.assign({},s,{isSource:isSrc, displayLink: isSrc?affiliateLink:(s.url||url)});
   });
 
-  var rec = allStores.slice(0, 9);
+  var rec = allStores.slice(0,9);
   var oth = allStores.slice(9);
-  document.getElementById('recCount').textContent = '('+rec.length+')';
-  document.getElementById('othCount').textContent = '('+oth.length+')';
+  document.getElementById('recCount').textContent='('+rec.length+')';
+  document.getElementById('othCount').textContent='('+oth.length+')';
   renderList('recList', rec);
   renderList('othList', oth);
 
-  if (oth.length > 0) {
-    document.getElementById('viewAllBtn').style.display = 'flex';
-    document.getElementById('viewAllTxt').textContent = 'View all '+oth.length+' more stores';
+  if (oth.length>0) {
+    document.getElementById('viewAllBtn').style.display='flex';
+    document.getElementById('viewAllTxt').textContent='View all '+oth.length+' more stores';
   } else {
-    document.getElementById('viewAllBtn').style.display = 'none';
+    document.getElementById('viewAllBtn').style.display='none';
   }
 
   loadBgLinks(url, affiliateLink);
@@ -771,19 +579,17 @@ function renderList(id, stores) {
   var el = document.getElementById(id);
   if (!el) return;
   el.innerHTML = '';
-  var srcStore = allStores.find(function(s){ return s.isSource; });
+  var srcStore = allStores.find(function(s){return s.isSource;});
 
-  stores.forEach(function(s) {
-    var name = s.normalizedName || s.name;
-    var link = s.displayLink || s.url || '#';
-    var savingAmt = (srcStore && !s.isBest && srcStore.price > s.price) ? (srcStore.price - s.price) : 0;
-
+  stores.forEach(function(s){
+    var name = s.normalizedName||s.name;
+    var link = s.displayLink||s.url||'#';
+    var save = (srcStore&&!s.isBest&&srcStore.price>s.price)?(srcStore.price-s.price):0;
     var tags = '';
-    if (s.isSource)            tags += '<span class="tag tg-orange">You came from here</span>';
-    if (s.isBest && !s.isSource) tags += '<span class="tag tg-green">🏆 Best Price</span>';
-    if (savingAmt > 0)         tags += '<span class="tag tg-purple">Save ₹'+savingAmt.toLocaleString('en-IN')+'</span>';
-
-    var priceStr = (s.price > 0) ? '₹'+Number(s.price).toLocaleString('en-IN') : '';
+    if (s.isSource)           tags+='<span class="tag tg-o">You came from here</span>';
+    if (s.isBest&&!s.isSource)tags+='<span class="tag tg-g">🏆 Best Price</span>';
+    if (save>0)               tags+='<span class="tag tg-p">Save ₹'+save.toLocaleString('en-IN')+'</span>';
+    var priceStr = s.price>0 ? '₹'+Number(s.price).toLocaleString('en-IN') : '';
 
     var div = document.createElement('div');
     div.className = 'store-card'+(s.isBest?' best':'');
@@ -791,63 +597,62 @@ function renderList(id, stores) {
       '<div class="store-logo">'+logoHTML(name,24)+'</div>'+
       '<div class="store-body"><div class="store-name">'+name+'</div><div class="tags">'+tags+'</div></div>'+
       '<div class="price">'+priceStr+'</div>'+
-      '<div class="store-acts">'+
-        '<button class="btn-visit">Visit ↗</button>'+
-        '<button class="btn-copy">Copy</button>'+
-      '</div>';
+      '<div class="acts"><button class="btn-v">Visit ↗</button><button class="btn-c">Copy</button></div>';
 
-    var vBtn = div.querySelector('.btn-visit');
-    var cBtn = div.querySelector('.btn-copy');
-    (function(l){ // closure to capture link
-      if (vBtn) vBtn.addEventListener('click', function(){ window.open(l,'_blank'); });
-      if (cBtn) cBtn.addEventListener('click', function(){
+    var vBtn = div.querySelector('.btn-v');
+    var cBtn = div.querySelector('.btn-c');
+    (function(l, n){
+      vBtn.onclick = function(){
+        fetch(BACKEND+'/track/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dest:l,store:n})}).catch(function(){});
+        window.open(l,'_blank');
+      };
+      cBtn.onclick = function(){
         navigator.clipboard.writeText(l).then(function(){
           cBtn.textContent='Copied!'; cBtn.classList.add('ok');
-          setTimeout(function(){ cBtn.textContent='Copy'; cBtn.classList.remove('ok'); }, 2000);
+          setTimeout(function(){cBtn.textContent='Copy';cBtn.classList.remove('ok');},2000);
         });
-      });
-    })(link);
+      };
+    })(link, name);
 
     el.appendChild(div);
   });
 }
 
-
 async function loadBgLinks(srcUrl, srcAffiliate) {
-  document.getElementById('linkNote').style.display = 'block';
-  for (var i = 0; i < allStores.length; i++) {
+  document.getElementById('linkNote').style.display='block';
+  for (var i=0;i<allStores.length;i++) {
     var s = allStores[i];
-    if (s.isSource || !EXTRAPE_OK.includes(s.normalizedName)) continue;
-    if (!s.url || s.url === srcUrl) continue;
+    if (s.isSource||!EXTRAPE_OK.includes(s.normalizedName)) continue;
+    if (!s.url||s.url===srcUrl) continue;
     try {
       var link = await getAffiliateLink(s.url, s.normalizedName);
-      if (link && link !== s.url) {
+      if (link&&link!==s.url) {
         allStores[i].displayLink = link;
-        // Update buttons in DOM
-        var name = s.normalizedName || s.name;
-        document.querySelectorAll('.store-name').forEach(function(el) {
-          if (el.textContent === name) {
-            var card = el.closest('.store-card');
-            if (card) {
-              var vBtn = card.querySelector('.btn-visit');
-              var cBtn = card.querySelector('.btn-copy');
-              if (vBtn) vBtn.onclick = function() { window.open(link, '_blank'); };
-              if (cBtn) cBtn.onclick = function() {
-                navigator.clipboard.writeText(link).then(function() {
-                  cBtn.textContent = 'Copied!'; cBtn.classList.add('ok');
-                  setTimeout(function() { cBtn.textContent = 'Copy'; cBtn.classList.remove('ok'); }, 2000);
-                });
-              };
-            }
+        var cards = document.querySelectorAll('.store-card');
+        cards.forEach(function(card){
+          var nameEl = card.querySelector('.store-name');
+          if (nameEl&&nameEl.textContent===s.normalizedName) {
+            var vb=card.querySelector('.btn-v');
+            var cb=card.querySelector('.btn-c');
+            if (vb) vb.onclick=(function(l,n){return function(){
+              fetch(BACKEND+'/track/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dest:l,store:n})}).catch(function(){});
+              window.open(l,'_blank');
+            };})(link,s.normalizedName);
+            if (cb) cb.onclick=(function(l){return function(){
+              navigator.clipboard.writeText(l).then(function(){
+                cb.textContent='Copied!';cb.classList.add('ok');
+                setTimeout(function(){cb.textContent='Copy';cb.classList.remove('ok');},2000);
+              });
+            };})(link);
           }
         });
       }
     } catch(e) {}
   }
-  document.getElementById('linkNote').style.display = 'none';
+  document.getElementById('linkNote').style.display='none';
 }
 </script>
 
-<script>fetch('https://extrape-affiliate.onrender.com/track/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:'compare'})}).catch(()=>{});</script>
+<script>fetch('https://extrape-affiliate.onrender.com/track/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:'compare'})}).catch(function(){});</script>
 </body>
 </html>
