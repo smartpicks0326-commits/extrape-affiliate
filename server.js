@@ -464,80 +464,74 @@ app.get('/flash/test', async (req, res) => {
     const priceHeaders = { ...headers };
     delete priceHeaders['Content-Type'];
 
-    // Step 2a: The product-search hash is a SEARCH RESULTS page.
-    // We need to poll it to get the actual product pageHash, then fetch prices.
-    // Flash.co polls this endpoint until results appear.
-    let productPageHash = null;
-    let productName = null;
-    let productImage = null;
-
-    const searchResultEndpoints = [
-      'https://apiv3.flash.tech/api/v1/pages/' + pageHash + '/product-search',
-      'https://apiv3.flash.tech/api/v1/search-results?referenceId=' + pageHash,
-      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_SEARCH&referenceId=' + pageHash,
-      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=SEARCH_RESULTS&referenceId=' + pageHash,
-      'https://apiv3.flash.tech/api/v2/pages/' + pageHash + '/details',
-      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?referenceId=' + pageHash,
+    // Step 2: Flash.co product-search is ASYNC — poll until feedbacks appear
+    // Flash webapp polls every 2s for up to 30s waiting for AI to process the URL
+    const POLL_SCOPES = [
+      'PRICE_COMPARE',
+      'PRODUCT_DETAILS',
+      'PRODUCT_SEARCH',
     ];
 
-    let searchResultData = null;
-    for (const ep of searchResultEndpoints) {
-      try {
-        console.log('[Flash Test] Trying search result endpoint:', ep);
-        const sr2 = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(8000) });
-        const sr2Text = await sr2.text();
-        console.log('[Flash Test] Endpoint', ep.substring(50), '→ status:', sr2.status, 'body:', sr2Text.substring(0, 200));
-        if (sr2.ok) {
-          try {
-            const d = JSON.parse(sr2Text);
-            // Look for a product hash in the response
-            const str = JSON.stringify(d);
-            const productHash = str.match(/product-details[^"]*\/h\/([A-Za-z0-9_-]{4,})/)?.[1] ||
-                                str.match(/price-compare\/([A-Za-z0-9_-]{4,})/)?.[1];
-            if (productHash) {
-              productPageHash = productHash;
-              console.log('[Flash Test] Found product pageHash:', productPageHash);
-            }
-            searchResultData = { endpoint: ep, status: sr2.status, data: d };
-            break;
-          } catch(e) {
-            searchResultData = { endpoint: ep, status: sr2.status, raw: sr2Text.substring(0, 300) };
-            break;
+    let pollData = null;
+    let pollScope = null;
+    let pollAttempts = 0;
+    const MAX_POLLS = 12; // 12 × 2.5s = 30s max wait
+
+    console.log('[Flash Test] Polling for results (max', MAX_POLLS, 'attempts)...');
+
+    outer:
+    for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
+      // Wait 2.5s between polls (except first attempt)
+      if (attempt > 0) await new Promise(r => setTimeout(r, 2500));
+      pollAttempts = attempt + 1;
+
+      for (const scope of POLL_SCOPES) {
+        try {
+          const ep = 'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=' + scope + '&referenceId=' + pageHash;
+          const pr2 = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(8000) });
+          if (!pr2.ok) continue;
+          const d = await pr2.json();
+
+          // Check if we have actual data (feedbacks array with items)
+          const feedbacks = d?.response?.feedbacks || d?.feedbacks || [];
+          if (feedbacks.length > 0) {
+            console.log('[Flash Test] ✅ Got', feedbacks.length, 'feedbacks via scope:', scope, 'attempt:', attempt + 1);
+            pollData = d;
+            pollScope = scope;
+            break outer;
           }
-        }
-      } catch(e) { console.log('[Flash Test] Endpoint error:', e.message); }
+
+          // Also check for product URL in response (alternate structure)
+          const str = JSON.stringify(d);
+          const productHash = (str.match(/product-details[^\"]*\/h\/([A-Za-z0-9_-]{4,})/) ||
+                               str.match(/price-compare\/([A-Za-z0-9_-]{4,})/)||[])[1];
+          if (productHash) {
+            console.log('[Flash Test] Found nested productHash:', productHash);
+            pollData = d;
+            pollScope = scope + '+hash:' + productHash;
+            break outer;
+          }
+        } catch(e) {}
+      }
+      console.log('[Flash Test] Attempt', attempt + 1, '— no data yet, polling...');
     }
 
-    // Step 2b: If we found a product pageHash, fetch its prices
-    // Otherwise try price endpoints on the original search hash
-    const hashToUse = productPageHash || pageHash;
-    let pr = null;
-    const priceEndpoints = [
-      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + hashToUse,
-      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + hashToUse,
-      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
-    ];
-    for (const ep of priceEndpoints) {
-      try {
-        pr = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(12000) });
-        if (pr.ok) { console.log('[Flash Test] Price endpoint worked:', ep); break; }
-      } catch(e) {}
-    }
-    if (!pr) pr = { ok: false, status: 0 };
+    let pr = { ok: !!pollData, status: pollData ? 200 : 504 };
+    const priceData = pollData;
     const priceStatus = pr.status;
-    const priceData = pr.ok ? await pr.json() : await pr.text();
 
     return res.json({
       success: pr.ok,
       searchHash: pageHash,
-      productHash: productPageHash || null,
-      hashUsed: hashToUse,
+      pollAttempts,
+      pollScope: pollScope || null,
       streamStatus,
-      priceStatus,
-      searchResultData: searchResultData || null,
-      priceKeys: pr.ok ? Object.keys(priceData || {}) : undefined,
-      priceSample: pr.ok ? JSON.stringify(priceData).substring(0, 1000) : String(priceData || '').substring(0, 200),
+      priceStatus: pr.status,
+      feedbackCount: (pollData?.response?.feedbacks || pollData?.feedbacks || []).length,
+      priceKeys: pollData ? Object.keys(pollData) : [],
+      priceSample: JSON.stringify(pollData).substring(0, 1500),
       streamSample: streamText.substring(0, 400),
+      note: !pollData ? 'All ' + MAX_POLLS + ' poll attempts returned empty feedbacks. Flash may need more time or a different approach.' : undefined,
     });
 
   } catch(e) {
@@ -648,15 +642,34 @@ app.get('/flash/prices/:pageHash', async (req, res) => {
       console.log('[Flash Proxy] Prices status:', r.status);
       if (r.ok) {
         const data = await r.json();
-        console.log('[Flash Proxy] Price data keys:', Object.keys(data || {}));
-        console.log('[Flash Proxy] Price sample:', JSON.stringify(data).substring(0, 500));
-        return res.json({ ok: true, data });
+        const feedbacks = data?.response?.feedbacks || data?.feedbacks || [];
+        if (feedbacks.length > 0) {
+          console.log('[Flash Proxy] ✅ Got', feedbacks.length, 'feedbacks immediately');
+          return res.json({ ok: true, data });
+        }
+        // Empty — will poll below
       }
-    } catch(e) {
-      console.log('[Flash Proxy] endpoint failed:', e.message);
-    }
+    } catch(e) {}
   }
-  return res.status(502).json({ error: 'Could not fetch prices from flash.co' });
+
+  // Poll with delay — flash processes async
+  for (let attempt = 0; attempt < 12; attempt++) {
+    await new Promise(r => setTimeout(r, 2500));
+    for (const ep of endpoints) {
+      try {
+        const r2 = await fetch(ep, { headers, signal: AbortSignal.timeout(8000) });
+        if (!r2.ok) continue;
+        const data = await r2.json();
+        const feedbacks = data?.response?.feedbacks || data?.feedbacks || [];
+        if (feedbacks.length > 0) {
+          console.log('[Flash Proxy] ✅ Got', feedbacks.length, 'feedbacks at poll attempt:', attempt + 1);
+          return res.json({ ok: true, data, attempt: attempt + 1 });
+        }
+      } catch(e) {}
+    }
+    console.log('[Flash Proxy] Poll attempt', attempt + 1, '— still empty');
+  }
+  return res.status(504).json({ error: 'Flash timed out after 30s', pageHash: req.params.pageHash });
 });
 
 // Proxy: One-shot — search + get prices in one call

@@ -90,6 +90,10 @@ tr:last-child td{border-bottom:none;}
 
 /* Loading */
 .loading{text-align:center;padding:20px;color:var(--muted);font-size:13px;}
+.sec-toggle{background:none;border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;transition:all .2s;flex-shrink:0;}
+.sec-toggle:hover{color:var(--text);border-color:rgba(255,107,43,.3);}
+.sec-body{display:none;}
+.sec-body.open{display:block;}
 </style>
 </head>
 <body>
@@ -174,8 +178,9 @@ tr:last-child td{border-bottom:none;}
       <div class="sec-hdr">
         <span class="sec-title">Recent Page Visits</span>
         <span class="sec-sub">Last 50</span>
+        <button class="sec-toggle" onclick="toggleSection('visitTable',this)" title="Expand">+</button>
       </div>
-      <div id="visitTable"><div class="loading">Loading...</div></div>
+      <div id="visitTable" class="sec-body"></div>
     </div>
 
     <!-- Conversions table -->
@@ -183,8 +188,9 @@ tr:last-child td{border-bottom:none;}
       <div class="sec-hdr">
         <span class="sec-title">Recent Link Conversions</span>
         <span class="sec-sub">Last 50</span>
+        <button class="sec-toggle" onclick="toggleSection('convTable',this)" title="Expand">+</button>
       </div>
-      <div id="convTable"><div class="loading">Loading...</div></div>
+      <div id="convTable" class="sec-body"></div>
     </div>
 
     <!-- Clicks table -->
@@ -192,8 +198,9 @@ tr:last-child td{border-bottom:none;}
       <div class="sec-hdr">
         <span class="sec-title">Recent Go Link Clicks</span>
         <span class="sec-sub">Last 50</span>
+        <button class="sec-toggle" onclick="toggleSection('clickTable',this)" title="Expand">+</button>
       </div>
-      <div id="clickTable"><div class="loading">Loading...</div></div>
+      <div id="clickTable" class="sec-body"></div>
     </div>
 
   </div>
