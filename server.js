@@ -464,20 +464,64 @@ app.get('/flash/test', async (req, res) => {
     const priceHeaders = { ...headers };
     delete priceHeaders['Content-Type'];
 
-    // Try multiple price endpoints — flash.co uses different ones depending on product type
+    // Step 2a: The product-search hash is a SEARCH RESULTS page.
+    // We need to poll it to get the actual product pageHash, then fetch prices.
+    // Flash.co polls this endpoint until results appear.
+    let productPageHash = null;
+    let productName = null;
+    let productImage = null;
+
+    const searchResultEndpoints = [
+      'https://apiv3.flash.tech/api/v1/pages/' + pageHash + '/product-search',
+      'https://apiv3.flash.tech/api/v1/search-results?referenceId=' + pageHash,
+      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_SEARCH&referenceId=' + pageHash,
+      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=SEARCH_RESULTS&referenceId=' + pageHash,
+      'https://apiv3.flash.tech/api/v2/pages/' + pageHash + '/details',
+      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?referenceId=' + pageHash,
+    ];
+
+    let searchResultData = null;
+    for (const ep of searchResultEndpoints) {
+      try {
+        console.log('[Flash Test] Trying search result endpoint:', ep);
+        const sr2 = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(8000) });
+        const sr2Text = await sr2.text();
+        console.log('[Flash Test] Endpoint', ep.substring(50), '→ status:', sr2.status, 'body:', sr2Text.substring(0, 200));
+        if (sr2.ok) {
+          try {
+            const d = JSON.parse(sr2Text);
+            // Look for a product hash in the response
+            const str = JSON.stringify(d);
+            const productHash = str.match(/product-details[^"]*\/h\/([A-Za-z0-9_-]{4,})/)?.[1] ||
+                                str.match(/price-compare\/([A-Za-z0-9_-]{4,})/)?.[1];
+            if (productHash) {
+              productPageHash = productHash;
+              console.log('[Flash Test] Found product pageHash:', productPageHash);
+            }
+            searchResultData = { endpoint: ep, status: sr2.status, data: d };
+            break;
+          } catch(e) {
+            searchResultData = { endpoint: ep, status: sr2.status, raw: sr2Text.substring(0, 300) };
+            break;
+          }
+        }
+      } catch(e) { console.log('[Flash Test] Endpoint error:', e.message); }
+    }
+
+    // Step 2b: If we found a product pageHash, fetch its prices
+    // Otherwise try price endpoints on the original search hash
+    const hashToUse = productPageHash || pageHash;
     let pr = null;
     const priceEndpoints = [
+      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + hashToUse,
+      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + hashToUse,
       'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
-      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash,
-      'https://apiv3.flash.tech/api/v1/pages/' + pageHash + '/price-compare',
-      'https://apiv3.flash.tech/api/v2/pages/' + pageHash + '/details',
     ];
     for (const ep of priceEndpoints) {
       try {
         pr = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(12000) });
-        if (pr.ok) { console.log('[Flash Test] Prices found at:', ep); break; }
-        console.log('[Flash Test] Endpoint', ep.substring(40), 'returned', pr.status);
-      } catch(e) { console.log('[Flash Test] Endpoint error:', e.message); }
+        if (pr.ok) { console.log('[Flash Test] Price endpoint worked:', ep); break; }
+      } catch(e) {}
     }
     if (!pr) pr = { ok: false, status: 0 };
     const priceStatus = pr.status;
@@ -485,11 +529,14 @@ app.get('/flash/test', async (req, res) => {
 
     return res.json({
       success: pr.ok,
-      pageHash,
+      searchHash: pageHash,
+      productHash: productPageHash || null,
+      hashUsed: hashToUse,
       streamStatus,
       priceStatus,
+      searchResultData: searchResultData || null,
       priceKeys: pr.ok ? Object.keys(priceData || {}) : undefined,
-      priceSample: pr.ok ? JSON.stringify(priceData).substring(0, 800) : priceData?.toString()?.substring(0, 200),
+      priceSample: pr.ok ? JSON.stringify(priceData).substring(0, 1000) : String(priceData || '').substring(0, 200),
       streamSample: streamText.substring(0, 400),
     });
 
