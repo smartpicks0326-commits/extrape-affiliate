@@ -427,16 +427,24 @@ app.get('/flash/test', async (req, res) => {
       });
     }
 
-    // Extract pageHash
+    // Extract pageHash — flash uses /product-search/:hash in INT_NAVIGATION event
     let pageHash = null;
-    const hm = streamText.match(/\/h\/([A-Za-z0-9_-]{6,})/);
-    if (hm) pageHash = hm[1];
+    const navPatterns = [
+      /product-search\/([A-Za-z0-9_-]{4,})/,
+      /price-compare\/([A-Za-z0-9_-]{4,})/,
+      /\/h\/([A-Za-z0-9_-]{4,})/,
+    ];
+    for (const pat of navPatterns) {
+      const m = streamText.match(pat);
+      if (m) { pageHash = m[1]; console.log('[Flash Test] pageHash:', pageHash, 'via', pat); break; }
+    }
     if (!pageHash) {
       for (const line of streamText.split('\n')) {
         if (!line.startsWith('data:')) continue;
         try {
           const d = JSON.parse(line.slice(5).trim());
-          pageHash = d.pageHash || d.referenceId || (d.data && (d.data.pageHash || d.data.referenceId)) || null;
+          pageHash = d.pageHash || d.referenceId || d.hash ||
+            (d.data && (d.data.pageHash || d.data.referenceId)) || null;
           if (pageHash) break;
         } catch(e) {}
       }
@@ -456,10 +464,22 @@ app.get('/flash/test', async (req, res) => {
     const priceHeaders = { ...headers };
     delete priceHeaders['Content-Type'];
 
-    const pr = await fetch(
+    // Try multiple price endpoints — flash.co uses different ones depending on product type
+    let pr = null;
+    const priceEndpoints = [
       'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
-      { headers: priceHeaders, signal: AbortSignal.timeout(15000) }
-    );
+      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash,
+      'https://apiv3.flash.tech/api/v1/pages/' + pageHash + '/price-compare',
+      'https://apiv3.flash.tech/api/v2/pages/' + pageHash + '/details',
+    ];
+    for (const ep of priceEndpoints) {
+      try {
+        pr = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(12000) });
+        if (pr.ok) { console.log('[Flash Test] Prices found at:', ep); break; }
+        console.log('[Flash Test] Endpoint', ep.substring(40), 'returned', pr.status);
+      } catch(e) { console.log('[Flash Test] Endpoint error:', e.message); }
+    }
+    if (!pr) pr = { ok: false, status: 0 };
     const priceStatus = pr.status;
     const priceData = pr.ok ? await pr.json() : await pr.text();
 
@@ -520,16 +540,23 @@ app.post('/flash/search', async (req, res) => {
     const text = await sr.text();
     console.log('[Flash Proxy] Stream length:', text.length, 'sample:', text.substring(0, 300));
 
-    // Extract pageHash
+    // Extract pageHash from flash SSE stream
     let pageHash = null;
-    const hm = text.match(/\/h\/([A-Za-z0-9_-]{6,})/);
-    if (hm) pageHash = hm[1];
+    const navPats = [
+      /product-search\/([A-Za-z0-9_-]{4,})/,
+      /price-compare\/([A-Za-z0-9_-]{4,})/,
+      /\/h\/([A-Za-z0-9_-]{4,})/,
+    ];
+    for (const pat of navPats) {
+      const m = text.match(pat);
+      if (m) { pageHash = m[1]; break; }
+    }
     if (!pageHash) {
       for (const line of text.split("\n")) {
         if (!line.startsWith('data:')) continue;
         try {
           const d = JSON.parse(line.slice(5).trim());
-          pageHash = d.pageHash || d.referenceId || d.page_hash || (d.data && (d.data.pageHash || d.data.referenceId)) || null;
+          pageHash = d.pageHash || d.referenceId || (d.data && (d.data.pageHash || d.data.referenceId)) || null;
           if (pageHash) break;
         } catch(e) {}
       }
