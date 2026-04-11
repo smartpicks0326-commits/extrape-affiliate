@@ -369,6 +369,115 @@ const FLASH_DEVICE_ID  = process.env.FLASH_DEVICE_ID  || 'web-spd-backend';
 const PROXY_URL        = process.env.PROXY_URL         || ''; // optional: residential proxy
 
 // Proxy: POST stream to flash.co to get pageHash
+// GET test endpoint — open in browser to test flash.co proxy
+// Usage: https://extrape-affiliate.onrender.com/flash/test?url=https://amzn.in/d/01zArQtK
+app.get('/flash/test', async (req, res) => {
+  const productUrl = req.query.url;
+  if (!productUrl) {
+    return res.json({
+      usage: 'Add ?url=YOUR_PRODUCT_URL to test',
+      example: '/flash/test?url=https://amzn.in/d/01zArQtK',
+      token_set: !!FLASH_AUTH_TOKEN,
+      device_set: !!FLASH_DEVICE_ID,
+      token_preview: FLASH_AUTH_TOKEN ? FLASH_AUTH_TOKEN.substring(0,20)+'...' : 'NOT SET — add FLASH_AUTH_TOKEN to Render env',
+      device_id: FLASH_DEVICE_ID || 'NOT SET — add FLASH_DEVICE_ID to Render env',
+    });
+  }
+  if (!FLASH_AUTH_TOKEN) {
+    return res.json({ error: 'FLASH_AUTH_TOKEN not set in Render environment variables' });
+  }
+
+  try {
+    // Step 1: Get pageHash via stream
+    const params = new URLSearchParams({
+      source: 'APPEND', context: 'HOME_URL_PASTE',
+      user_agent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36',
+      device_type: 'DESKTOP', country_code: 'IN',
+    });
+    const headers = {
+      'Authorization': 'Bearer ' + FLASH_AUTH_TOKEN,
+      'Channel-Type': 'web',
+      'Content-Type': 'application/json',
+      'Origin': 'https://flash.co',
+      'Referer': 'https://flash.co/',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36',
+      'X-Country-Code': 'IN',
+      'X-Device-Id': FLASH_DEVICE_ID || 'web-spd',
+      'X-Timezone': 'Asia/Calcutta',
+      'Accept': 'application/json, text/event-stream, */*',
+    };
+
+    console.log('[Flash Test] Searching:', productUrl);
+    const sr = await fetch('https://apiv3.flash.tech/agents/chat/stream?' + params, {
+      method: 'POST', headers,
+      body: JSON.stringify({ message: productUrl, context: 'HOME_URL_PASTE' }),
+      signal: AbortSignal.timeout(35000),
+    });
+
+    const streamStatus = sr.status;
+    const streamText = sr.ok ? await sr.text() : await sr.text();
+    console.log('[Flash Test] Stream status:', streamStatus, 'length:', streamText.length);
+
+    if (!sr.ok) {
+      return res.json({
+        step: 'stream',
+        status: streamStatus,
+        error: streamText.substring(0, 200),
+        diagnosis: streamStatus === 401 ? 'Token is invalid or IP-bound. Try refreshing FLASH_AUTH_TOKEN in Render.' : 'Unexpected error',
+      });
+    }
+
+    // Extract pageHash
+    let pageHash = null;
+    const hm = streamText.match(/\/h\/([A-Za-z0-9_-]{6,})/);
+    if (hm) pageHash = hm[1];
+    if (!pageHash) {
+      for (const line of streamText.split('\n')) {
+        if (!line.startsWith('data:')) continue;
+        try {
+          const d = JSON.parse(line.slice(5).trim());
+          pageHash = d.pageHash || d.referenceId || (d.data && (d.data.pageHash || d.data.referenceId)) || null;
+          if (pageHash) break;
+        } catch(e) {}
+      }
+    }
+
+    if (!pageHash) {
+      return res.json({
+        step: 'stream_parse',
+        status: streamStatus,
+        pageHash: null,
+        streamSample: streamText.substring(0, 600),
+        error: 'Could not extract pageHash from flash stream response',
+      });
+    }
+
+    // Step 2: Get prices
+    const priceHeaders = { ...headers };
+    delete priceHeaders['Content-Type'];
+
+    const pr = await fetch(
+      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
+      { headers: priceHeaders, signal: AbortSignal.timeout(15000) }
+    );
+    const priceStatus = pr.status;
+    const priceData = pr.ok ? await pr.json() : await pr.text();
+
+    return res.json({
+      success: pr.ok,
+      pageHash,
+      streamStatus,
+      priceStatus,
+      priceKeys: pr.ok ? Object.keys(priceData || {}) : undefined,
+      priceSample: pr.ok ? JSON.stringify(priceData).substring(0, 800) : priceData?.toString()?.substring(0, 200),
+      streamSample: streamText.substring(0, 400),
+    });
+
+  } catch(e) {
+    return res.json({ error: e.message, step: 'exception' });
+  }
+});
+
 app.post('/flash/search', async (req, res) => {
   const { url: productUrl } = req.body;
   if (!productUrl) return res.status(400).json({ error: 'Pass url in body' });
