@@ -410,7 +410,7 @@ app.get('/flash/test', async (req, res) => {
     console.log('[Flash Test] Searching:', productUrl);
     const sr = await fetch('https://apiv3.flash.tech/agents/chat/stream?' + params, {
       method: 'POST', headers,
-      body: JSON.stringify({ message: productUrl, context: 'HOME_URL_PASTE' }),
+      body: JSON.stringify({ query: productUrl, context: 'HOME_URL_PASTE' }),
       signal: AbortSignal.timeout(35000),
     });
 
@@ -507,7 +507,7 @@ app.post('/flash/search', async (req, res) => {
     console.log('[Flash Proxy] Searching:', productUrl);
     const sr = await fetch(
       'https://apiv3.flash.tech/agents/chat/stream?' + params.toString(),
-      { method: 'POST', headers, body: JSON.stringify({ message: productUrl, context: 'HOME_URL_PASTE' }), signal: AbortSignal.timeout(35000) }
+      { method: 'POST', headers, body: JSON.stringify({ query: productUrl, context: 'HOME_URL_PASTE' }), signal: AbortSignal.timeout(35000) }
     );
 
     console.log('[Flash Proxy] Stream status:', sr.status);

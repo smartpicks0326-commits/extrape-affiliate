@@ -449,7 +449,7 @@ async function callFlash(productUrl, token) {
   // POST to flash stream
   var sr = await fetch('https://apiv3.flash.tech/agents/chat/stream?source=APPEND&context=HOME_URL_PASTE&device_type=DESKTOP&country_code=IN', {
     method:'POST', headers:h,
-    body:JSON.stringify({message:productUrl,context:'HOME_URL_PASTE'}),
+    body:JSON.stringify({query:productUrl,context:'HOME_URL_PASTE'}),
     signal:AbortSignal.timeout(30000),
   });
   if (!sr.ok) throw new Error('Flash stream '+sr.status);
