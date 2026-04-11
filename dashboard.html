@@ -90,10 +90,30 @@ tr:last-child td{border-bottom:none;}
 
 /* Loading */
 .loading{text-align:center;padding:20px;color:var(--muted);font-size:13px;}
-.sec-toggle{background:none;border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;transition:all .2s;flex-shrink:0;}
-.sec-toggle:hover{color:var(--text);border-color:rgba(255,107,43,.3);}
-.sec-body{display:none;}
-.sec-body.open{display:block;}
+.sec-toggle{background:none;border:1px solid var(--border);color:var(--muted);width:28px;height:28px;border-radius:7px;cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;transition:all .2s;flex-shrink:0;margin-left:auto;}
+.sec-toggle:hover{color:var(--text);border-color:rgba(255,107,43,.3);background:rgba(255,107,43,.06);}
+.sec-toggle svg{transition:transform .25s ease;}
+.sec-toggle.open svg{transform:rotate(180deg);}
+.sec-body{display:none;margin-top:2px;}
+.sec-body.open{display:block;animation:fadeIn .2s ease;}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+
+@media(max-width:700px){
+  .page{padding:16px 12px 40px;}
+  .stats{grid-template-columns:1fr 1fr;}
+  .stat-val{font-size:22px;}
+  .date-bar{flex-direction:column;align-items:flex-start;gap:8px;}
+  .date-presets{width:100%;overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px;}
+  .apply-btn{width:100%;}
+  .sec-hdr{flex-wrap:wrap;gap:6px;}
+  nav{padding:10px 14px;}
+  table{font-size:11px;}
+  td,th{padding:7px 0;}
+  .mono{max-width:160px;}
+}
+@media(max-width:400px){
+  .stats{grid-template-columns:1fr;}
+}
 </style>
 </head>
 <body>
@@ -178,7 +198,7 @@ tr:last-child td{border-bottom:none;}
       <div class="sec-hdr">
         <span class="sec-title">Recent Page Visits</span>
         <span class="sec-sub">Last 50</span>
-        <button class="sec-toggle" onclick="toggleSection('visitTable',this)" title="Expand">+</button>
+        <button class="sec-toggle" onclick="toggleSection('visitTable',this)" title="Expand"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></button>
       </div>
       <div id="visitTable" class="sec-body"></div>
     </div>
@@ -188,7 +208,7 @@ tr:last-child td{border-bottom:none;}
       <div class="sec-hdr">
         <span class="sec-title">Recent Link Conversions</span>
         <span class="sec-sub">Last 50</span>
-        <button class="sec-toggle" onclick="toggleSection('convTable',this)" title="Expand">+</button>
+        <button class="sec-toggle" onclick="toggleSection('convTable',this)" title="Expand"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></button>
       </div>
       <div id="convTable" class="sec-body"></div>
     </div>
@@ -198,7 +218,7 @@ tr:last-child td{border-bottom:none;}
       <div class="sec-hdr">
         <span class="sec-title">Recent Go Link Clicks</span>
         <span class="sec-sub">Last 50</span>
-        <button class="sec-toggle" onclick="toggleSection('clickTable',this)" title="Expand">+</button>
+        <button class="sec-toggle" onclick="toggleSection('clickTable',this)" title="Expand"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></button>
       </div>
       <div id="clickTable" class="sec-body"></div>
     </div>
@@ -312,6 +332,7 @@ function fmtTime(ts) {
 }
 
 function render(d) {
+  cachedData = d;
   const from = new Date(document.getElementById('fromDate').value);
   const to   = new Date(document.getElementById('toDate').value);
   const rangeStr = from.toLocaleDateString('en-IN',{day:'2-digit',month:'short'}) + ' → ' +

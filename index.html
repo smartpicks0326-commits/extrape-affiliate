@@ -398,7 +398,18 @@
       from { transform: translateX(0); }
       to   { transform: translateX(-50%); }
     }
-  </style>
+  
+@media(max-width:600px){
+  nav{padding:10px 14px;}
+  .nav-btn{padding:5px 10px;font-size:11px;}
+  .hero-title,#hero h1{font-size:1.9rem !important;}
+  .input-row,form{flex-direction:column;}
+  input[type=text],input[type=url],#productUrl{width:100% !important;border-radius:10px !important;}
+  button#convertBtn,.btn-convert{width:100%;border-radius:10px !important;}
+  .result-row,.affiliate-row{flex-direction:column;gap:8px;}
+  .copy-btn,.open-btn{width:100%;}
+}
+</style>
 </head>
 <body>
 

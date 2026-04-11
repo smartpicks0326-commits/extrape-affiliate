@@ -464,56 +464,75 @@ app.get('/flash/test', async (req, res) => {
     const priceHeaders = { ...headers };
     delete priceHeaders['Content-Type'];
 
-    // Step 2: Flash.co product-search is ASYNC — poll until feedbacks appear
-    // Flash webapp polls every 2s for up to 30s waiting for AI to process the URL
-    const POLL_SCOPES = [
-      'PRICE_COMPARE',
-      'PRODUCT_DETAILS',
-      'PRODUCT_SEARCH',
-    ];
+    // Step 2: product-search hash is a SEARCH THREAD — need to fetch search results
+    // Flash.co searches for the product, then we pick the top result's product hash
+    // Then fetch PRICE_COMPARE for that product hash
 
+    const delay = ms => new Promise(r => setTimeout(r, ms));
     let pollData = null;
     let pollScope = null;
     let pollAttempts = 0;
-    const MAX_POLLS = 12; // 12 × 2.5s = 30s max wait
+    const MAX_POLLS = 10;
 
-    console.log('[Flash Test] Polling for results (max', MAX_POLLS, 'attempts)...');
+    // Try ALL known flash.co endpoints for search results
+    const searchEndpoints = [
+      // Search result endpoints
+      `https://apiv3.flash.tech/api/v1/search/${pageHash}/results`,
+      `https://apiv3.flash.tech/api/v2/search/${pageHash}/results`,
+      `https://apiv3.flash.tech/api/v1/product-search/${pageHash}`,
+      `https://apiv3.flash.tech/api/v2/product-search/${pageHash}`,
+      `https://apiv3.flash.tech/api/v1/pages/${pageHash}`,
+      `https://apiv3.flash.tech/api/v2/pages/${pageHash}`,
+      // Thread/chat endpoints
+      `https://apiv3.flash.tech/api/v1/chat/thread/${pageHash}`,
+      `https://apiv3.flash.tech/api/v1/agents/thread/${pageHash}/messages`,
+      // Feedback scopes
+      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_SEARCH&referenceId=${pageHash}`,
+      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=SEARCH_RESULTS&referenceId=${pageHash}`,
+      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=${pageHash}`,
+      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=${pageHash}`,
+      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=ALL&referenceId=${pageHash}`,
+    ];
 
-    outer:
-    for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
-      // Wait 2.5s between polls (except first attempt)
-      if (attempt > 0) await new Promise(r => setTimeout(r, 2500));
-      pollAttempts = attempt + 1;
-
-      for (const scope of POLL_SCOPES) {
-        try {
-          const ep = 'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=' + scope + '&referenceId=' + pageHash;
-          const pr2 = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(8000) });
-          if (!pr2.ok) continue;
-          const d = await pr2.json();
-
-          // Check if we have actual data (feedbacks array with items)
-          const feedbacks = d?.response?.feedbacks || d?.feedbacks || [];
-          if (feedbacks.length > 0) {
-            console.log('[Flash Test] ✅ Got', feedbacks.length, 'feedbacks via scope:', scope, 'attempt:', attempt + 1);
-            pollData = d;
-            pollScope = scope;
-            break outer;
-          }
-
-          // Also check for product URL in response (alternate structure)
-          const str = JSON.stringify(d);
-          const productHash = (str.match(/product-details[^\"]*\/h\/([A-Za-z0-9_-]{4,})/) ||
-                               str.match(/price-compare\/([A-Za-z0-9_-]{4,})/)||[])[1];
-          if (productHash) {
-            console.log('[Flash Test] Found nested productHash:', productHash);
-            pollData = d;
-            pollScope = scope + '+hash:' + productHash;
-            break outer;
-          }
-        } catch(e) {}
+    // First: probe all endpoints immediately to find which ones respond
+    const probeResults = [];
+    for (const ep of searchEndpoints) {
+      try {
+        const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(5000) });
+        const txt = await r.text();
+        probeResults.push({ ep: ep.substring(40), status: r.status, body: txt.substring(0, 150) });
+        if (r.ok) {
+          try {
+            const d = JSON.parse(txt);
+            const fbk = d?.response?.feedbacks || d?.feedbacks || d?.results || d?.data?.products || [];
+            if (fbk.length > 0) {
+              pollData = d; pollScope = ep; pollAttempts = 1;
+              break;
+            }
+          } catch(e) {}
+        }
+      } catch(e) {
+        probeResults.push({ ep: ep.substring(40), error: e.message });
       }
-      console.log('[Flash Test] Attempt', attempt + 1, '— no data yet, polling...');
+    }
+
+    // If not found immediately, poll the most promising endpoints
+    if (!pollData) {
+      const pollable = searchEndpoints.slice(8); // feedback scope endpoints
+      outer:
+      for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
+        await delay(2500);
+        pollAttempts = attempt + 2;
+        for (const ep of pollable) {
+          try {
+            const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(6000) });
+            if (!r.ok) continue;
+            const d = await r.json();
+            const fbk = d?.response?.feedbacks || d?.feedbacks || [];
+            if (fbk.length > 0) { pollData = d; pollScope = ep; break outer; }
+          } catch(e) {}
+        }
+      }
     }
 
     let pr = { ok: !!pollData, status: pollData ? 200 : 504 };
@@ -530,8 +549,8 @@ app.get('/flash/test', async (req, res) => {
       feedbackCount: (pollData?.response?.feedbacks || pollData?.feedbacks || []).length,
       priceKeys: pollData ? Object.keys(pollData) : [],
       priceSample: JSON.stringify(pollData).substring(0, 1500),
+      probeResults: probeResults || [],
       streamSample: streamText.substring(0, 400),
-      note: !pollData ? 'All ' + MAX_POLLS + ' poll attempts returned empty feedbacks. Flash may need more time or a different approach.' : undefined,
     });
 
   } catch(e) {
