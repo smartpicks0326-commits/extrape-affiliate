@@ -358,6 +358,157 @@ function storeSearchUrl(store, q) {
 app.get('/', (req, res) => res.send('Smart Pick Deals ✅'));
 app.get('/ping', (req, res) => res.json({ status:'ok', time:new Date().toISOString() }));
 
+// ── Flash.co Backend Proxy ──
+// Routes flash.co API calls through Render using the user's session token
+// Requires FLASH_AUTH_TOKEN and FLASH_DEVICE_ID env vars on Render
+// Note: Only works if Render's IP is not blocked by flash.co
+// For better success rate, optionally configure PROXY_URL (residential proxy)
+
+const FLASH_AUTH_TOKEN = process.env.FLASH_AUTH_TOKEN || '';
+const FLASH_DEVICE_ID  = process.env.FLASH_DEVICE_ID  || 'web-spd-backend';
+const PROXY_URL        = process.env.PROXY_URL         || ''; // optional: residential proxy
+
+// Proxy: POST stream to flash.co to get pageHash
+app.post('/flash/search', async (req, res) => {
+  const { url: productUrl } = req.body;
+  if (!productUrl) return res.status(400).json({ error: 'Pass url in body' });
+  if (!FLASH_AUTH_TOKEN) return res.status(503).json({ error: 'FLASH_AUTH_TOKEN not set in Render env' });
+
+  try {
+    const params = new URLSearchParams({
+      source: 'APPEND', context: 'HOME_URL_PASTE',
+      user_agent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+      device_type: 'DESKTOP', country_code: 'IN',
+    });
+
+    const headers = {
+      'Authorization': 'Bearer ' + FLASH_AUTH_TOKEN,
+      'Channel-Type': 'web',
+      'Content-Type': 'application/json',
+      'Origin': 'https://flash.co',
+      'Referer': 'https://flash.co/',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+      'X-Country-Code': 'IN',
+      'X-Device-Id': FLASH_DEVICE_ID,
+      'X-Timezone': 'Asia/Calcutta',
+      'Accept': 'application/json, text/event-stream, */*',
+      'Accept-Language': 'en-GB,en;q=0.9',
+    };
+
+    console.log('[Flash Proxy] Searching:', productUrl);
+    const sr = await fetch(
+      'https://apiv3.flash.tech/agents/chat/stream?' + params.toString(),
+      { method: 'POST', headers, body: JSON.stringify({ message: productUrl, context: 'HOME_URL_PASTE' }), signal: AbortSignal.timeout(35000) }
+    );
+
+    console.log('[Flash Proxy] Stream status:', sr.status);
+    if (!sr.ok) {
+      const errText = await sr.text().catch(() => '');
+      console.log('[Flash Proxy] Stream error body:', errText.substring(0, 200));
+      return res.status(sr.status).json({ error: 'Flash stream ' + sr.status, detail: errText.substring(0, 100) });
+    }
+
+    const text = await sr.text();
+    console.log('[Flash Proxy] Stream length:', text.length, 'sample:', text.substring(0, 300));
+
+    // Extract pageHash
+    let pageHash = null;
+    const hm = text.match(/\/h\/([A-Za-z0-9_-]{6,})/);
+    if (hm) pageHash = hm[1];
+    if (!pageHash) {
+      for (const line of text.split("\n")) {
+        if (!line.startsWith('data:')) continue;
+        try {
+          const d = JSON.parse(line.slice(5).trim());
+          pageHash = d.pageHash || d.referenceId || d.page_hash || (d.data && (d.data.pageHash || d.data.referenceId)) || null;
+          if (pageHash) break;
+        } catch(e) {}
+      }
+    }
+
+    console.log('[Flash Proxy] pageHash:', pageHash);
+    if (!pageHash) return res.status(422).json({ error: 'No pageHash found in flash response', streamSample: text.substring(0, 500) });
+
+    return res.json({ ok: true, pageHash });
+  } catch(e) {
+    console.error('[Flash Proxy] search error:', e.message);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// Proxy: GET prices from flash.co for a given pageHash
+app.get('/flash/prices/:pageHash', async (req, res) => {
+  const { pageHash } = req.params;
+  if (!FLASH_AUTH_TOKEN) return res.status(503).json({ error: 'FLASH_AUTH_TOKEN not set' });
+
+  const headers = {
+    'Authorization': 'Bearer ' + FLASH_AUTH_TOKEN,
+    'Channel-Type': 'web',
+    'Origin': 'https://flash.co',
+    'Referer': 'https://flash.co/',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+    'X-Country-Code': 'IN',
+    'X-Device-Id': FLASH_DEVICE_ID,
+    'X-Timezone': 'Asia/Calcutta',
+    'Accept': 'application/json',
+  };
+
+  const endpoints = [
+    'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
+    'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash,
+  ];
+
+  for (const ep of endpoints) {
+    try {
+      console.log('[Flash Proxy] Fetching prices from:', ep);
+      const r = await fetch(ep, { headers, signal: AbortSignal.timeout(15000) });
+      console.log('[Flash Proxy] Prices status:', r.status);
+      if (r.ok) {
+        const data = await r.json();
+        console.log('[Flash Proxy] Price data keys:', Object.keys(data || {}));
+        console.log('[Flash Proxy] Price sample:', JSON.stringify(data).substring(0, 500));
+        return res.json({ ok: true, data });
+      }
+    } catch(e) {
+      console.log('[Flash Proxy] endpoint failed:', e.message);
+    }
+  }
+  return res.status(502).json({ error: 'Could not fetch prices from flash.co' });
+});
+
+// Proxy: One-shot — search + get prices in one call
+app.post('/flash/compare', async (req, res) => {
+  const { url: productUrl } = req.body;
+  if (!productUrl) return res.status(400).json({ error: 'Pass url in body' });
+  if (!FLASH_AUTH_TOKEN) return res.status(503).json({ error: 'FLASH_AUTH_TOKEN not set in Render env', setup: 'Add FLASH_AUTH_TOKEN and FLASH_DEVICE_ID to Render environment variables' });
+
+  try {
+    // Step 1: Get pageHash
+    const searchResp = await fetch('http://localhost:' + (process.env.PORT || 3000) + '/flash/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: productUrl }),
+      signal: AbortSignal.timeout(40000),
+    });
+    const searchData = await searchResp.json();
+    if (!searchResp.ok || !searchData.pageHash) {
+      return res.status(searchResp.status).json({ error: searchData.error || 'Flash search failed', detail: searchData });
+    }
+
+    // Step 2: Get prices
+    const pricesResp = await fetch('http://localhost:' + (process.env.PORT || 3000) + '/flash/prices/' + searchData.pageHash, {
+      signal: AbortSignal.timeout(20000),
+    });
+    const pricesData = await pricesResp.json();
+    if (!pricesResp.ok) return res.status(pricesResp.status).json({ error: pricesData.error });
+
+    return res.json({ ok: true, pageHash: searchData.pageHash, priceData: pricesData.data });
+  } catch(e) {
+    console.error('[Flash Proxy] compare error:', e.message);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 // Track page visits
 app.post('/track/visit', async (req, res) => {
   const page = req.body?.page || req.headers?.referer || '/';

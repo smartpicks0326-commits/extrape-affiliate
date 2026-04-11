@@ -371,28 +371,60 @@ async function getAffiliateLink(url, store) {
 }
 
 // ── Get compare data ──
+// Strategy order:
+// 1. Backend proxy → flash.co via Render (uses FLASH_AUTH_TOKEN env var)
+// 2. Browser direct → flash.co from user's browser (if they're logged in)
+// 3. SerpAPI → Google Shopping via backend (always works, fewer stores)
 async function getCompareData(url) {
-  // Wake backend
-  try { await fetch(BACKEND+'/ping',{signal:AbortSignal.timeout(8000)}); } catch(e) {}
+  // Wake backend (also starts Render if sleeping)
+  try { await fetch(BACKEND+'/ping',{signal:AbortSignal.timeout(10000)}); } catch(e) {}
 
-  // Try flash.co from browser if logged in
+  // Strategy 1: Backend proxy (Render calls flash.co using FLASH_AUTH_TOKEN)
+  console.log('[Compare] Trying backend proxy...');
+  try {
+    var pr = await fetch(BACKEND+'/flash/compare', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({url: url}),
+      signal: AbortSignal.timeout(45000),
+    });
+    var pd = await pr.json();
+    if (pr.ok && pd.ok && pd.priceData) {
+      var stores = parseFlashStores(pd.priceData);
+      if (stores.length > 0) {
+        console.log('[Flash Proxy] ✅ Got', stores.length, 'stores via backend proxy');
+        return {
+          stores: stores,
+          productName: pd.priceData.productName || pd.priceData.name || null,
+          productImage: pd.priceData.imageUrl || pd.priceData.image || null,
+          source: 'flash',
+        };
+      }
+      console.log('[Flash Proxy] Got response but no stores. Raw keys:', Object.keys(pd.priceData||{}));
+    } else {
+      console.log('[Flash Proxy] Failed:', pd.error || pr.status, pd.detail || '');
+    }
+  } catch(e) { console.log('[Flash Proxy] Error:', e.message); }
+
+  // Strategy 2: Browser direct (user's own IP — if logged into flash.co)
   var flashToken = getCookie('flash_auth_token');
   if (flashToken) {
-    console.log('[Flash] Token found — trying flash.co');
+    console.log('[Flash Browser] Token found — trying direct browser call...');
     try {
       var fr = await callFlash(url, flashToken);
       if (fr && fr.stores && fr.stores.length > 0) {
-        console.log('[Flash] Got', fr.stores.length, 'stores');
+        console.log('[Flash Browser] ✅ Got', fr.stores.length, 'stores');
         fr.source = 'flash';
         return fr;
       }
-    } catch(e) { console.log('[Flash] Failed:', e.message); }
+      console.log('[Flash Browser] No stores returned');
+    } catch(e) { console.log('[Flash Browser] Failed:', e.message); }
   }
 
-  // Fallback: SerpAPI via backend
-  console.log('[Compare] Using SerpAPI backend');
+  // Strategy 3: SerpAPI (always works)
+  console.log('[Compare] Using SerpAPI fallback...');
   var r = await fetch(BACKEND+'/compare/search?url='+encodeURIComponent(url), {signal:AbortSignal.timeout(45000)});
-  if (!r.ok) throw new Error('HTTP '+r.status);
+  if (!r.ok) throw new Error('SerpAPI HTTP '+r.status);
   var d = await r.json();
   d.source = 'serpapi';
   return d;
