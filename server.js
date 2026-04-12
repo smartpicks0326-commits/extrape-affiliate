@@ -464,81 +464,102 @@ app.get('/flash/test', async (req, res) => {
     const priceHeaders = { ...headers };
     delete priceHeaders['Content-Type'];
 
-    // Step 2: product-search hash is a SEARCH THREAD — need to fetch search results
-    // Flash.co searches for the product, then we pick the top result's product hash
-    // Then fetch PRICE_COMPARE for that product hash
+    // Step 2: Extract threadId and messageId from stream — this is the real key
+    // Flash stores results by threadId, not referenceId
+    let threadId = null;
+    let messageId = null;
+    for (const line of streamText.split('\n')) {
+      if (!line.startsWith('data:')) continue;
+      try {
+        const d = JSON.parse(line.slice(5).trim());
+        if (d.threadId) threadId = d.threadId;
+        if (d.messageId) messageId = d.messageId;
+      } catch(e) {}
+    }
+    console.log('[Flash Test] threadId:', threadId, 'messageId:', messageId);
 
     const delay = ms => new Promise(r => setTimeout(r, ms));
     let pollData = null;
     let pollScope = null;
     let pollAttempts = 0;
-    const MAX_POLLS = 10;
 
-    // Try ALL known flash.co endpoints for search results
-    const searchEndpoints = [
-      // Search result endpoints
-      `https://apiv3.flash.tech/api/v1/search/${pageHash}/results`,
-      `https://apiv3.flash.tech/api/v2/search/${pageHash}/results`,
-      `https://apiv3.flash.tech/api/v1/product-search/${pageHash}`,
-      `https://apiv3.flash.tech/api/v2/product-search/${pageHash}`,
-      `https://apiv3.flash.tech/api/v1/pages/${pageHash}`,
-      `https://apiv3.flash.tech/api/v2/pages/${pageHash}`,
-      // Thread/chat endpoints
-      `https://apiv3.flash.tech/api/v1/chat/thread/${pageHash}`,
-      `https://apiv3.flash.tech/api/v1/agents/thread/${pageHash}/messages`,
-      // Feedback scopes
-      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_SEARCH&referenceId=${pageHash}`,
-      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=SEARCH_RESULTS&referenceId=${pageHash}`,
+    // Try threadId-based endpoints first (most likely to work)
+    const threadEndpoints = threadId ? [
+      `https://apiv3.flash.tech/api/v1/agents/chat/thread/${threadId}/messages`,
+      `https://apiv3.flash.tech/api/v2/agents/chat/thread/${threadId}/messages`,
+      `https://apiv3.flash.tech/api/v1/chat/thread/${threadId}/messages`,
+      `https://apiv3.flash.tech/api/v1/threads/${threadId}/messages`,
+      `https://apiv3.flash.tech/api/v1/threads/${threadId}`,
+    ] : [];
+
+    // Also try messageId endpoints
+    const messageEndpoints = messageId ? [
+      `https://apiv3.flash.tech/api/v1/agents/chat/message/${messageId}`,
+      `https://apiv3.flash.tech/api/v1/messages/${messageId}/products`,
+      `https://apiv3.flash.tech/api/v1/messages/${messageId}/price-compare`,
+    ] : [];
+
+    // Feedback endpoints with referenceId
+    const feedbackEndpoints = [
       `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=${pageHash}`,
       `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=${pageHash}`,
-      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=ALL&referenceId=${pageHash}`,
+      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_SEARCH&referenceId=${pageHash}`,
     ];
 
-    // First: probe all endpoints immediately to find which ones respond
+    const allEndpoints = [...threadEndpoints, ...messageEndpoints, ...feedbackEndpoints];
     const probeResults = [];
-    for (const ep of searchEndpoints) {
+
+    // Probe all endpoints immediately
+    for (const ep of allEndpoints) {
       try {
         const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(5000) });
         const txt = await r.text();
-        probeResults.push({ ep: ep.substring(40), status: r.status, body: txt.substring(0, 150) });
-        if (r.ok) {
+        probeResults.push({ ep: ep.replace('https://apiv3.flash.tech',''), status: r.status, body: txt.substring(0, 200) });
+        if (r.ok && r.status === 200) {
           try {
             const d = JSON.parse(txt);
-            const fbk = d?.response?.feedbacks || d?.feedbacks || d?.results || d?.data?.products || [];
-            if (fbk.length > 0) {
+            const str = JSON.stringify(d);
+            // Check for product data in various shapes
+            const hasProducts = d?.messages?.length > 0 || d?.data?.length > 0 ||
+              (d?.response?.feedbacks?.length > 0) || d?.products?.length > 0 ||
+              str.includes('"price"') || str.includes('"storeName"') || str.includes('"stores"');
+            if (hasProducts) {
               pollData = d; pollScope = ep; pollAttempts = 1;
+              console.log('[Flash Test] ✅ Found data at:', ep);
               break;
             }
           } catch(e) {}
         }
       } catch(e) {
-        probeResults.push({ ep: ep.substring(40), error: e.message });
+        probeResults.push({ ep: ep.replace('https://apiv3.flash.tech',''), error: e.message });
       }
     }
 
-    // If not found immediately, poll the most promising endpoints
+    // If nothing found yet, poll feedback endpoints with delay
     if (!pollData) {
-      const pollable = searchEndpoints.slice(8); // feedback scope endpoints
-      outer:
-      for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
-        await delay(2500);
+      for (let attempt = 0; attempt < 8; attempt++) {
+        await delay(3000);
         pollAttempts = attempt + 2;
-        for (const ep of pollable) {
+        for (const ep of feedbackEndpoints) {
           try {
             const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(6000) });
             if (!r.ok) continue;
             const d = await r.json();
-            const fbk = d?.response?.feedbacks || d?.feedbacks || [];
-            if (fbk.length > 0) { pollData = d; pollScope = ep; break outer; }
+            const feedbacks = d?.response?.feedbacks || d?.feedbacks || [];
+            if (feedbacks.length > 0) {
+              pollData = d; pollScope = ep;
+              console.log('[Flash Test] ✅ Got feedbacks at attempt:', attempt + 1);
+              break;
+            }
           } catch(e) {}
         }
+        if (pollData) break;
       }
     }
 
-    let pr = { ok: !!pollData, status: pollData ? 200 : 504 };
+    const pr = { ok: !!pollData, status: pollData ? 200 : 504 };
     const priceData = pollData;
     const priceStatus = pr.status;
-
     return res.json({
       success: pr.ok,
       searchHash: pageHash,
