@@ -151,9 +151,8 @@ tr:last-child td{border-bottom:none;}
       <button class="apply" id="applyBtn">Apply</button>
     </div>
 
-    <!-- Status -->
-    <div class="status-row">
-      <span class="status-txt" id="statusTxt">Loading...</span>
+    <!-- DB badge only -->
+    <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
       <span class="db-badge" id="dbBadge">—</span>
     </div>
 
@@ -237,7 +236,7 @@ tr:last-child td{border-bottom:none;}
 <script>
 // ── Config ──
 var BACKEND  = 'https://extrape-affiliate.onrender.com';
-var PASSWORD = 'Smartpick@032026';
+var PASSWORD = 'smartpick2024';
 
 // ── State ──
 var cache       = null;
@@ -327,14 +326,8 @@ document.getElementById('applyBtn').addEventListener('click', function() {
   loadData();
 });
 
-// ── Clock (every 1s) ──
-function tickClock() {
-  var el = document.getElementById('statusTxt');
-  if (!el || !cache) return;
-  var now = new Date();
-  el.textContent = 'Live · ' + now.toLocaleTimeString('en-IN') +
-    ' · Auto-refresh every 30s · Uptime: ' + (cache.serverUptime || '—');
-}
+// ── Clock (every 1s) — just keeps live dot blinking, no text ──
+function tickClock() { /* status text removed per user request */ }
 
 // ── Load data ──
 async function loadData() {
@@ -350,7 +343,7 @@ async function loadData() {
     cache = d;
     renderData(d);
   } catch(e) {
-    document.getElementById('statusTxt').textContent = 'Error: ' + e.message;
+    console.error('Dashboard load error:', e.message);
   }
 }
 
@@ -374,9 +367,6 @@ function renderData(d) {
   document.getElementById('sC').textContent = fmt(d.conversions);
   document.getElementById('sK').textContent = fmt(d.clicks);
   document.getElementById('sQ').textContent = fmt(d.compares);
-
-  // Trigger clock immediately
-  tickClock();
 
   // Store bar chart
   var stores = d.storeBreakdown || {};
