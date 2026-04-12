@@ -7,160 +7,153 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-:root{--bg:#0a0a0f;--surface:#13131a;--border:#1e1e2e;--accent:#ff6b2b;--accent2:#ff9a5c;--text:#f0ede8;--muted:#6b6878;--success:#29d87a;--warn:#f59e0b;}
+:root{
+  --bg:#0a0a0f;--surface:#13131a;--border:#1e1e2e;
+  --accent:#ff6b2b;--accent2:#ff9a5c;
+  --text:#f0ede8;--muted:#6b6878;
+  --success:#29d87a;--warn:#f59e0b;
+}
 body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
 body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:48px 48px;opacity:.25;pointer-events:none;z-index:0;}
 
-/* Login */
-#loginScreen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100;}
-.login-box{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:40px;width:340px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.6);}
-.login-logo{font-size:26px;font-weight:800;margin-bottom:6px;}
+/* LOGIN */
+#loginWrap{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100;}
+.login-box{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:40px;width:320px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.6);}
+.login-logo{font-size:24px;font-weight:800;margin-bottom:6px;}
 .login-logo em{font-style:normal;color:var(--accent);}
-.login-sub{font-size:13px;color:var(--muted);margin-bottom:28px;}
-.login-input{width:100%;background:var(--bg);border:1.5px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:14px;padding:12px 16px;border-radius:10px;outline:none;margin-bottom:12px;transition:border-color .2s;}
-.login-input:focus{border-color:var(--accent);}
-.login-input::placeholder{color:var(--muted);}
-.login-btn{width:100%;background:var(--accent);color:#fff;border:none;font-family:'Inter',sans-serif;font-weight:700;font-size:14px;padding:13px;border-radius:10px;cursor:pointer;}
-.login-btn:hover{background:var(--accent2);}
-.login-err{font-size:12px;color:#ff4b6e;margin-top:10px;display:none;}
+.login-sub{font-size:13px;color:var(--muted);margin-bottom:24px;}
+.login-pwd{width:100%;background:var(--bg);border:1.5px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:14px;padding:12px 16px;border-radius:10px;outline:none;margin-bottom:12px;}
+.login-pwd:focus{border-color:var(--accent);}
+.login-pwd::placeholder{color:var(--muted);}
+.login-go{width:100%;background:var(--accent);color:#fff;border:none;font-family:'Inter',sans-serif;font-weight:700;font-size:14px;padding:13px;border-radius:10px;cursor:pointer;}
+.login-go:hover{background:var(--accent2);}
+.login-err{font-size:12px;color:#ff4b6e;margin-top:8px;display:none;}
 
-/* Nav */
-#dashboard{display:none;position:relative;z-index:1;}
+/* NAV */
+#dashWrap{display:none;position:relative;z-index:1;}
 nav{display:flex;align-items:center;justify-content:space-between;padding:12px 24px;background:rgba(10,10,15,.95);border-bottom:1px solid var(--border);backdrop-filter:blur(12px);position:sticky;top:0;z-index:10;}
 .nav-logo{font-size:14px;font-weight:800;}
 .nav-logo em{font-style:normal;color:var(--accent);}
 .nav-r{display:flex;align-items:center;gap:10px;}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
-.live{font-size:11px;font-weight:600;padding:4px 10px;border-radius:999px;background:rgba(41,216,122,.1);color:var(--success);border:1px solid rgba(41,216,122,.2);}
-.live::before{content:'● ';animation:blink 2s infinite;}
-.logout{font-size:12px;font-weight:600;color:var(--muted);background:transparent;border:1px solid var(--border);padding:6px 12px;border-radius:8px;cursor:pointer;}
-.logout:hover{color:var(--text);}
+.live-badge{font-size:11px;font-weight:600;padding:4px 10px;border-radius:999px;background:rgba(41,216,122,.1);color:var(--success);border:1px solid rgba(41,216,122,.2);}
+.logout-btn{font-size:12px;font-weight:600;color:var(--muted);background:transparent;border:1px solid var(--border);padding:6px 12px;border-radius:8px;cursor:pointer;}
+.logout-btn:hover{color:var(--text);}
 
+/* PAGE */
 .page{max-width:1100px;margin:0 auto;padding:24px 24px 60px;}
 
-/* Date picker bar */
-.date-bar{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 18px;margin-bottom:24px;display:flex;align-items:center;flex-wrap:wrap;gap:12px;}
-.date-bar label{font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap;}
-.date-input{background:var(--bg);border:1.5px solid var(--border);color:var(--text);font-family:'Inter',sans-serif;font-size:13px;padding:8px 12px;border-radius:8px;outline:none;cursor:pointer;transition:border-color .2s;}
-.date-input:focus{border-color:var(--accent);}
-.date-sep{font-size:12px;color:var(--muted);}
-.date-presets{display:flex;gap:6px;flex-wrap:wrap;}
-.preset{font-size:11px;font-weight:600;padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;transition:all .2s;white-space:nowrap;}
+/* DATE BAR */
+.date-bar{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 18px;margin-bottom:20px;display:flex;align-items:center;flex-wrap:wrap;gap:10px;}
+.date-lbl{font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap;}
+.date-in{background:var(--bg);border:1.5px solid var(--border);color:var(--text);font-family:'Inter',sans-serif;font-size:12px;padding:7px 10px;border-radius:8px;outline:none;}
+.date-in:focus{border-color:var(--accent);}
+.presets{display:flex;gap:6px;flex-wrap:wrap;}
+.preset{font-size:11px;font-weight:600;padding:6px 11px;border-radius:7px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;}
 .preset:hover,.preset.active{background:rgba(255,107,43,.1);border-color:rgba(255,107,43,.3);color:var(--accent2);}
-.apply-btn{background:var(--accent);color:#fff;border:none;font-family:'Inter',sans-serif;font-weight:700;font-size:13px;padding:8px 18px;border-radius:8px;cursor:pointer;margin-left:auto;}
-.apply-btn:hover{background:var(--accent2);}
+.apply{background:var(--accent);color:#fff;border:none;font-family:'Inter',sans-serif;font-weight:700;font-size:12px;padding:7px 16px;border-radius:8px;cursor:pointer;margin-left:auto;white-space:nowrap;}
+.apply:hover{background:var(--accent2);}
 
-/* Status */
-.status-bar{font-size:12px;color:var(--muted);margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;}
-.db-badge{padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;}
+/* STATUS */
+.status-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:8px;}
+.status-txt{font-size:12px;color:var(--muted);}
+.db-badge{font-size:11px;font-weight:600;padding:3px 10px;border-radius:999px;}
 .db-ok{background:rgba(41,216,122,.1);color:var(--success);border:1px solid rgba(41,216,122,.2);}
 .db-warn{background:rgba(245,158,11,.1);color:var(--warn);border:1px solid rgba(245,158,11,.2);}
 
-/* Stat grid */
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-bottom:24px;}
+/* STATS */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:22px;}
 .stat{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;box-shadow:0 4px 20px rgba(0,0,0,.3);}
 .stat-lbl{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;display:flex;align-items:center;gap:6px;}
-.dot{width:7px;height:7px;border-radius:50%;}
-.stat-val{font-family:'DM Mono',monospace;font-size:30px;font-weight:700;letter-spacing:-.02em;}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;}
+.stat-val{font-family:'DM Mono',monospace;font-size:28px;font-weight:700;letter-spacing:-.02em;}
 
-/* Sections */
-.section{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:0 4px 20px rgba(0,0,0,.3);}
-.sec-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
-.sec-title{font-size:13px;font-weight:700;}
-.sec-sub{font-size:11px;color:var(--muted);}
+/* SECTIONS */
+.section{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:14px;box-shadow:0 4px 20px rgba(0,0,0,.3);}
+.sec-hdr{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;}
+.sec-hdr:hover .sec-toggle{border-color:rgba(255,107,43,.3);color:var(--text);}
+.sec-title{font-size:13px;font-weight:700;flex:1;}
+.sec-meta{font-size:11px;color:var(--muted);}
+.sec-toggle{background:none;border:1px solid var(--border);color:var(--muted);width:28px;height:28px;border-radius:7px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s;}
+.sec-toggle svg{transition:transform .25s ease;}
+.sec-toggle.open svg{transform:rotate(180deg);}
+.sec-body{display:none;margin-top:14px;}
+.sec-body.open{display:block;animation:drop .2s ease;}
+@keyframes drop{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}
 
-/* Bar chart */
+/* BAR CHART */
 .bar-row{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
 .bar-lbl{font-size:12px;width:90px;flex-shrink:0;color:var(--muted);}
 .bar-track{flex:1;height:8px;background:var(--border);border-radius:999px;overflow:hidden;}
 .bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:999px;transition:width .5s ease;}
 .bar-val{font-family:'DM Mono',monospace;font-size:12px;font-weight:700;width:36px;text-align:right;}
 
-/* Table */
+/* TABLE */
 table{width:100%;border-collapse:collapse;font-size:12px;}
-th{text-align:left;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:0 0 10px 0;border-bottom:1px solid var(--border);}
-td{padding:10px 0;border-bottom:1px solid rgba(30,30,46,.6);vertical-align:middle;}
+th{text-align:left;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:0 0 10px;border-bottom:1px solid var(--border);}
+td{padding:9px 0;border-bottom:1px solid rgba(30,30,46,.5);vertical-align:middle;}
 tr:last-child td{border-bottom:none;}
-.mono{font-family:'DM Mono',monospace;font-size:11px;color:var(--accent2);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.time{font-size:11px;color:var(--muted);white-space:nowrap;}
+.mono{font-family:'DM Mono',monospace;font-size:11px;color:var(--accent2);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.time-td{font-size:11px;color:var(--muted);white-space:nowrap;}
 .badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:999px;}
 .b-ok{color:var(--success);background:rgba(41,216,122,.1);border:1px solid rgba(41,216,122,.2);}
 .b-err{color:#ff4b6e;background:rgba(255,75,110,.1);border:1px solid rgba(255,75,110,.2);}
-.empty{text-align:center;padding:28px;color:var(--muted);font-size:13px;}
-
-/* Loading */
-.loading{text-align:center;padding:20px;color:var(--muted);font-size:13px;}
-.sec-toggle{background:none;border:1px solid var(--border);color:var(--muted);width:28px;height:28px;border-radius:7px;cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;transition:all .2s;flex-shrink:0;margin-left:auto;}
-.sec-toggle:hover{color:var(--text);border-color:rgba(255,107,43,.3);background:rgba(255,107,43,.06);}
-.sec-toggle svg{transition:transform .3s ease;pointer-events:none;}
-.sec-toggle.open svg{transform:rotate(180deg);}
-.sec-body{display:none;margin-top:8px;overflow:hidden;}
-.sec-body.open{display:block;animation:slideDown .25s ease;}
-@keyframes slideDown{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+.empty{text-align:center;padding:24px;color:var(--muted);font-size:13px;}
 
 @media(max-width:700px){
-  .page{padding:16px 12px 40px;}
+  .page{padding:14px 12px 40px;}
   .stats{grid-template-columns:1fr 1fr;}
-  .stat-val{font-size:22px;}
-  .date-bar{flex-direction:column;align-items:flex-start;gap:8px;}
-  .date-presets{width:100%;overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px;}
-  .apply-btn{width:100%;}
-  .sec-hdr{flex-wrap:wrap;gap:6px;}
+  .date-bar{flex-direction:column;align-items:flex-start;}
+  .apply{width:100%;}
   nav{padding:10px 14px;}
   table{font-size:11px;}
-  td,th{padding:7px 0;}
-  .mono{max-width:160px;}
+  .mono{max-width:140px;}
 }
-@media(max-width:400px){
-  .stats{grid-template-columns:1fr;}
-}
+@media(max-width:400px){.stats{grid-template-columns:1fr;}}
 </style>
 </head>
 <body>
 
-<!-- Login -->
-<div id="loginScreen">
+<!-- LOGIN -->
+<div id="loginWrap">
   <div class="login-box">
     <div class="login-logo">Smart Pick <em>Deals</em></div>
-    <div class="login-sub">Owner Dashboard — Private Access</div>
-    <input class="login-input" type="password" id="pwdInput" placeholder="Enter password" autocomplete="off"/>
-    <button class="login-btn" id="loginBtn">Sign In →</button>
-    <div class="login-err" id="loginErr">Incorrect password.</div>
+    <div class="login-sub">Owner Dashboard</div>
+    <input class="login-pwd" type="password" id="pwdInput" placeholder="Password"/>
+    <button class="login-go" id="loginBtn">Sign In →</button>
+    <div class="login-err" id="loginErr">Incorrect password</div>
   </div>
 </div>
 
-<!-- Dashboard -->
-<div id="dashboard">
+<!-- DASHBOARD -->
+<div id="dashWrap">
   <nav>
-    <span class="nav-logo">Smart Pick <em>Deals</em> — Analytics</span>
+    <span class="nav-logo">Smart Pick <em>Deals</em></span>
     <div class="nav-r">
-      <span class="live">Live</span>
-      <button class="logout" id="logoutBtn">Sign Out</button>
+      <span class="live-badge" id="liveBadge">● Live</span>
+      <button class="logout-btn" id="logoutBtn">Sign Out</button>
     </div>
   </nav>
 
   <div class="page">
-
-    <!-- Date range bar -->
+    <!-- Date bar -->
     <div class="date-bar">
-      <label>From</label>
-      <input type="datetime-local" class="date-input" id="fromDate"/>
-      <span class="date-sep">→</span>
-      <label>To</label>
-      <input type="datetime-local" class="date-input" id="toDate"/>
-      <div class="date-presets">
-        <button class="preset active" data-preset="today">Today</button>
-        <button class="preset" data-preset="yesterday">Yesterday</button>
-        <button class="preset" data-preset="7d">Last 7 days</button>
-        <button class="preset" data-preset="30d">Last 30 days</button>
-        <button class="preset" data-preset="all">All time</button>
+      <span class="date-lbl">From</span>
+      <input type="datetime-local" class="date-in" id="fromDate"/>
+      <span class="date-lbl">To</span>
+      <input type="datetime-local" class="date-in" id="toDate"/>
+      <div class="presets">
+        <button class="preset active" data-p="today">Today</button>
+        <button class="preset" data-p="yesterday">Yesterday</button>
+        <button class="preset" data-p="7d">7 days</button>
+        <button class="preset" data-p="30d">30 days</button>
+        <button class="preset" data-p="all">All time</button>
       </div>
-      <button class="apply-btn" id="applyBtn">Apply</button>
+      <button class="apply" id="applyBtn">Apply</button>
     </div>
 
     <!-- Status -->
-    <div class="status-bar">
-      <span id="statusText">Loading...</span>
+    <div class="status-row">
+      <span class="status-txt" id="statusTxt">Loading...</span>
       <span class="db-badge" id="dbBadge">—</span>
     </div>
 
@@ -168,822 +161,278 @@ tr:last-child td{border-bottom:none;}
     <div class="stats">
       <div class="stat">
         <div class="stat-lbl"><span class="dot" style="background:#ff6b2b;"></span>Page Visits</div>
-        <div class="stat-val" id="sVisits">—</div>
+        <div class="stat-val" id="sV">—</div>
       </div>
       <div class="stat">
         <div class="stat-lbl"><span class="dot" style="background:#a78bfa;"></span>Links Converted</div>
-        <div class="stat-val" id="sConversions">—</div>
+        <div class="stat-val" id="sC">—</div>
       </div>
       <div class="stat">
         <div class="stat-lbl"><span class="dot" style="background:#29d87a;"></span>Links Clicked</div>
-        <div class="stat-val" id="sClicks">—</div>
+        <div class="stat-val" id="sK">—</div>
       </div>
       <div class="stat">
-        <div class="stat-lbl"><span class="dot" style="background:#38bdf8;"></span>Price Comparisons</div>
-        <div class="stat-val" id="sCompares">—</div>
+        <div class="stat-lbl"><span class="dot" style="background:#38bdf8;"></span>Comparisons</div>
+        <div class="stat-val" id="sQ">—</div>
       </div>
     </div>
 
-    <!-- Store breakdown -->
+    <!-- Store chart -->
     <div class="section">
-      <div class="sec-hdr">
+      <div class="sec-hdr" onclick="toggle('storeBody','storeBtn')">
         <span class="sec-title">Top Stores Converted</span>
-        <span class="sec-sub" id="storeRange"></span>
+        <button class="sec-toggle" id="storeBtn">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
       </div>
-      <div id="storeChart"><div class="loading">Loading...</div></div>
+      <div class="sec-body open" id="storeBody">
+        <div id="storeChart"><div class="empty">No data</div></div>
+      </div>
     </div>
 
-    <!-- Page visits table -->
+    <!-- Visits -->
     <div class="section">
-      <div class="sec-hdr">
+      <div class="sec-hdr" onclick="toggle('visitBody','visitBtn')">
         <span class="sec-title">Recent Page Visits</span>
-        <span class="sec-sub">Last 50</span>
-        <button class="sec-toggle" id="btn-visitTable" onclick="toggleSection('visitTable')" title="Expand"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></button>
+        <span class="sec-meta">Last 20</span>
+        <button class="sec-toggle" id="visitBtn">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
       </div>
-      <div id="visitTable" class="sec-body"></div>
+      <div class="sec-body" id="visitBody">
+        <div id="visitTbl"><div class="empty">Click ↑ to expand</div></div>
+      </div>
     </div>
 
-    <!-- Conversions table -->
+    <!-- Conversions -->
     <div class="section">
-      <div class="sec-hdr">
+      <div class="sec-hdr" onclick="toggle('convBody','convBtn')">
         <span class="sec-title">Recent Link Conversions</span>
-        <span class="sec-sub">Last 50</span>
-        <button class="sec-toggle" id="btn-convTable" onclick="toggleSection('convTable')" title="Expand"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></button>
+        <span class="sec-meta">Last 20</span>
+        <button class="sec-toggle" id="convBtn">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
       </div>
-      <div id="convTable" class="sec-body"></div>
+      <div class="sec-body" id="convBody">
+        <div id="convTbl"><div class="empty">Click ↑ to expand</div></div>
+      </div>
     </div>
 
-    <!-- Clicks table -->
+    <!-- Clicks -->
     <div class="section">
-      <div class="sec-hdr">
+      <div class="sec-hdr" onclick="toggle('clickBody','clickBtn')">
         <span class="sec-title">Recent Go Link Clicks</span>
-        <span class="sec-sub">Last 50</span>
-        <button class="sec-toggle" id="btn-clickTable" onclick="toggleSection('clickTable')" title="Expand"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></button>
+        <span class="sec-meta">Last 20</span>
+        <button class="sec-toggle" id="clickBtn">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
       </div>
-      <div id="clickTable" class="sec-body"></div>
+      <div class="sec-body" id="clickBody">
+        <div id="clickTbl"><div class="empty">Click ↑ to expand</div></div>
+      </div>
     </div>
-
   </div>
 </div>
 
 <script>
-const BACKEND = 'https://extrape-affiliate.onrender.com';
-const DASH_PWD = 'smartpick2024'; // ← change this
+// ── Config ──
+var BACKEND  = 'https://extrape-affiliate.onrender.com';
+var PASSWORD = 'Smartpick@032026';
 
-// ── Auth ──
-document.getElementById('loginBtn').onclick = tryLogin;
-document.getElementById('pwdInput').onkeydown = e => { if(e.key==='Enter') tryLogin(); };
-document.getElementById('logoutBtn').onclick = () => {
-  sessionStorage.removeItem('dash_ok');
-  location.reload();
-};
+// ── State ──
+var cache       = null;
+var dataTimer   = null;
+var clockTimer  = null;
 
+// ── Login ──
 function tryLogin() {
-  if (document.getElementById('pwdInput').value === DASH_PWD) {
-    sessionStorage.setItem('dash_ok','1');
-    showDash();
+  var pwd = document.getElementById('pwdInput').value;
+  if (pwd === PASSWORD) {
+    sessionStorage.setItem('spd_auth', '1');
+    document.getElementById('loginErr').style.display = 'none';
+    startDash();
   } else {
     document.getElementById('loginErr').style.display = 'block';
     document.getElementById('pwdInput').value = '';
+    document.getElementById('pwdInput').focus();
   }
 }
 
-function showDash() {
-  document.getElementById('loginScreen').style.display = 'none';
-  document.getElementById('dashboard').style.display = 'block';
-  initDates();
-  load();
-  setInterval(load, 30000);
-}
-
-if (sessionStorage.getItem('dash_ok')==='1') showDash();
-
-// ── Dates ──
-function toLocalInput(date) {
-  // Convert Date to datetime-local input format in local time
-  const d = new Date(date);
-  const pad = n => String(n).padStart(2,'0');
-  return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
-    + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-}
-
-function todayStart() {
-  const d = new Date(); d.setHours(0,0,0,0); return d;
-}
-function now() { return new Date(); }
-
-function initDates() {
-  document.getElementById('fromDate').value = toLocalInput(todayStart());
-  document.getElementById('toDate').value   = toLocalInput(now());
-}
-
-// Preset buttons
-document.querySelectorAll('.preset').forEach(btn => {
-  btn.onclick = () => {
-    document.querySelectorAll('.preset').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    const p = btn.dataset.preset;
-    const t = new Date();
-    const s = new Date();
-    if (p === 'today')     { s.setHours(0,0,0,0); }
-    else if (p === 'yesterday') { s.setDate(s.getDate()-1); s.setHours(0,0,0,0); t.setHours(0,0,0,0); t.setTime(t.getTime()-1); }
-    else if (p === '7d')   { s.setDate(s.getDate()-7); s.setHours(0,0,0,0); }
-    else if (p === '30d')  { s.setDate(s.getDate()-30); s.setHours(0,0,0,0); }
-    else if (p === 'all')  { s.setFullYear(2024,0,1); s.setHours(0,0,0,0); }
-    document.getElementById('fromDate').value = toLocalInput(s);
-    document.getElementById('toDate').value   = toLocalInput(p === 'yesterday' ? t : now());
-    load();
-  };
+document.getElementById('loginBtn').addEventListener('click', tryLogin);
+document.getElementById('pwdInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') tryLogin();
+});
+document.getElementById('logoutBtn').addEventListener('click', function() {
+  sessionStorage.removeItem('spd_auth');
+  clearInterval(dataTimer);
+  clearInterval(clockTimer);
+  document.getElementById('dashWrap').style.display = 'none';
+  document.getElementById('loginWrap').style.display = 'flex';
 });
 
-document.getElementById('applyBtn').onclick = () => {
-  document.querySelectorAll('.preset').forEach(b => b.classList.remove('active'));
-  load();
-};
-
-// ── Load data ──
-async function load() {
-  const from = new Date(document.getElementById('fromDate').value).toISOString();
-  const to   = new Date(document.getElementById('toDate').value).toISOString();
-  document.getElementById('statusText').textContent = 'Loading...';
-  try {
-    const r = await fetch(BACKEND + '/dashboard/stats?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to), { signal: AbortSignal.timeout(20000) });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const d = await r.json();
-    render(d);
-  } catch(e) {
-    document.getElementById('statusText').textContent = 'Error: ' + e.message;
-  }
-}
-
-// ── Render ──
-function fmt(n) { return (n||0).toLocaleString('en-IN'); }
-function timeAgo(ts) {
-  if (!ts) return '—';
-  const diff = Date.now() - ts;
-  if (diff < 60000) return Math.round(diff/1000) + 's ago';
-  if (diff < 3600000) return Math.round(diff/60000) + 'm ago';
-  if (diff < 86400000) return Math.round(diff/3600000) + 'h ago';
-  return new Date(ts).toLocaleDateString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
-}
-function fmtTime(ts) {
-  if (!ts) return '—';
-  return new Date(ts).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
-}
-
-function render(d) {
-  cachedData = d;
-  const from = new Date(document.getElementById('fromDate').value);
-  const to   = new Date(document.getElementById('toDate').value);
-  const rangeStr = from.toLocaleDateString('en-IN',{day:'2-digit',month:'short'}) + ' → ' +
-                   to.toLocaleDateString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
-
-  document.getElementById('statusText').textContent =
-    'Updated: ' + new Date().toLocaleTimeString('en-IN') + ' · Range: ' + rangeStr + ' · Auto-refreshes every 30s';
-
-  const dbBadge = document.getElementById('dbBadge');
-  if (d.dbConnected) {
-    dbBadge.className = 'db-badge db-ok';
-    dbBadge.textContent = '🟢 MongoDB · Persistent';
-  } else {
-    dbBadge.className = 'db-badge db-warn';
-    dbBadge.textContent = '🟡 In-memory · Add MONGO_URI';
-  }
-
-  document.getElementById('sVisits').textContent     = fmt(d.pageVisits);
-  document.getElementById('sConversions').textContent = fmt(d.conversions);
-  document.getElementById('sClicks').textContent      = fmt(d.clicks);
-  document.getElementById('sCompares').textContent    = fmt(d.compares);
-
-  // Store bar chart
-  const stores = d.storeBreakdown || {};
-  const storeChart = document.getElementById('storeChart');
-  document.getElementById('storeRange').textContent = rangeStr;
-  if (!Object.keys(stores).length) {
-    storeChart.innerHTML = '<div class="empty">No conversions in this period</div>';
-  } else {
-    const max = Math.max(...Object.values(stores), 1);
-    storeChart.innerHTML = Object.entries(stores).sort((a,b)=>b[1]-a[1]).map(([store,count]) =>
-      '<div class="bar-row">' +
-        '<div class="bar-lbl">' + store + '</div>' +
-        '<div class="bar-track"><div class="bar-fill" style="width:' + Math.round(count/max*100) + '%"></div></div>' +
-        '<div class="bar-val">' + fmt(count) + '</div>' +
-      '</div>'
-    ).join('');
-  }
-
-  // Visits table
-  const visits = d.recentVisits || [];
-  document.getElementById('visitTable').innerHTML = visits.length
-    ? '<table><thead><tr><th>Page</th><th>Time</th></tr></thead><tbody>' +
-      visits.map(v => '<tr><td class="mono">' + (v.url||'/') + '</td><td class="time">' + fmtTime(v.ts) + '</td></tr>').join('') +
-      '</tbody></table>'
-    : '<div class="empty">No visits in this period</div>';
-
-  // Conversions table
-  const convs = d.recentConversions || [];
-  document.getElementById('convTable').innerHTML = convs.length
-    ? '<table><thead><tr><th>URL</th><th>Store</th><th>Status</th><th>Time</th></tr></thead><tbody>' +
-      convs.map(c =>
-        '<tr>' +
-        '<td class="mono" title="'+(c.url||'')+'">'+((c.url||'').substring(0,55))+(c.url?.length>55?'...':'')+'</td>' +
-        '<td style="font-size:12px;font-weight:600;white-space:nowrap;">'+(c.store||'—')+'</td>' +
-        '<td><span class="badge '+(c.state==='done'?'b-ok':'b-err')+'">'+(c.state||'—')+'</span></td>' +
-        '<td class="time">'+fmtTime(c.ts)+'</td>' +
-        '</tr>'
-      ).join('') + '</tbody></table>'
-    : '<div class="empty">No conversions in this period</div>';
-
-  // Clicks table
-  const clicks = d.recentClicks || [];
-  document.getElementById('clickTable').innerHTML = clicks.length
-    ? '<table><thead><tr><th>Destination</th><th>Time</th></tr></thead><tbody>' +
-      clicks.map(c =>
-        '<tr>' +
-        '<td class="mono" title="'+(c.dest||'')+'">'+((c.dest||'').substring(0,70))+(c.dest?.length>70?'...':'')+'</td>' +
-        '<td class="time">'+fmtTime(c.ts)+'</td>' +
-        '</tr>'
-      ).join('') + '</tbody></table>'
-    : '<div class="empty">No link clicks in this period</div>';
-}
-</script>
-</body>
-</html><script>
-var BACKEND = 'https://extrape-affiliate.onrender.com';
-var DASH_PWD = 'smartpick2024';
-var cachedData = null;
-var autoLoadInterval = null;
-var clockInterval = null;
-
-// ── Auth ──
-document.getElementById('loginBtn').onclick = tryLogin;
-document.getElementById('pwdInput').onkeydown = function(e){ if(e.key==='Enter') tryLogin(); };
-document.getElementById('logoutBtn').onclick = function(){
-  sessionStorage.removeItem('dash_ok'); location.reload();
-};
-
-function tryLogin() {
-  if (document.getElementById('pwdInput').value === DASH_PWD) {
-    sessionStorage.setItem('dash_ok','1');
-    showDash();
-  } else {
-    document.getElementById('loginErr').style.display = 'block';
-    document.getElementById('pwdInput').value = '';
-  }
-}
-
-function showDash() {
-  document.getElementById('loginScreen').style.display = 'none';
-  document.getElementById('dashboard').style.display = 'block';
-  initDates();
-  load();
-  autoLoadInterval = setInterval(load, 30000);
-  clockInterval = setInterval(tickClock, 1000);
-}
-
-if (sessionStorage.getItem('dash_ok')==='1') showDash();
-
-// ── Collapsible sections ──
-function toggleSection(id) {
-  var body = document.getElementById(id);
-  var btn  = document.getElementById('btn-' + id);
+// ── Section toggle ──
+function toggle(bodyId, btnId) {
+  var body = document.getElementById(bodyId);
+  var btn  = document.getElementById(btnId);
   var open = body.classList.toggle('open');
   btn.classList.toggle('open', open);
 }
 
-// ── Clock — updates every second ──
-function tickClock() {
-  var el = document.getElementById('statusText');
-  if (!el || !cachedData) return;
-  var now = new Date();
-  var db  = cachedData.dbConnected ? '🟢 MongoDB' : '🟡 In-memory';
-  el.textContent = 'Live · ' + now.toLocaleTimeString('en-IN') + ' · ' + db;
-}
-
-// ── Dates ──
-function toLocalInput(d) {
-  var p = function(n){ return String(n).padStart(2,'0'); };
-  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes());
-}
-function todayStart(){ var d=new Date(); d.setHours(0,0,0,0); return d; }
-
-function initDates() {
-  document.getElementById('fromDate').value = toLocalInput(todayStart());
-  document.getElementById('toDate').value   = toLocalInput(new Date());
-}
-
-// Presets
-document.querySelectorAll('.preset').forEach(function(btn) {
-  btn.onclick = function() {
-    document.querySelectorAll('.preset').forEach(function(b){ b.classList.remove('active'); });
-    btn.classList.add('active');
-    var p = btn.dataset.preset;
-    var s = new Date(), t = new Date();
-    if (p==='today')     { s.setHours(0,0,0,0); }
-    else if(p==='yesterday'){ s.setDate(s.getDate()-1);s.setHours(0,0,0,0);t.setHours(0,0,0,0);t.setTime(t.getTime()-1); }
-    else if(p==='7d')    { s.setDate(s.getDate()-7);s.setHours(0,0,0,0); }
-    else if(p==='30d')   { s.setDate(s.getDate()-30);s.setHours(0,0,0,0); }
-    else if(p==='all')   { s.setFullYear(2024,0,1);s.setHours(0,0,0,0); }
-    document.getElementById('fromDate').value = toLocalInput(s);
-    document.getElementById('toDate').value   = toLocalInput(p==='yesterday'?t:new Date());
-    load();
-  };
-});
-
-document.getElementById('applyBtn').onclick = function() {
-  document.querySelectorAll('.preset').forEach(function(b){ b.classList.remove('active'); });
-  load();
-};
-
-// ── Load data ──
-async function load() {
-  var from = new Date(document.getElementById('fromDate').value).toISOString();
-  var to   = new Date(document.getElementById('toDate').value).toISOString();
-  try {
-    var r = await fetch(BACKEND+'/dashboard/stats?from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to), {signal:AbortSignal.timeout(20000)});
-    if (!r.ok) throw new Error('HTTP '+r.status);
-    var d = await r.json();
-    cachedData = d;
-    render(d);
-  } catch(e) {
-    document.getElementById('statusText').textContent = 'Error loading: '+e.message;
-  }
-}
-
-// ── Render ──
-function fmt(n){ return (n||0).toLocaleString('en-IN'); }
-function fmtTime(ts){
-  if (!ts) return '—';
-  return new Date(ts).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit'});
-}
-
-function render(d) {
-  var db = d.dbConnected ? '🟢 MongoDB · Persistent' : '🟡 In-memory · Add MONGO_URI';
-  var badge = document.getElementById('dbBadge');
-  badge.className = 'db-badge '+(d.dbConnected?'db-ok':'db-warn');
-  badge.textContent = db;
-
-  document.getElementById('sVisits').textContent      = fmt(d.pageVisits);
-  document.getElementById('sConversions').textContent  = fmt(d.conversions);
-  document.getElementById('sClicks').textContent       = fmt(d.clicks);
-  document.getElementById('sCompares').textContent     = fmt(d.compares);
-
-  tickClock();
-
-  // Store bar chart
-  var stores = d.storeBreakdown || {};
-  var chart = document.getElementById('storeChart');
-  if (!Object.keys(stores).length) {
-    chart.innerHTML = '<div class="empty">No conversions in this period</div>';
-  } else {
-    var max = Math.max.apply(null, Object.values(stores));
-    chart.innerHTML = Object.entries(stores).sort(function(a,b){return b[1]-a[1];}).map(function(e){
-      return '<div class="bar-row">'+
-        '<div class="bar-lbl">'+e[0]+'</div>'+
-        '<div class="bar-track"><div class="bar-fill" style="width:'+Math.round(e[1]/max*100)+'%"></div></div>'+
-        '<div class="bar-val">'+fmt(e[1])+'</div>'+
-      '</div>';
-    }).join('');
-  }
-
-  // Tables — build HTML, insert into collapsed divs
-  var visits = (d.recentVisits||[]).slice(0,20);
-  document.getElementById('visitTable').innerHTML = visits.length
-    ? '<table><thead><tr><th>Page</th><th>Time</th></tr></thead><tbody>'+
-      visits.map(function(v){return '<tr><td class="mono">'+(v.url||'/')+'</td><td class="time">'+fmtTime(v.ts)+'</td></tr>';}).join('')+
-      '</tbody></table>'
-    : '<div class="empty">No visits in this period</div>';
-
-  var convs = (d.recentConversions||[]).slice(0,20);
-  document.getElementById('convTable').innerHTML = convs.length
-    ? '<table><thead><tr><th>URL</th><th>Store</th><th>Status</th><th>Time</th></tr></thead><tbody>'+
-      convs.map(function(c){
-        return '<tr>'+
-          '<td class="mono" title="'+(c.url||'')+'">'+((c.url||'').substring(0,45))+(c.url&&c.url.length>45?'...':'')+'</td>'+
-          '<td style="font-size:12px;font-weight:600;">'+(c.store||'—')+'</td>'+
-          '<td><span class="badge '+(c.state==='done'?'b-ok':'b-err')+'">'+(c.state||'—')+'</span></td>'+
-          '<td class="time">'+fmtTime(c.ts)+'</td></tr>';
-      }).join('')+'</tbody></table>'
-    : '<div class="empty">No conversions in this period</div>';
-
-  var clicks = (d.recentClicks||[]).slice(0,20);
-  document.getElementById('clickTable').innerHTML = clicks.length
-    ? '<table><thead><tr><th>Destination</th><th>Store</th><th>Time</th></tr></thead><tbody>'+
-      clicks.map(function(c){
-        return '<tr>'+
-          '<td class="mono" title="'+(c.dest||'')+'">'+((c.dest||'').substring(0,50))+(c.dest&&c.dest.length>50?'...':'')+'</td>'+
-          '<td style="font-size:11px;font-weight:600;">'+(c.store||'—')+'</td>'+
-          '<td class="time">'+fmtTime(c.ts)+'</td></tr>';
-      }).join('')+'</tbody></table>'
-    : '<div class="empty">No link clicks in this period</div>';
-}
-</script> html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>Smart Pick Deals — Dashboard</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
-<style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-:root{--bg:#0a0a0f;--surface:#13131a;--border:#1e1e2e;--accent:#ff6b2b;--accent2:#ff9a5c;--text:#f0ede8;--muted:#6b6878;--success:#29d87a;--warn:#f59e0b;}
-body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
-body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:48px 48px;opacity:.25;pointer-events:none;z-index:0;}
-
-/* Login */
-#loginScreen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100;}
-.login-box{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:40px;width:340px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.6);}
-.login-logo{font-size:26px;font-weight:800;margin-bottom:6px;}
-.login-logo em{font-style:normal;color:var(--accent);}
-.login-sub{font-size:13px;color:var(--muted);margin-bottom:28px;}
-.login-input{width:100%;background:var(--bg);border:1.5px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:14px;padding:12px 16px;border-radius:10px;outline:none;margin-bottom:12px;transition:border-color .2s;}
-.login-input:focus{border-color:var(--accent);}
-.login-input::placeholder{color:var(--muted);}
-.login-btn{width:100%;background:var(--accent);color:#fff;border:none;font-family:'Inter',sans-serif;font-weight:700;font-size:14px;padding:13px;border-radius:10px;cursor:pointer;}
-.login-btn:hover{background:var(--accent2);}
-.login-err{font-size:12px;color:#ff4b6e;margin-top:10px;display:none;}
-
-/* Nav */
-#dashboard{display:none;position:relative;z-index:1;}
-nav{display:flex;align-items:center;justify-content:space-between;padding:12px 24px;background:rgba(10,10,15,.95);border-bottom:1px solid var(--border);backdrop-filter:blur(12px);position:sticky;top:0;z-index:10;}
-.nav-logo{font-size:14px;font-weight:800;}
-.nav-logo em{font-style:normal;color:var(--accent);}
-.nav-r{display:flex;align-items:center;gap:10px;}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
-.live{font-size:11px;font-weight:600;padding:4px 10px;border-radius:999px;background:rgba(41,216,122,.1);color:var(--success);border:1px solid rgba(41,216,122,.2);}
-.live::before{content:'● ';animation:blink 2s infinite;}
-.logout{font-size:12px;font-weight:600;color:var(--muted);background:transparent;border:1px solid var(--border);padding:6px 12px;border-radius:8px;cursor:pointer;}
-.logout:hover{color:var(--text);}
-
-.page{max-width:1100px;margin:0 auto;padding:24px 24px 60px;}
-
-/* Date picker bar */
-.date-bar{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 18px;margin-bottom:24px;display:flex;align-items:center;flex-wrap:wrap;gap:12px;}
-.date-bar label{font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap;}
-.date-input{background:var(--bg);border:1.5px solid var(--border);color:var(--text);font-family:'Inter',sans-serif;font-size:13px;padding:8px 12px;border-radius:8px;outline:none;cursor:pointer;transition:border-color .2s;}
-.date-input:focus{border-color:var(--accent);}
-.date-sep{font-size:12px;color:var(--muted);}
-.date-presets{display:flex;gap:6px;flex-wrap:wrap;}
-.preset{font-size:11px;font-weight:600;padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;transition:all .2s;white-space:nowrap;}
-.preset:hover,.preset.active{background:rgba(255,107,43,.1);border-color:rgba(255,107,43,.3);color:var(--accent2);}
-.apply-btn{background:var(--accent);color:#fff;border:none;font-family:'Inter',sans-serif;font-weight:700;font-size:13px;padding:8px 18px;border-radius:8px;cursor:pointer;margin-left:auto;}
-.apply-btn:hover{background:var(--accent2);}
-
-/* Status */
-.status-bar{font-size:12px;color:var(--muted);margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;}
-.db-badge{padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;}
-.db-ok{background:rgba(41,216,122,.1);color:var(--success);border:1px solid rgba(41,216,122,.2);}
-.db-warn{background:rgba(245,158,11,.1);color:var(--warn);border:1px solid rgba(245,158,11,.2);}
-
-/* Stat grid */
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-bottom:24px;}
-.stat{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;box-shadow:0 4px 20px rgba(0,0,0,.3);}
-.stat-lbl{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;display:flex;align-items:center;gap:6px;}
-.dot{width:7px;height:7px;border-radius:50%;}
-.stat-val{font-family:'DM Mono',monospace;font-size:30px;font-weight:700;letter-spacing:-.02em;}
-
-/* Sections */
-.section{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:0 4px 20px rgba(0,0,0,.3);}
-.sec-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
-.sec-title{font-size:13px;font-weight:700;}
-.sec-sub{font-size:11px;color:var(--muted);}
-
-/* Bar chart */
-.bar-row{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
-.bar-lbl{font-size:12px;width:90px;flex-shrink:0;color:var(--muted);}
-.bar-track{flex:1;height:8px;background:var(--border);border-radius:999px;overflow:hidden;}
-.bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:999px;transition:width .5s ease;}
-.bar-val{font-family:'DM Mono',monospace;font-size:12px;font-weight:700;width:36px;text-align:right;}
-
-/* Table */
-table{width:100%;border-collapse:collapse;font-size:12px;}
-th{text-align:left;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:0 0 10px 0;border-bottom:1px solid var(--border);}
-td{padding:10px 0;border-bottom:1px solid rgba(30,30,46,.6);vertical-align:middle;}
-tr:last-child td{border-bottom:none;}
-.mono{font-family:'DM Mono',monospace;font-size:11px;color:var(--accent2);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.time{font-size:11px;color:var(--muted);white-space:nowrap;}
-.badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:999px;}
-.b-ok{color:var(--success);background:rgba(41,216,122,.1);border:1px solid rgba(41,216,122,.2);}
-.b-err{color:#ff4b6e;background:rgba(255,75,110,.1);border:1px solid rgba(255,75,110,.2);}
-.empty{text-align:center;padding:28px;color:var(--muted);font-size:13px;}
-
-/* Loading */
-.loading{text-align:center;padding:20px;color:var(--muted);font-size:13px;}
-.sec-toggle{background:none;border:1px solid var(--border);color:var(--muted);width:28px;height:28px;border-radius:7px;cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;transition:all .2s;flex-shrink:0;margin-left:auto;}
-.sec-toggle:hover{color:var(--text);border-color:rgba(255,107,43,.3);background:rgba(255,107,43,.06);}
-.sec-toggle svg{transition:transform .3s ease;pointer-events:none;}
-.sec-toggle.open svg{transform:rotate(180deg);}
-.sec-body{display:none;margin-top:8px;overflow:hidden;}
-.sec-body.open{display:block;animation:slideDown .25s ease;}
-@keyframes slideDown{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
-
-@media(max-width:700px){
-  .page{padding:16px 12px 40px;}
-  .stats{grid-template-columns:1fr 1fr;}
-  .stat-val{font-size:22px;}
-  .date-bar{flex-direction:column;align-items:flex-start;gap:8px;}
-  .date-presets{width:100%;overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px;}
-  .apply-btn{width:100%;}
-  .sec-hdr{flex-wrap:wrap;gap:6px;}
-  nav{padding:10px 14px;}
-  table{font-size:11px;}
-  td,th{padding:7px 0;}
-  .mono{max-width:160px;}
-}
-@media(max-width:400px){
-  .stats{grid-template-columns:1fr;}
-}
-</style>
-</head>
-<body>
-
-<!-- Login -->
-<div id="loginScreen">
-  <div class="login-box">
-    <div class="login-logo">Smart Pick <em>Deals</em></div>
-    <div class="login-sub">Owner Dashboard — Private Access</div>
-    <input class="login-input" type="password" id="pwdInput" placeholder="Enter password" autocomplete="off"/>
-    <button class="login-btn" id="loginBtn">Sign In →</button>
-    <div class="login-err" id="loginErr">Incorrect password.</div>
-  </div>
-</div>
-
-<!-- Dashboard -->
-<div id="dashboard">
-  <nav>
-    <span class="nav-logo">Smart Pick <em>Deals</em> — Analytics</span>
-    <div class="nav-r">
-      <span class="live">Live</span>
-      <button class="logout" id="logoutBtn">Sign Out</button>
-    </div>
-  </nav>
-
-  <div class="page">
-
-    <!-- Date range bar -->
-    <div class="date-bar">
-      <label>From</label>
-      <input type="datetime-local" class="date-input" id="fromDate"/>
-      <span class="date-sep">→</span>
-      <label>To</label>
-      <input type="datetime-local" class="date-input" id="toDate"/>
-      <div class="date-presets">
-        <button class="preset active" data-preset="today">Today</button>
-        <button class="preset" data-preset="yesterday">Yesterday</button>
-        <button class="preset" data-preset="7d">Last 7 days</button>
-        <button class="preset" data-preset="30d">Last 30 days</button>
-        <button class="preset" data-preset="all">All time</button>
-      </div>
-      <button class="apply-btn" id="applyBtn">Apply</button>
-    </div>
-
-    <!-- Status -->
-    <div class="status-bar">
-      <span id="statusText">Loading...</span>
-      <span class="db-badge" id="dbBadge">—</span>
-    </div>
-
-    <!-- Stats -->
-    <div class="stats">
-      <div class="stat">
-        <div class="stat-lbl"><span class="dot" style="background:#ff6b2b;"></span>Page Visits</div>
-        <div class="stat-val" id="sVisits">—</div>
-      </div>
-      <div class="stat">
-        <div class="stat-lbl"><span class="dot" style="background:#a78bfa;"></span>Links Converted</div>
-        <div class="stat-val" id="sConversions">—</div>
-      </div>
-      <div class="stat">
-        <div class="stat-lbl"><span class="dot" style="background:#29d87a;"></span>Links Clicked</div>
-        <div class="stat-val" id="sClicks">—</div>
-      </div>
-      <div class="stat">
-        <div class="stat-lbl"><span class="dot" style="background:#38bdf8;"></span>Price Comparisons</div>
-        <div class="stat-val" id="sCompares">—</div>
-      </div>
-    </div>
-
-    <!-- Store breakdown -->
-    <div class="section">
-      <div class="sec-hdr">
-        <span class="sec-title">Top Stores Converted</span>
-        <span class="sec-sub" id="storeRange"></span>
-      </div>
-      <div id="storeChart"><div class="loading">Loading...</div></div>
-    </div>
-
-    <!-- Page visits table -->
-    <div class="section">
-      <div class="sec-hdr">
-        <span class="sec-title">Recent Page Visits</span>
-        <span class="sec-sub">Last 50</span>
-        <button class="sec-toggle" id="btn-visitTable" onclick="toggleSection('visitTable')" title="Expand"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></button>
-      </div>
-      <div id="visitTable" class="sec-body"></div>
-    </div>
-
-    <!-- Conversions table -->
-    <div class="section">
-      <div class="sec-hdr">
-        <span class="sec-title">Recent Link Conversions</span>
-        <span class="sec-sub">Last 50</span>
-        <button class="sec-toggle" id="btn-convTable" onclick="toggleSection('convTable')" title="Expand"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></button>
-      </div>
-      <div id="convTable" class="sec-body"></div>
-    </div>
-
-    <!-- Clicks table -->
-    <div class="section">
-      <div class="sec-hdr">
-        <span class="sec-title">Recent Go Link Clicks</span>
-        <span class="sec-sub">Last 50</span>
-        <button class="sec-toggle" id="btn-clickTable" onclick="toggleSection('clickTable')" title="Expand"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></button>
-      </div>
-      <div id="clickTable" class="sec-body"></div>
-    </div>
-
-  </div>
-</div>
-
-<script>
-const BACKEND = 'https://extrape-affiliate.onrender.com';
-const DASH_PWD = 'smartpick2024'; // ← change this
-
-// ── Auth ──
-document.getElementById('loginBtn').onclick = tryLogin;
-document.getElementById('pwdInput').onkeydown = e => { if(e.key==='Enter') tryLogin(); };
-document.getElementById('logoutBtn').onclick = () => {
-  sessionStorage.removeItem('dash_ok');
-  location.reload();
-};
-
-function tryLogin() {
-  if (document.getElementById('pwdInput').value === DASH_PWD) {
-    sessionStorage.setItem('dash_ok','1');
-    showDash();
-  } else {
-    document.getElementById('loginErr').style.display = 'block';
-    document.getElementById('pwdInput').value = '';
-  }
-}
-
-function showDash() {
-  document.getElementById('loginScreen').style.display = 'none';
-  document.getElementById('dashboard').style.display = 'block';
+// ── Start dashboard ──
+function startDash() {
+  document.getElementById('loginWrap').style.display = 'none';
+  document.getElementById('dashWrap').style.display  = 'block';
   initDates();
-  load();
-  setInterval(load, 30000);
+  loadData();
+  dataTimer  = setInterval(loadData, 30000);   // full refresh every 30s
+  clockTimer = setInterval(tickClock, 1000);    // clock every 1s
 }
 
-if (sessionStorage.getItem('dash_ok')==='1') showDash();
+// Boot
+if (sessionStorage.getItem('spd_auth') === '1') startDash();
 
-// ── Dates ──
-function toLocalInput(date) {
-  // Convert Date to datetime-local input format in local time
-  const d = new Date(date);
-  const pad = n => String(n).padStart(2,'0');
-  return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
-    + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+// ── Date helpers ──
+function pad(n) { return String(n).padStart(2, '0'); }
+function toInput(d) {
+  return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) +
+    'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
-
-function todayStart() {
-  const d = new Date(); d.setHours(0,0,0,0); return d;
-}
-function now() { return new Date(); }
+function todayStart() { var d = new Date(); d.setHours(0,0,0,0); return d; }
 
 function initDates() {
-  document.getElementById('fromDate').value = toLocalInput(todayStart());
-  document.getElementById('toDate').value   = toLocalInput(now());
+  document.getElementById('fromDate').value = toInput(todayStart());
+  document.getElementById('toDate').value   = toInput(new Date());
 }
 
 // Preset buttons
-document.querySelectorAll('.preset').forEach(btn => {
-  btn.onclick = () => {
-    document.querySelectorAll('.preset').forEach(b => b.classList.remove('active'));
+document.querySelectorAll('.preset').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.preset').forEach(function(b) { b.classList.remove('active'); });
     btn.classList.add('active');
-    const p = btn.dataset.preset;
-    const t = new Date();
-    const s = new Date();
+    var p = btn.dataset.p;
+    var s = new Date(), t = new Date();
     if (p === 'today')     { s.setHours(0,0,0,0); }
     else if (p === 'yesterday') { s.setDate(s.getDate()-1); s.setHours(0,0,0,0); t.setHours(0,0,0,0); t.setTime(t.getTime()-1); }
     else if (p === '7d')   { s.setDate(s.getDate()-7); s.setHours(0,0,0,0); }
     else if (p === '30d')  { s.setDate(s.getDate()-30); s.setHours(0,0,0,0); }
     else if (p === 'all')  { s.setFullYear(2024,0,1); s.setHours(0,0,0,0); }
-    document.getElementById('fromDate').value = toLocalInput(s);
-    document.getElementById('toDate').value   = toLocalInput(p === 'yesterday' ? t : now());
-    load();
-  };
+    document.getElementById('fromDate').value = toInput(s);
+    document.getElementById('toDate').value   = toInput(p === 'yesterday' ? t : new Date());
+    loadData();
+  });
 });
 
-document.getElementById('applyBtn').onclick = () => {
-  document.querySelectorAll('.preset').forEach(b => b.classList.remove('active'));
-  load();
-};
+document.getElementById('applyBtn').addEventListener('click', function() {
+  document.querySelectorAll('.preset').forEach(function(b) { b.classList.remove('active'); });
+  loadData();
+});
+
+// ── Clock (every 1s) ──
+function tickClock() {
+  var el = document.getElementById('statusTxt');
+  if (!el || !cache) return;
+  var now = new Date();
+  el.textContent = 'Live · ' + now.toLocaleTimeString('en-IN') +
+    ' · Auto-refresh every 30s · Uptime: ' + (cache.serverUptime || '—');
+}
 
 // ── Load data ──
-async function load() {
-  const from = new Date(document.getElementById('fromDate').value).toISOString();
-  const to   = new Date(document.getElementById('toDate').value).toISOString();
-  document.getElementById('statusText').textContent = 'Loading...';
+async function loadData() {
+  var from = new Date(document.getElementById('fromDate').value).toISOString();
+  var to   = new Date(document.getElementById('toDate').value).toISOString();
   try {
-    const r = await fetch(BACKEND + '/dashboard/stats?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to), { signal: AbortSignal.timeout(20000) });
+    var r = await fetch(
+      BACKEND + '/dashboard/stats?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to),
+      { signal: AbortSignal.timeout(20000) }
+    );
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    const d = await r.json();
-    render(d);
+    var d = await r.json();
+    cache = d;
+    renderData(d);
   } catch(e) {
-    document.getElementById('statusText').textContent = 'Error: ' + e.message;
+    document.getElementById('statusTxt').textContent = 'Error: ' + e.message;
   }
 }
 
 // ── Render ──
-function fmt(n) { return (n||0).toLocaleString('en-IN'); }
-function timeAgo(ts) {
-  if (!ts) return '—';
-  const diff = Date.now() - ts;
-  if (diff < 60000) return Math.round(diff/1000) + 's ago';
-  if (diff < 3600000) return Math.round(diff/60000) + 'm ago';
-  if (diff < 86400000) return Math.round(diff/3600000) + 'h ago';
-  return new Date(ts).toLocaleDateString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
-}
+function fmt(n) { return (n || 0).toLocaleString('en-IN'); }
 function fmtTime(ts) {
   if (!ts) return '—';
-  return new Date(ts).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+  return new Date(ts).toLocaleString('en-IN', {
+    day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'
+  });
 }
 
-function render(d) {
-  cachedData = d;
-  const from = new Date(document.getElementById('fromDate').value);
-  const to   = new Date(document.getElementById('toDate').value);
-  const rangeStr = from.toLocaleDateString('en-IN',{day:'2-digit',month:'short'}) + ' → ' +
-                   to.toLocaleDateString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+function renderData(d) {
+  // DB badge
+  var badge = document.getElementById('dbBadge');
+  badge.className = 'db-badge ' + (d.dbConnected ? 'db-ok' : 'db-warn');
+  badge.textContent = d.dbConnected ? '🟢 MongoDB · Persistent' : '🟡 In-memory · Add MONGO_URI';
 
-  document.getElementById('statusText').textContent =
-    'Updated: ' + new Date().toLocaleTimeString('en-IN') + ' · Range: ' + rangeStr + ' · Auto-refreshes every 30s';
+  // Stats (these update every 30s on data refresh)
+  document.getElementById('sV').textContent = fmt(d.pageVisits);
+  document.getElementById('sC').textContent = fmt(d.conversions);
+  document.getElementById('sK').textContent = fmt(d.clicks);
+  document.getElementById('sQ').textContent = fmt(d.compares);
 
-  const dbBadge = document.getElementById('dbBadge');
-  if (d.dbConnected) {
-    dbBadge.className = 'db-badge db-ok';
-    dbBadge.textContent = '🟢 MongoDB · Persistent';
-  } else {
-    dbBadge.className = 'db-badge db-warn';
-    dbBadge.textContent = '🟡 In-memory · Add MONGO_URI';
-  }
-
-  document.getElementById('sVisits').textContent     = fmt(d.pageVisits);
-  document.getElementById('sConversions').textContent = fmt(d.conversions);
-  document.getElementById('sClicks').textContent      = fmt(d.clicks);
-  document.getElementById('sCompares').textContent    = fmt(d.compares);
+  // Trigger clock immediately
+  tickClock();
 
   // Store bar chart
-  const stores = d.storeBreakdown || {};
-  const storeChart = document.getElementById('storeChart');
-  document.getElementById('storeRange').textContent = rangeStr;
-  if (!Object.keys(stores).length) {
-    storeChart.innerHTML = '<div class="empty">No conversions in this period</div>';
+  var stores = d.storeBreakdown || {};
+  var chartEl = document.getElementById('storeChart');
+  var keys = Object.keys(stores);
+  if (!keys.length) {
+    chartEl.innerHTML = '<div class="empty">No conversions in selected period</div>';
   } else {
-    const max = Math.max(...Object.values(stores), 1);
-    storeChart.innerHTML = Object.entries(stores).sort((a,b)=>b[1]-a[1]).map(([store,count]) =>
-      '<div class="bar-row">' +
-        '<div class="bar-lbl">' + store + '</div>' +
-        '<div class="bar-track"><div class="bar-fill" style="width:' + Math.round(count/max*100) + '%"></div></div>' +
-        '<div class="bar-val">' + fmt(count) + '</div>' +
-      '</div>'
-    ).join('');
+    var max = Math.max.apply(null, Object.values(stores).map(Number));
+    chartEl.innerHTML = keys.sort(function(a,b){return stores[b]-stores[a];}).map(function(k) {
+      var v = stores[k] || 0;
+      return '<div class="bar-row">' +
+        '<div class="bar-lbl">' + k + '</div>' +
+        '<div class="bar-track"><div class="bar-fill" style="width:' + Math.round(v/max*100) + '%"></div></div>' +
+        '<div class="bar-val">' + fmt(v) + '</div>' +
+      '</div>';
+    }).join('');
   }
 
-  // Visits table
-  const visits = d.recentVisits || [];
-  document.getElementById('visitTable').innerHTML = visits.length
-    ? '<table><thead><tr><th>Page</th><th>Time</th></tr></thead><tbody>' +
-      visits.map(v => '<tr><td class="mono">' + (v.url||'/') + '</td><td class="time">' + fmtTime(v.ts) + '</td></tr>').join('') +
-      '</tbody></table>'
+  // Visits (last 20)
+  var visits = (d.recentVisits || []).slice(0, 20);
+  document.getElementById('visitTbl').innerHTML = visits.length
+    ? table(['Page','Time'], visits.map(function(v) {
+        return [v.url || '/', fmtTime(v.ts)];
+      }))
     : '<div class="empty">No visits in this period</div>';
 
-  // Conversions table
-  const convs = d.recentConversions || [];
-  document.getElementById('convTable').innerHTML = convs.length
-    ? '<table><thead><tr><th>URL</th><th>Store</th><th>Status</th><th>Time</th></tr></thead><tbody>' +
-      convs.map(c =>
-        '<tr>' +
-        '<td class="mono" title="'+(c.url||'')+'">'+((c.url||'').substring(0,55))+(c.url?.length>55?'...':'')+'</td>' +
-        '<td style="font-size:12px;font-weight:600;white-space:nowrap;">'+(c.store||'—')+'</td>' +
-        '<td><span class="badge '+(c.state==='done'?'b-ok':'b-err')+'">'+(c.state||'—')+'</span></td>' +
-        '<td class="time">'+fmtTime(c.ts)+'</td>' +
-        '</tr>'
-      ).join('') + '</tbody></table>'
+  // Conversions (last 20)
+  var convs = (d.recentConversions || []).slice(0, 20);
+  document.getElementById('convTbl').innerHTML = convs.length
+    ? table(['URL','Store','Status','Time'], convs.map(function(c) {
+        var url = (c.url || '').substring(0, 45) + (c.url && c.url.length > 45 ? '…' : '');
+        var badge = '<span class="badge ' + (c.state==='done'?'b-ok':'b-err') + '">' + (c.state||'—') + '</span>';
+        return [url, c.store||'—', badge, fmtTime(c.ts)];
+      }))
     : '<div class="empty">No conversions in this period</div>';
 
-  // Clicks table
-  const clicks = d.recentClicks || [];
-  document.getElementById('clickTable').innerHTML = clicks.length
-    ? '<table><thead><tr><th>Destination</th><th>Time</th></tr></thead><tbody>' +
-      clicks.map(c =>
-        '<tr>' +
-        '<td class="mono" title="'+(c.dest||'')+'">'+((c.dest||'').substring(0,70))+(c.dest?.length>70?'...':'')+'</td>' +
-        '<td class="time">'+fmtTime(c.ts)+'</td>' +
-        '</tr>'
-      ).join('') + '</tbody></table>'
+  // Clicks (last 20)
+  var clicks = (d.recentClicks || []).slice(0, 20);
+  document.getElementById('clickTbl').innerHTML = clicks.length
+    ? table(['Destination','Store','Time'], clicks.map(function(c) {
+        var dest = (c.dest || '').substring(0, 50) + (c.dest && c.dest.length > 50 ? '…' : '');
+        return [dest, c.store||'—', fmtTime(c.ts)];
+      }))
     : '<div class="empty">No link clicks in this period</div>';
+}
+
+function table(headers, rows) {
+  var th = headers.map(function(h) { return '<th>' + h + '</th>'; }).join('');
+  var tr = rows.map(function(cells) {
+    return '<tr>' + cells.map(function(c, i) {
+      var cls = i === 0 ? ' class="mono"' : (i === headers.length-1 ? ' class="time-td"' : '');
+      return '<td' + cls + '>' + c + '</td>';
+    }).join('') + '</tr>';
+  }).join('');
+  return '<table><thead><tr>' + th + '</tr></thead><tbody>' + tr + '</tbody></table>';
 }
 </script>
 </body>
