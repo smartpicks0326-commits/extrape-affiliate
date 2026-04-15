@@ -138,3 +138,6 @@ Affiliate link returned to user's browser
 - **Render free tier** spins down after 15 mins of inactivity. First request after idle may take ~30 seconds.
 - ExtraPe credentials are stored as **environment variables** on Render — never in code.
 - If ExtraPe updates their website UI, you may need to update the CSS selectors in `server.js`.
+
+
+sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u ubuntu --hp /home/ubuntu
