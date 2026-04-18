@@ -140,17 +140,4 @@ Affiliate link returned to user's browser
 - If ExtraPe updates their website UI, you may need to update the CSS selectors in `server.js`.
 
 
-sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u ubuntu --hp /home/ubuntu
-
-
-EXTRAPE_ACCESS_TOKEN=eyJraWQiOiJhNTRmOGIyNy1hNWM5LTQ1YjAtYjg2My05MTlmMzk0N2M5ODgiLCJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJhdWQiOiI2OWI5MTE3YzFiNGZiMjAzZTE5ODM1MzQiLCJpc3MiOiJodHRwczovL3d3dy5leHRyYXBlLmNvbSIsIm5hbWUiOiJTbWFydHBpY2tzIiwiZXhwIjoxNzc2MzI4MzE3LCJ1c2VySWQiOiI2OWI5MTE3YzFiNGZiMjAzZTE5ODM1MzQiLCJpYXQiOjE3NzM3MzYzMTd9.VRAVwNAuIHUNrMmzSF7NNo-Ipfy8Id8ZuUqG2mk8s2dFkP8AZZoSeH7sl9WLINAQ6G7o-HxIo_i-oDCRaueB-Q
-EXTRAPE_REMEMBER_TOKEN=177373631733269b9117c1b4fb203e19835341
-FRONTEND_URL=https://smartpickdeals.live
-BACKEND_URL=https://129.159.228.117:3000
-SERP_API_KEY=325cee81875760a71814be841493064a1b5bb79920f32f5f5fa20382d2d7f0f6
-MONGO_URI=mongodb+srv://smartpickdeals:Smartpicks%40032026@smartpickdeals.ag4ruhk.mongodb.net/smartpickdeals?retryWrites=true&w=majority&appName=smartpickdeals
-FLASH_AUTH_TOKEN=AhS75bJAtZQ9WItNoXOxTZi1GHVQPS1nzIWfShcpVXl6MjqdNiSrrDFH7pIfZwVzpM9S46TJVl8512u5iSPL7UryPUGXybwU5e9MSrCTYLMsyMlr9oRZGoSJO24kDuVc
-FLASH_DEVICE_ID=dea185cd-f76c-4864-ac09-301aabd02ffd
-PORT=3000
-
-Tunnel id- 39891ff8-6985-4c7a-84b9-415c9ebda56c
+sudo env PATH=$PATH:/usr/bin /usr/lib/node_modu
