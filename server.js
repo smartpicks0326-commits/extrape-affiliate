@@ -1,4 +1,4 @@
-require('dotenv').config(); // Load .env file first
+try { require('dotenv').config(); } catch(e) {} // Load .env if available (optional)
 const express  = require('express');
 const cors     = require('cors');
 const { v4: uuidv4 } = require('uuid');
