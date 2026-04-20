@@ -790,16 +790,19 @@ app.post('/flash/compare', async (req, res) => {
 app.post('/admin/backfill-stores', async (req, res) => {
   if (!dbConnected) return res.json({ ok: false, reason: 'DB not connected' });
   try {
-    const clicks = await Event.find({ type: 'click', $or: [{ store: '' }, { store: null }, { store: { $exists: false } }] }).lean();
+    const clicks = await Event.find({ type: 'click' }).lean();
+    // Filter in JS to catch all empty/null/undefined store values
+    const needsStore = clicks.filter(c => !c.store || c.store.trim() === '');
+    console.log('[Backfill] Total clicks:', clicks.length, '| Need store:', needsStore.length);
     let updated = 0;
-    for (const c of clicks) {
+    for (const c of needsStore) {
       const store = detectStoreFromUrl(c.dest || '');
       if (store) {
         await Event.updateOne({ _id: c._id }, { $set: { store } });
         updated++;
       }
     }
-    res.json({ ok: true, total: clicks.length, updated });
+    res.json({ ok: true, total: clicks.length, needsStore: needsStore.length, updated });
   } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
