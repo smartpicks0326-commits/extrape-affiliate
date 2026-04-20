@@ -140,7 +140,7 @@ Affiliate link returned to user's browser
 - If ExtraPe updates their website UI, you may need to update the CSS selectors in `server.js`.
 
 
-For updating tokens - bash ~/update-tokens.sh
+For updating tokens + Tag Updater - bash ~/update-tokens.sh
 
 After reboot logs - cat /home/smartpick/startup.log
 

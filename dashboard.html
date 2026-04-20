@@ -240,8 +240,19 @@ tr:last-child td{border-bottom:none;}
 
 <script>
 // ── Config ──
-var BACKEND  = 'https://extrape-affiliate.onrender.com';
-var PASSWORD = 'Smartpick@032026';
+var BACKEND  = 'https://api.smartpickdeals.live';  // laptop primary
+var BACKEND_FALLBACK = 'https://extrape-affiliate.onrender.com';
+
+// Resolve best backend on load
+(async function() {
+  try {
+    var r = await fetch('https://api.smartpickdeals.live/ping', { signal: AbortSignal.timeout(3000) });
+    if (r.ok) { BACKEND = 'https://api.smartpickdeals.live'; return; }
+  } catch(e) {}
+  BACKEND = BACKEND_FALLBACK;
+  console.log('[Dashboard] Using Render fallback');
+})();
+var PASSWORD = 'smartpick2024';
 
 // ── State ──
 var cache       = null;
@@ -349,10 +360,8 @@ async function loadData() {
     renderData(d);
   } catch(e) {
     console.error('Dashboard load error:', e.message);
-    document.getElementById('batBadge').className = 'db-badge bat-down';
-    document.getElementById('batBadge').textContent = '🔴 Server down';
   }
-  // Always fetch battery separately (quick call)
+  // Always fetch battery — independent of stats call success/failure
   fetchBattery();
 }
 
