@@ -204,9 +204,26 @@ async function trackConversion(url, store, state) {
   }
 }
 
+function detectStoreFromUrl(url) {
+  if (!url) return '';
+  if (url.includes('amazon.in') || url.includes('amzn.in') || url.includes('amzn.to')) return 'Amazon';
+  if (url.includes('flipkart.com') || url.includes('fkrt.co')) return 'Flipkart';
+  if (url.includes('myntra.com')) return 'Myntra';
+  if (url.includes('ajio.com')) return 'Ajio';
+  if (url.includes('nykaa.com')) return 'Nykaa';
+  if (url.includes('tatacliq.com')) return 'TataCliq';
+  if (url.includes('croma.com')) return 'Croma';
+  if (url.includes('snapdeal.com')) return 'Snapdeal';
+  if (url.includes('meesho.com')) return 'Meesho';
+  if (url.includes('jiomart.com')) return 'JioMart';
+  if (url.includes('netmeds.com')) return 'Netmeds';
+  if (url.includes('lenskart.com')) return 'Lenskart';
+  return '';
+}
+
 async function trackClick(dest, store) {
   const d = (dest || 'unknown').substring(0, 300);
-  const s = store || '';
+  const s = store || detectStoreFromUrl(dest) || '';
   if (dbConnected) {
     await Counter.updateOne({ _id: 'main' }, { $inc: { clicks: 1 } })
       .catch(e => console.error('[DB] trackClick:', e.message));
