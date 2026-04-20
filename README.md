@@ -147,7 +147,7 @@ After reboot logs - cat /home/smartpick/startup.log
 sudo env PATH=$PATH:/usr/bin /usr/lib/node_modu
 
 
-1. My usual workflow is to update the code locally, commit and push it to Git. This automatically deploys to Cloudflare Pages and Render. After that, I pull the latest changes on the server. This is the process I follow to update the code. Not push code from server to git and cloudflare and render.
+
 
 
 Product URL (any supported store)
@@ -231,7 +231,6 @@ https://www.amazon.in/dp/B0DYVPP86H—20 Apr, 01:18 pmhttps://www.amazon.in/dp/B
 
 Update store name Recent Go link clicks
 
-3. Are we currently using Nginx on our server? If yes, please update the startup.sh script to include it. If not, you can ignore this.
 
 4. Could I get the Smart Pick Deals logo from https://www.smartpickdeals.live/ in PNG format for use as a company logo?
 

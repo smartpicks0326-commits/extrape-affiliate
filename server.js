@@ -786,6 +786,23 @@ app.post('/flash/compare', async (req, res) => {
   }
 });
 
+// Backfill store names for existing clicks missing store field
+app.post('/admin/backfill-stores', async (req, res) => {
+  if (!dbConnected) return res.json({ ok: false, reason: 'DB not connected' });
+  try {
+    const clicks = await Event.find({ type: 'click', $or: [{ store: '' }, { store: null }, { store: { $exists: false } }] }).lean();
+    let updated = 0;
+    for (const c of clicks) {
+      const store = detectStoreFromUrl(c.dest || '');
+      if (store) {
+        await Event.updateOne({ _id: c._id }, { $set: { store } });
+        updated++;
+      }
+    }
+    res.json({ ok: true, total: clicks.length, updated });
+  } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // Track page visits
 app.post('/track/visit', async (req, res) => {
   const page = req.body?.page || req.headers?.referer || '/';

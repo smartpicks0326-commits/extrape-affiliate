@@ -1,8 +1,9 @@
 // Cloudflare Pages Function: smartpickdeals.live/go/:code
-// Tracking goes to Render — Cloudflare Workers cannot call Cloudflare Tunnels
-// (api.smartpickdeals.live is a Tunnel — calling it from a Worker causes a loop)
+// 1. Decodes base64url affiliate URL
+// 2. Fires click tracking to Render (async, doesn't delay redirect)
+// 3. Immediately 302 redirects user to affiliate URL
 
-const TRACKING_BACKEND = 'https://extrape-affiliate.onrender.com';
+const BACKEND = 'https://extrape-affiliate.onrender.com';
 
 export async function onRequest(context) {
   const code = context.params.code;
@@ -17,18 +18,19 @@ export async function onRequest(context) {
   } catch(e) {}
 
   if (!dest) {
-    return Response.redirect('https://smartpickdeals.live', 302);
+    // Fallback: send to Render directly
+    return Response.redirect(`${BACKEND}/go/${code}`, 302);
   }
 
-  // Fire tracking in background — Render only (not Tunnel)
+  // Fire tracking in background (don't await — instant redirect)
   context.waitUntil(
-    fetch(`${TRACKING_BACKEND}/track/click`, {
+    fetch(`${BACKEND}/track/click`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ dest }),
     }).catch(() => {})
   );
 
-  // Instant redirect
+  // Instant redirect — no waiting for Render
   return Response.redirect(dest, 302);
 }
