@@ -1,44 +1,36 @@
-// Cloudflare Pages Function: smartpickdeals.live/go/:code
-// Decodes base64url → instant 302 redirect
-// Tracking is fire-and-forget (never delays redirect)
-
-const BACKEND_PRIMARY  = 'https://api.smartpickdeals.live';
-const BACKEND_FALLBACK = 'https://extrape-affiliate.onrender.com';
+// Cloudflare Pages Function: /go/:code
+// Pure redirect — no external calls, never fails
+// Tracking is completely optional and non-blocking
 
 export async function onRequest(context) {
   const code = context.params.code;
   if (!code) return new Response('Missing code', { status: 400 });
 
+  // Decode base64url → destination URL
   let dest = null;
-
-  // Decode base64url → affiliate URL
   try {
-    const decoded = atob(code.replace(/-/g, '+').replace(/_/g, '/'));
-    if (decoded.startsWith('http')) dest = decoded;
-  } catch(e) {}
+    const b64 = code.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = b64 + '=='.slice(0, (4 - b64.length % 4) % 4);
+    dest = atob(pad);
+    if (!dest.startsWith('http')) dest = null;
+  } catch(e) { dest = null; }
 
-  if (!dest) {
-    // Code not base64 — try backend directly
-    return Response.redirect(`${BACKEND_PRIMARY}/go/${code}`, 302);
-  }
+  // If decode fails — redirect to homepage
+  if (!dest) return Response.redirect('https://smartpickdeals.live', 302);
 
-  // Fire tracking in background — try laptop first, fallback to Render
-  // Never awaited — redirect is always instant
-  context.waitUntil(
-    fetch(`${BACKEND_PRIMARY}/track/click`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dest }),
-      signal: AbortSignal.timeout(3000),
-    }).catch(() =>
-      fetch(`${BACKEND_FALLBACK}/track/click`, {
+  // Fire tracking async — completely isolated, never affects redirect
+  const BACKEND = 'https://api.smartpickdeals.live';
+  try {
+    context.waitUntil(
+      fetch(BACKEND + '/track/click', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dest }),
-      }).catch(() => {})
-    )
-  );
+        signal: AbortSignal.timeout(3000),
+      }).catch(() => {}) // silently ignore ALL errors
+    );
+  } catch(e) {} // even waitUntil itself is wrapped
 
-  // Instant redirect — no waiting for backend
+  // Always redirect immediately — tracking never blocks this
   return Response.redirect(dest, 302);
 }
