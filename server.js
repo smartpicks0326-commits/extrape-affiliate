@@ -20,7 +20,10 @@ function makeGoLink(affiliateUrl) {
   // Cloudflare Pages function decodes it and redirects directly
   const b64 = Buffer.from(affiliateUrl).toString('base64')
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-  return FRONTEND_URL + '/go/' + b64;
+  // Use www. subdomain — Pages Function works on www but not apex domain
+  const baseUrl = FRONTEND_URL.replace('https://smartpickdeals.live', 'https://www.smartpickdeals.live')
+                               .replace('http://smartpickdeals.live', 'https://www.smartpickdeals.live');
+  return baseUrl + '/go/' + b64;
 }
 
 // ── Supported stores ──
