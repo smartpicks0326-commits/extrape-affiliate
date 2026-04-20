@@ -520,7 +520,7 @@
     async function resolveBackend() {
       if (backendReady) return BACKEND_URL;
       try {
-        const r = await fetch(BACKEND_PRIMARY + '/ping', { signal: AbortSignal.timeout(5000) });
+        const r = await fetch(BACKEND_PRIMARY + '/ping', { signal: AbortSignal.timeout(2500) });
         if (r.ok) { BACKEND_URL = BACKEND_PRIMARY; console.log('[Backend] Laptop ✅'); }
         else throw new Error();
       } catch(e) {

@@ -140,4 +140,70 @@ Affiliate link returned to user's browser
 - If ExtraPe updates their website UI, you may need to update the CSS selectors in `server.js`.
 
 
+For updating tokens - bash ~/update-tokens.sh
+
+After reboot logs - cat /home/smartpick/startup.log
+
 sudo env PATH=$PATH:/usr/bin /usr/lib/node_modu
+
+
+
+
+
+
+
+1. Could I get the Smart Pick Deals logo from https://www.smartpickdeals.live/ in PNG format for use as a company logo?
+
+
+2. It appears that when the server was down, the request was not redirected to Render as expected.
+
+Example:
+
+When the server is down:
+	•	Product URL (any supported store): https://dl.flipkart.com/s/wdMG!GNNNN
+	•	Convert →
+	•	Detected: Flipkart
+	•	Warning: Failed to fetch
+
+When the server is available:
+	•	Product URL (any supported store): https://dl.flipkart.com/s/wdMG!GNNNN
+	•	Convert →
+	•	Detected: Flipkart
+	•	Link ready: https://fkrt.co/z677Fc
+
+This suggests the fallback to Render may not be functioning correctly when the primary server is unavailable.
+
+3. Are we currently using Nginx on our server? If yes, please update the startup.sh script to include it. If not, you can ignore this.
+
+1. Product URL (any supported store)
+https://amzn.in/d/05bKh28D
+Convert →
+Detected: Amazon
+Link ready
+https://www.amazon.in/dp/B0DYVPP86H
+
+If we click open the generated link - Connection timed out Error code 522
+Visit cloudflare.com for more information.
+2026-04-20 05:53:53 UTC
+
+I need to update the Amazon affiliate tag regularly. I’ve recently created a new tag: smartpickde09-21.
+In the Extrape console, I’ve updated the tag from the existing smartpick06e-21 to smartpickde09-21.
+Do I also need to update this Amazon tag anywhere in our codebase to ensure Amazon links are converted correctly? If yes, can you help set up an automated process to update the Amazon tag—similar to how we handle token updates using bash ~/update-tokens.sh?
+
+
+2. Will this process add any noticeable delay to execution? With Render configured as a backup, resolveBackend() now properly awaits before each API call, and the page load pre-warms the check. If the laptop is unavailable, all requests automatically fall back to Render.
+
+3. After a long period of inactivity, I’m unable to connect to the server via SSH and ping. I need to ensure that SSH and ping access is available whenever I try to connect.
+
+4. On my Ubuntu laptop, the battery level is available as a percentage. Is it possible to display this on the dashboard such that:
+
+If the laptop is active, it shows:
+
+Battery percentage (%) - Charging / Discharging status
+
+If the laptop is unavailable or powered off, it shows: Server down
+
+These indicators should appear before the 🟢 MongoDB · Persistent section. The Charging/Server Down status should follow the same visual style as the MongoDB status, and the battery should be displayed as a percentage.
+
+Ensure the placement and formatting are clean, neat, and consistent with the existing dashboard design.
+

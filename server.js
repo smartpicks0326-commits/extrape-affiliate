@@ -359,6 +359,29 @@ function storeSearchUrl(store, q) {
 app.get('/', (req, res) => res.send('Smart Pick Deals ✅'));
 app.get('/ping', (req, res) => res.json({ status:'ok', time:new Date().toISOString() }));
 
+// Battery status endpoint — reads from Linux battery sys files
+app.get('/battery', async (req, res) => {
+  try {
+    const fs = require('fs');
+    const path = '/sys/class/power_supply';
+    if (!fs.existsSync(path)) {
+      return res.json({ available: false, reason: 'No power supply info' });
+    }
+    const supplies = fs.readdirSync(path);
+    const bat = supplies.find(s => s.startsWith('BAT'));
+    if (!bat) {
+      return res.json({ available: false, reason: 'No battery found (desktop or server)' });
+    }
+    const batPath = `${path}/${bat}`;
+    const readFile = f => { try { return fs.readFileSync(`${batPath}/${f}`, 'utf8').trim(); } catch(e) { return null; } };
+    const capacity = parseInt(readFile('capacity') || '0');
+    const status   = readFile('status') || 'Unknown'; // Charging / Discharging / Full
+    return res.json({ available: true, battery: capacity, status, battery_name: bat });
+  } catch(e) {
+    return res.json({ available: false, reason: e.message });
+  }
+});
+
 // ── Flash.co Backend Proxy ──
 // Routes flash.co API calls through Render using the user's session token
 // Requires FLASH_AUTH_TOKEN and FLASH_DEVICE_ID env vars on Render

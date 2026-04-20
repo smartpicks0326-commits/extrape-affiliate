@@ -1,9 +1,9 @@
 // Cloudflare Pages Function: smartpickdeals.live/go/:code
-// 1. Decodes base64url affiliate URL
-// 2. Fires click tracking to Render (async, doesn't delay redirect)
-// 3. Immediately 302 redirects user to affiliate URL
+// Decodes base64url → instant 302 redirect
+// Tracking is fire-and-forget (never delays redirect)
 
-const BACKEND = 'https://extrape-affiliate.onrender.com';
+const BACKEND_PRIMARY  = 'https://api.smartpickdeals.live';
+const BACKEND_FALLBACK = 'https://extrape-affiliate.onrender.com';
 
 export async function onRequest(context) {
   const code = context.params.code;
@@ -18,19 +18,27 @@ export async function onRequest(context) {
   } catch(e) {}
 
   if (!dest) {
-    // Fallback: send to Render directly
-    return Response.redirect(`${BACKEND}/go/${code}`, 302);
+    // Code not base64 — try backend directly
+    return Response.redirect(`${BACKEND_PRIMARY}/go/${code}`, 302);
   }
 
-  // Fire tracking in background (don't await — instant redirect)
+  // Fire tracking in background — try laptop first, fallback to Render
+  // Never awaited — redirect is always instant
   context.waitUntil(
-    fetch(`${BACKEND}/track/click`, {
+    fetch(`${BACKEND_PRIMARY}/track/click`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ dest }),
-    }).catch(() => {}) // silently ignore if Render is sleeping
+      signal: AbortSignal.timeout(3000),
+    }).catch(() =>
+      fetch(`${BACKEND_FALLBACK}/track/click`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dest }),
+      }).catch(() => {})
+    )
   );
 
-  // Instant redirect — no waiting for Render
+  // Instant redirect — no waiting for backend
   return Response.redirect(dest, 302);
 }

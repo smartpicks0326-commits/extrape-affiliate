@@ -58,6 +58,10 @@ nav{display:flex;align-items:center;justify-content:space-between;padding:12px 2
 .status-txt{font-size:12px;color:var(--muted);}
 .db-badge{font-size:11px;font-weight:600;padding:3px 10px;border-radius:999px;}
 .db-ok{background:rgba(41,216,122,.1);color:var(--success);border:1px solid rgba(41,216,122,.2);}
+.bat-charge{background:rgba(41,216,122,.1);color:var(--success);border:1px solid rgba(41,216,122,.2);}
+.bat-discharge{background:rgba(245,158,11,.1);color:var(--warn);border:1px solid rgba(245,158,11,.2);}
+.bat-low{background:rgba(255,75,110,.1);color:#ff4b6e;border:1px solid rgba(255,75,110,.2);}
+.bat-down{background:rgba(107,104,120,.1);color:var(--muted);border:1px solid var(--border);}
 .db-warn{background:rgba(245,158,11,.1);color:var(--warn);border:1px solid rgba(245,158,11,.2);}
 
 /* STATS */
@@ -153,6 +157,7 @@ tr:last-child td{border-bottom:none;}
 
     <!-- DB badge only -->
     <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
+      <span class="db-badge" id="batBadge">⏳ Checking server...</span>
       <span class="db-badge" id="dbBadge">—</span>
     </div>
 
@@ -344,6 +349,33 @@ async function loadData() {
     renderData(d);
   } catch(e) {
     console.error('Dashboard load error:', e.message);
+    document.getElementById('batBadge').className = 'db-badge bat-down';
+    document.getElementById('batBadge').textContent = '🔴 Server down';
+  }
+  // Always fetch battery separately (quick call)
+  fetchBattery();
+}
+
+async function fetchBattery() {
+  var badge = document.getElementById('batBadge');
+  try {
+    var r = await fetch(BACKEND + '/battery', { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) throw new Error('down');
+    var d = await r.json();
+    if (!d.available) {
+      badge.className = 'db-badge bat-down';
+      badge.textContent = '🖥️ Server (no battery)';
+      return;
+    }
+    var pct = d.battery || 0;
+    var st  = d.status || 'Unknown';
+    var icon = st === 'Charging' ? '⚡' : st === 'Full' ? '🔌' : pct < 20 ? '🪫' : '🔋';
+    var cls  = st === 'Charging' || st === 'Full' ? 'bat-charge' : pct < 20 ? 'bat-low' : 'bat-discharge';
+    badge.className = 'db-badge ' + cls;
+    badge.textContent = icon + ' ' + pct + '% · ' + st;
+  } catch(e) {
+    badge.className = 'db-badge bat-down';
+    badge.textContent = '🔴 Server down';
   }
 }
 
