@@ -507,10 +507,30 @@
     </div>
   </main>
 
-  <footer>Exciting deals from 200+ stores, find &amp; generate instantly &nbsp;·&nbsp; &copy; Smart Pick Deals</footer>
+  <footer>Exciting deals from 200+ stores, find &amp; generate instantly &nbsp;·&nbsp; &copy; Smart Pick Deals<br/><a href="mailto:support@smartpickdeals.live" style="color:var(--muted);font-size:12px;text-decoration:none;display:inline-block;margin-top:5px;letter-spacing:.01em;transition:color .2s;" onmouseover="this.style.color='var(--accent2)'" onmouseout="this.style.color='var(--muted)'">✉ support@smartpickdeals.live</a></footer>
 
   <script>
-    const BACKEND_URL = 'https://extrape-affiliate.onrender.com';
+    // Primary: laptop server. Fallback: Render if laptop is down
+    var BACKEND_URL = 'https://api.smartpickdeals.live';
+    const BACKEND_PRIMARY  = 'https://api.smartpickdeals.live';
+    const BACKEND_FALLBACK = 'https://extrape-affiliate.onrender.com';
+    var backendReady = false;
+
+    // Returns the best available backend — awaitable before any API call
+    async function resolveBackend() {
+      if (backendReady) return BACKEND_URL;
+      try {
+        const r = await fetch(BACKEND_PRIMARY + '/ping', { signal: AbortSignal.timeout(5000) });
+        if (r.ok) { BACKEND_URL = BACKEND_PRIMARY; console.log('[Backend] Laptop ✅'); }
+        else throw new Error();
+      } catch(e) {
+        BACKEND_URL = BACKEND_FALLBACK;
+        console.log('[Backend] Laptop down — using Render fallback');
+      }
+      backendReady = true;
+      return BACKEND_URL;
+    }
+    resolveBackend(); // pre-warm on page load
 
     const SUPPORTED_STORES = [
       { name: 'Amazon',      domains: ['amazon.in', 'amazon.com', 'amzn.in', 'amzn.to'] },
@@ -564,7 +584,7 @@
 
     async function pollStatus(requestId, storeName) {
       try {
-        const res = await fetch(BACKEND_URL + '/status/' + requestId);
+        const res = await fetch((await resolveBackend()) + '/status/' + requestId);
         const data = await res.json();
 
         if (data.state === 'pending') {
@@ -645,6 +665,7 @@
 
         let res, data;
         try {
+          await resolveBackend();
           res = await fetch(BACKEND_URL + '/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -716,7 +737,7 @@
 
       // Track the click BEFORE opening (fire-and-forget, doesn't delay open)
       try {
-        fetch('https://extrape-affiliate.onrender.com/track/click', {
+        fetch(BACKEND_URL+'/track/click', {
           method: 'POST',
           headers: {'Content-Type':'application/json'},
           body: JSON.stringify({ dest: dispUrl, store: store })
@@ -731,6 +752,6 @@
     });
   </script>
 
-<script>fetch('https://extrape-affiliate.onrender.com/track/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:'converter'})}).catch(()=>{});</script>
+<script>fetch((typeof BACKEND_URL!=='undefined'?BACKEND_URL:'https://api.smartpickdeals.live')+'/track/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:'converter'})}).catch(()=>{});</script>
 </body>
 </html>
