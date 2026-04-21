@@ -180,6 +180,66 @@ async function connectDB() {
 }
 connectDB();
 
+// ── Auto-sync Render in-memory data on every startup ──
+// Runs whenever this server starts (reboot, pm2 restart, or pm2 start)
+// If Render has no MONGO_URI, it stores data in-memory → pull it here
+async function syncFromRender() {
+  const RENDER = 'https://extrape-affiliate.onrender.com';
+  // Wait for DB to connect first
+  for (let i = 0; i < 10; i++) {
+    if (dbConnected) break;
+    await new Promise(r => setTimeout(r, 1500));
+  }
+  if (!dbConnected) return console.log('[Sync] Skipped — DB not connected');
+
+  try {
+    console.log('[Sync] Pulling Render data...');
+    const r = await fetch(
+      RENDER + '/dashboard/stats?from=2024-01-01T00:00:00.000Z&to=' + new Date().toISOString(),
+      { signal: AbortSignal.timeout(15000) }
+    );
+    if (!r.ok) return console.log('[Sync] Render returned', r.status);
+    const d = await r.json();
+
+    if (d.dbConnected) {
+      return console.log('[Sync] Render uses same MongoDB — no sync needed ✅');
+    }
+
+    // Only merge if Render has data worth syncing
+    const total = (d.pageVisits||0) + (d.conversions||0) + (d.clicks||0) + (d.compares||0);
+    if (total === 0) return console.log('[Sync] Render has no in-memory data to sync');
+
+    // Merge counters
+    await Counter.updateOne({ _id: 'main' }, {
+      $inc: {
+        pageVisits:  d.pageVisits  || 0,
+        conversions: d.conversions || 0,
+        clicks:      d.clicks      || 0,
+        compares:    d.compares    || 0,
+      }
+    });
+
+    // Save recent events (avoid duplicates by checking ts + dest)
+    const events = [
+      ...(d.recentVisits      || []).map(e => ({ type:'visit',      url:e.url||'',  ts:new Date(e.ts) })),
+      ...(d.recentConversions || []).map(e => ({ type:'conversion',  url:e.url||'',  store:e.store||'', state:e.state||'', ts:new Date(e.ts) })),
+      ...(d.recentClicks      || []).map(e => ({ type:'click', dest:e.dest||'', store:e.store||detectStoreFromUrl(e.dest||''), ts:new Date(e.ts) })),
+    ].filter(e => e.ts && !isNaN(e.ts.getTime()));
+
+    if (events.length > 0) {
+      await Event.insertMany(events, { ordered: false }).catch(() => {});
+    }
+
+    console.log('[Sync] ✅ Merged from Render — visits:' + (d.pageVisits||0) +
+      ' conversions:' + (d.conversions||0) + ' clicks:' + (d.clicks||0) +
+      ' events saved:' + events.length);
+  } catch(e) {
+    console.log('[Sync] Failed to reach Render:', e.message);
+  }
+}
+// Run sync 5 seconds after startup (gives DB time to connect)
+setTimeout(syncFromRender, 5000);
+
 // ── Track functions ──
 async function trackVisit(page) {
   if (dbConnected) {
