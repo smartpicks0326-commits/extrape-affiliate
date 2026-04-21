@@ -806,6 +806,50 @@ app.post('/admin/backfill-stores', async (req, res) => {
   } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// ── Sync endpoint: merge another server's in-memory analytics into MongoDB ──
+// Called by laptop startup script to pull Render's data after being offline
+app.post('/admin/sync-from', async (req, res) => {
+  if (!dbConnected) return res.json({ ok: false, reason: 'DB not connected' });
+  const { sourceUrl } = req.body;
+  if (!sourceUrl) return res.status(400).json({ ok: false, reason: 'Pass sourceUrl in body' });
+
+  try {
+    // Fetch stats from the other server (all-time)
+    const r = await fetch(sourceUrl + '/dashboard/stats?from=2024-01-01T00:00:00.000Z&to=' + new Date().toISOString(),
+      { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) throw new Error('Source returned ' + r.status);
+    const d = await r.json();
+
+    // If source uses DB too, skip sync (same data)
+    if (d.dbConnected) return res.json({ ok: true, skipped: true, reason: 'Source already uses MongoDB' });
+
+    // Merge in-memory counters into MongoDB
+    const inc = {
+      pageVisits:  d.pageVisits  || 0,
+      conversions: d.conversions || 0,
+      clicks:      d.clicks      || 0,
+      compares:    d.compares    || 0,
+    };
+    await Counter.updateOne({ _id: 'main' }, { $inc: inc });
+    console.log('[Sync] Merged from', sourceUrl, ':', inc);
+
+    // Save recent events to MongoDB
+    const events = [
+      ...(d.recentVisits       || []).map(e => ({ type:'visit',      url:e.url,   ts:new Date(e.ts) })),
+      ...(d.recentConversions  || []).map(e => ({ type:'conversion', url:e.url,   store:e.store, state:e.state, ts:new Date(e.ts) })),
+      ...(d.recentClicks       || []).map(e => ({ type:'click',      dest:e.dest, store:e.store || detectStoreFromUrl(e.dest||''), ts:new Date(e.ts) })),
+    ].filter(e => e.ts && !isNaN(e.ts));
+
+    if (events.length > 0) {
+      await Event.insertMany(events, { ordered: false }).catch(() => {});
+    }
+
+    res.json({ ok: true, merged: inc, events: events.length });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // Track page visits
 app.post('/track/visit', async (req, res) => {
   const page = req.body?.page || req.headers?.referer || '/';
