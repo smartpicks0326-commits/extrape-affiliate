@@ -139,6 +139,24 @@ const memAnalytics = {
   storeBreakdown: {}, recentConversions: [], recentClicks: [],
 };
 
+// ── SSE: declared here so all track functions can call pushDashboardUpdate ──
+const sseClients = new Set();
+function pushDashboardUpdate() {
+  if (sseClients.size === 0) return;
+  const payload = JSON.stringify({
+    type: 'counter',
+    pageVisits:  memAnalytics.pageVisits,
+    conversions: memAnalytics.conversions,
+    clicks:      memAnalytics.clicks,
+    compares:    memAnalytics.compares,
+    ts: Date.now(),
+  });
+  sseClients.forEach(client => {
+    try { client.write('data: ' + payload + '\n\n'); }
+    catch(e) { sseClients.delete(client); }
+  });
+}
+
 async function connectDB() {
   if (!MONGO_URI) {
     console.log('[DB] MONGO_URI not set — using in-memory analytics');
@@ -298,7 +316,8 @@ function detectStoreFromUrl(url) {
   if (url.includes('netmeds.com')) return 'Netmeds';
   if (url.includes('lenskart.com')) return 'Lenskart';
   return '';
-}  pushDashboardUpdate();
+  pushDashboardUpdate();
+}
 
 
 async function trackClick(dest, store) {
@@ -982,28 +1001,6 @@ app.get('/track/click', async (req, res) => {
 
 // ── Real-time dashboard via Server-Sent Events (SSE) ──
 // Browser connects once → server pushes updates instantly when data changes
-const sseClients = new Set();
-
-// Notify all connected dashboards when new data arrives
-function pushDashboardUpdate() {
-  if (sseClients.size === 0) return;
-  // Build a lightweight counter update (fast, no heavy DB query)
-  const payload = JSON.stringify({
-    type: 'counter',
-    pageVisits:  memAnalytics.pageVisits,
-    conversions: memAnalytics.conversions,
-    clicks:      memAnalytics.clicks,
-    compares:    memAnalytics.compares,
-    ts: Date.now(),
-  });
-  sseClients.forEach(client => {
-    try { client.write(`data: ${payload}
-
-`); }
-    catch(e) { sseClients.delete(client); }
-  });
-}
-
 app.get('/dashboard/live', (req, res) => {
   res.set({
     'Content-Type':  'text/event-stream',
