@@ -287,6 +287,51 @@ document.getElementById('logoutBtn').addEventListener('click', function() {
 });
 
 // ── Section toggle ──
+// ── SSE Real-time connection ──
+var sseConn = null;
+var sseRetry = null;
+
+function connectSSE() {
+  if (typeof EventSource === 'undefined') return; // not supported
+  var LAPTOP = 'https://api.smartpickdeals.live';
+  try {
+    if (sseConn) { sseConn.close(); sseConn = null; }
+    sseConn = new EventSource(LAPTOP + '/dashboard/live');
+
+    sseConn.onopen = function() {
+      console.log('[SSE] Connected — real-time active');
+      document.getElementById('liveBadge').textContent = '● Live';
+      clearTimeout(sseRetry);
+    };
+
+    sseConn.onmessage = function(e) {
+      try {
+        var d = JSON.parse(e.data);
+        if (!d || d.type === 'connected') return;
+        if (d.pageVisits  !== undefined) document.getElementById('sV').textContent = fmt(d.pageVisits);
+        if (d.conversions !== undefined) document.getElementById('sC').textContent = fmt(d.conversions);
+        if (d.clicks      !== undefined) document.getElementById('sK').textContent = fmt(d.clicks);
+        if (d.compares    !== undefined) document.getElementById('sQ').textContent = fmt(d.compares);
+        if (cache) {
+          if (d.pageVisits  !== undefined) cache.pageVisits  = d.pageVisits;
+          if (d.conversions !== undefined) cache.conversions = d.conversions;
+          if (d.clicks      !== undefined) cache.clicks      = d.clicks;
+          if (d.compares    !== undefined) cache.compares    = d.compares;
+        }
+      } catch(err) {}
+    };
+
+    sseConn.onerror = function() {
+      sseConn.close(); sseConn = null;
+      document.getElementById('liveBadge').textContent = '○ Reconnecting';
+      clearTimeout(sseRetry);
+      sseRetry = setTimeout(connectSSE, 8000);
+    };
+  } catch(e) {
+    console.log('[SSE] Error:', e.message);
+  }
+}
+
 function toggle(bodyId, btnId) {
   var body = document.getElementById(bodyId);
   var btn  = document.getElementById(btnId);
