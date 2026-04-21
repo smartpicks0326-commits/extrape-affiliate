@@ -144,6 +144,8 @@ For updating tokens + Tag Updater - bash ~/update-tokens.sh
 
 After reboot logs - cat /home/smartpick/startup.log
 
+env - cat .env
+
 sudo env PATH=$PATH:/usr/bin /usr/lib/node_modu
 
 
