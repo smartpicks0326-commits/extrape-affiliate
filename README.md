@@ -149,3 +149,9 @@ env - cat .env
 sudo env PATH=$PATH:/usr/bin /usr/lib/node_modu
 
 
+Currently you use browser session tokens that expire every 14 days. A proper API gives you permanent API keys. Update would be:
+bash# In .env — replace token lines with API key lines
+EXTRAPE_API_KEY=your_permanent_key   # instead of ACCESS_TOKEN + REMEMBER_TOKEN
+FLASH_API_KEY=your_permanent_key     # instead of AUTH_TOKEN + DEVICE_ID
+Then one pm2 restart smartpickdeals --update-env — done. No more 14-day expiry. Let me know when you have the API details and I'll update the integration.
+

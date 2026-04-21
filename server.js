@@ -240,6 +240,22 @@ async function syncFromRender() {
 // Run sync 5 seconds after startup (gives DB time to connect)
 setTimeout(syncFromRender, 5000);
 
+// Backfill store names for any events missing store field on startup
+async function backfillStoresOnStart() {
+  if (!dbConnected) return;
+  try {
+    await new Promise(r => setTimeout(r, 8000)); // wait for DB ready
+    const clicks = await Event.find({ type: 'click', $or: [{ store: '' }, { store: null }, { store: { $exists: false } }] }).lean();
+    let updated = 0;
+    for (const c of clicks) {
+      const store = detectStoreFromUrl(c.dest || '');
+      if (store) { await Event.updateOne({ _id: c._id }, { $set: { store } }); updated++; }
+    }
+    if (updated > 0) console.log('[Startup] Backfilled store names for', updated, 'clicks');
+  } catch(e) {}
+}
+setTimeout(backfillStoresOnStart, 3000);
+
 // ── Track functions ──
 async function trackVisit(page) {
   if (dbConnected) {
@@ -249,8 +265,8 @@ async function trackVisit(page) {
       .catch(e => console.error('[DB] visit event:', e.message));
   } else {
     memAnalytics.pageVisits++;
-    memAnalytics.recentConversions; // keep in sync
   }
+  pushDashboardUpdate();
 }
 
 async function trackConversion(url, store, state) {
@@ -282,7 +298,8 @@ function detectStoreFromUrl(url) {
   if (url.includes('netmeds.com')) return 'Netmeds';
   if (url.includes('lenskart.com')) return 'Lenskart';
   return '';
-}
+}  pushDashboardUpdate();
+
 
 async function trackClick(dest, store) {
   const d = (dest || 'unknown').substring(0, 300);
@@ -948,8 +965,8 @@ app.options('/track/click', (req, res) => res.set(clickCors).sendStatus(204));
 
 app.post('/track/click', async (req, res) => {
   res.set(clickCors);
-  const dest = (req.body?.dest || req.body?.url || req.query?.dest || 'unknown').substring(0, 300);
-  const store = req.body?.store || req.query?.store || '';
+  const dest  = (req.body?.dest || req.body?.url || req.query?.dest || 'unknown').substring(0, 300);
+  const store = req.body?.store || req.query?.store || detectStoreFromUrl(dest) || '';
   await trackClick(dest, store).catch(e => console.error('[DB] /track/click POST:', e.message));
   res.json({ ok: true });
 });
