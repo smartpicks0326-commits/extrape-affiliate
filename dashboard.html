@@ -386,13 +386,18 @@ async function loadData() {
 
 async function fetchBattery() {
   var badge = document.getElementById('batBadge');
+  // Always check LAPTOP directly — battery is only for laptop, not Render
+  var LAPTOP = 'https://api.smartpickdeals.live';
   try {
-    var r = await fetch(BACKEND + '/battery', { signal: AbortSignal.timeout(5000) });
+    var r = await fetch(LAPTOP + '/battery', { signal: AbortSignal.timeout(4000) });
     if (!r.ok) throw new Error('down');
     var d = await r.json();
+    // d.available = false means laptop is up but has no battery (shouldn't happen)
+    // d.available = true means laptop is up with battery info
     if (!d.available) {
-      badge.className = 'db-badge bat-down';
-      badge.textContent = '🖥️ Server (no battery)';
+      // Laptop is up but no battery file found — show as running
+      badge.className = 'db-badge bat-charge';
+      badge.textContent = '🖥️ Server running';
       return;
     }
     var pct = d.battery || 0;
@@ -402,8 +407,9 @@ async function fetchBattery() {
     badge.className = 'db-badge ' + cls;
     badge.textContent = icon + ' ' + pct + '% · ' + st;
   } catch(e) {
+    // Can't reach laptop at all = server is down
     badge.className = 'db-badge bat-down';
-    badge.textContent = '🔴 Server down';
+    badge.textContent = '🔴 Server down · Render backup active';
   }
 }
 
