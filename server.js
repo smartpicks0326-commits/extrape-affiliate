@@ -308,6 +308,14 @@ async function trackCompare() {
   }
 }
 
+async function trackCompareEvent(url, store) {
+  await trackCompare().catch(() => {});
+  if (dbConnected) {
+    await new Event({ type: 'compare', url: url||'', store: store||'', ts: new Date() }).save()
+      .catch(e => console.error('[DB] compare event:', e.message));
+  }
+}
+
 // ── Request queue ──
 const queue    = [];
 const requests = {};
@@ -922,11 +930,7 @@ app.post('/track/compare', async (req, res) => {
   res.set('Access-Control-Allow-Origin', '*');
   const url   = req.body?.url   || '';
   const store = req.body?.store || detectStoreFromUrl(url) || '';
-  await trackCompare().catch(() => {});
-  // Also save as event for date-range filtering
-  if (dbConnected) {
-    await new Event({ type: 'compare', url, store, ts: new Date() }).save().catch(() => {});
-  }
+  await trackCompareEvent(url, store).catch(() => {});
   res.json({ ok: true });
 });
 app.options('/track/compare', (req, res) => { res.set('Access-Control-Allow-Origin','*').set('Access-Control-Allow-Methods','POST,OPTIONS').set('Access-Control-Allow-Headers','Content-Type').sendStatus(204); });

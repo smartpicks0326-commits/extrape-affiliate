@@ -258,6 +258,7 @@ var PASSWORD = 'smartpick2024';
 var cache       = null;
 var dataTimer   = null;
 var clockTimer  = null;
+var isLoading   = false;  // prevent concurrent loads at 1s refresh
 
 // ── Login ──
 function tryLogin() {
@@ -299,8 +300,8 @@ function startDash() {
   document.getElementById('dashWrap').style.display  = 'block';
   initDates();
   loadData();
-  dataTimer  = setInterval(loadData, 30000);   // full refresh every 30s
-  clockTimer = setInterval(tickClock, 1000);    // clock every 1s
+  dataTimer  = setInterval(loadData, 1000);    // refresh every 1s
+  clockTimer = setInterval(tickClock, 1000);   // clock every 1s
 }
 
 // Boot
@@ -352,13 +353,15 @@ async function loadData() {
 
   // Try laptop first, then Render fallback
   var backends = [BACKEND, BACKEND_FALLBACK].filter((v,i,a) => a.indexOf(v) === i);
+  if (isLoading) return;  // skip if previous request still running
+  isLoading = true;
   var loaded = false;
 
   for (var i = 0; i < backends.length; i++) {
     try {
       var r = await fetch(
         backends[i] + '/dashboard/stats?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to),
-        { signal: AbortSignal.timeout(8000) }
+        { signal: AbortSignal.timeout(5000) }
       );
       if (!r.ok) throw new Error('HTTP ' + r.status);
       var d = await r.json();
@@ -381,6 +384,7 @@ async function loadData() {
     document.getElementById('dbBadge').textContent = '🔴 Server down · No data available';
   }
 
+  isLoading = false;
   fetchBattery();
 }
 
