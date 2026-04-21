@@ -349,19 +349,38 @@ function tickClock() { /* status text removed per user request */ }
 async function loadData() {
   var from = new Date(document.getElementById('fromDate').value).toISOString();
   var to   = new Date(document.getElementById('toDate').value).toISOString();
-  try {
-    var r = await fetch(
-      BACKEND + '/dashboard/stats?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to),
-      { signal: AbortSignal.timeout(20000) }
-    );
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    var d = await r.json();
-    cache = d;
-    renderData(d);
-  } catch(e) {
-    console.error('Dashboard load error:', e.message);
+
+  // Try laptop first, then Render fallback
+  var backends = [BACKEND, BACKEND_FALLBACK].filter((v,i,a) => a.indexOf(v) === i);
+  var loaded = false;
+
+  for (var i = 0; i < backends.length; i++) {
+    try {
+      var r = await fetch(
+        backends[i] + '/dashboard/stats?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to),
+        { signal: AbortSignal.timeout(8000) }
+      );
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      var d = await r.json();
+      cache = d;
+      renderData(d);
+      loaded = true;
+      break;
+    } catch(e) {
+      console.log('[Dashboard] Backend', backends[i], 'failed:', e.message);
+    }
   }
-  // Always fetch battery — independent of stats call success/failure
+
+  // If all backends failed but we have cache, show cached data with warning
+  if (!loaded && cache) {
+    renderData(cache);
+    document.getElementById('dbBadge').className = 'db-badge db-warn';
+    document.getElementById('dbBadge').textContent = '🟡 Server down · Showing cached data';
+  } else if (!loaded) {
+    document.getElementById('dbBadge').className = 'db-badge db-warn';
+    document.getElementById('dbBadge').textContent = '🔴 Server down · No data available';
+  }
+
   fetchBattery();
 }
 

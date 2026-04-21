@@ -794,18 +794,15 @@ app.post('/admin/backfill-stores', async (req, res) => {
   if (!dbConnected) return res.json({ ok: false, reason: 'DB not connected' });
   try {
     const clicks = await Event.find({ type: 'click' }).lean();
-    // Filter in JS to catch all empty/null/undefined store values
-    const needsStore = clicks.filter(c => !c.store || c.store.trim() === '');
-    console.log('[Backfill] Total clicks:', clicks.length, '| Need store:', needsStore.length);
     let updated = 0;
-    for (const c of needsStore) {
+    for (const c of clicks) {
       const store = detectStoreFromUrl(c.dest || '');
-      if (store) {
+      if (store && store !== c.store) {
         await Event.updateOne({ _id: c._id }, { $set: { store } });
         updated++;
       }
     }
-    res.json({ ok: true, total: clicks.length, needsStore: needsStore.length, updated });
+    res.json({ ok: true, total: clicks.length, updated, message: updated + ' records updated' });
   } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
@@ -904,7 +901,7 @@ app.get('/dashboard/stats', async (req, res) => {
         compares:     comparesCount,
         storeBreakdown,
         recentConversions: recentConversions.map(e => ({ url: e.url, store: e.store, state: e.state, ts: e.ts?.getTime() })),
-        recentClicks:      recentClicks.map(e => ({ dest: e.dest, ts: e.ts?.getTime() })),
+        recentClicks:      recentClicks.map(e => ({ dest: e.dest, store: e.store || detectStoreFromUrl(e.dest||'') || '', ts: e.ts?.getTime() })),
         recentVisits:      recentVisits.map(e => ({ url: e.url, ts: e.ts?.getTime() })),
         dbConnected:  true,
         dateRange:    { from: from.toISOString(), to: to.toISOString() },
@@ -924,7 +921,10 @@ app.get('/dashboard/stats', async (req, res) => {
     compares:          memAnalytics.compares,
     storeBreakdown:    memAnalytics.storeBreakdown,
     recentConversions: memAnalytics.recentConversions,
-    recentClicks:      memAnalytics.recentClicks,
+    recentClicks:      memAnalytics.recentClicks.map(c => ({
+      dest: c.dest, ts: c.ts,
+      store: c.store || detectStoreFromUrl(c.dest||'') || ''
+    })),
     recentVisits:      [],
     dbConnected:       false,
     serverUptime:      Math.round(process.uptime() / 60) + ' min',
