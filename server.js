@@ -226,7 +226,7 @@ function detectStoreFromUrl(url) {
 
 async function trackClick(dest, store) {
   const d = (dest || 'unknown').substring(0, 300);
-  const s = store || detectStoreFromUrl(dest) || '';
+  const s = store || detectStoreFromUrl(d) || '';  // auto-detect from URL
   if (dbConnected) {
     await Counter.updateOne({ _id: 'main' }, { $inc: { clicks: 1 } })
       .catch(e => console.error('[DB] trackClick:', e.message));
@@ -816,6 +816,20 @@ app.post('/track/visit', async (req, res) => {
   res.json({ ok: true });
 });
 
+// Track compare searches
+app.post('/track/compare', async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  const url   = req.body?.url   || '';
+  const store = req.body?.store || detectStoreFromUrl(url) || '';
+  await trackCompare().catch(() => {});
+  // Also save as event for date-range filtering
+  if (dbConnected) {
+    await new Event({ type: 'compare', url, store, ts: new Date() }).save().catch(() => {});
+  }
+  res.json({ ok: true });
+});
+app.options('/track/compare', (req, res) => { res.set('Access-Control-Allow-Origin','*').set('Access-Control-Allow-Methods','POST,OPTIONS').set('Access-Control-Allow-Headers','Content-Type').sendStatus(204); });
+
 // Track link clicks — called from frontend before opening affiliate link
 // Accepts POST (from Cloudflare function) and GET (from index.html img-beacon)
 const clickCors = {
@@ -982,7 +996,7 @@ app.get('/compare/search', async (req, res) => {
 
   try {
     console.log('[Compare] URL:', url);
-    trackCompare().catch(() => {});
+    trackCompareEvent(url, '').catch(() => {});
 
     // Get title
     const title = await fetchTitle(url);

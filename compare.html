@@ -197,11 +197,26 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
   </div>
 </section>
 
-<footer>Smart Pick Deals — Real prices from 200+ stores</footer>
+<footer>Smart Pick Deals — Real prices from 200+ stores<br/><a href="mailto:support@smartpickdeals.live" style="color:var(--muted);font-size:11px;text-decoration:none;opacity:.7;">support@smartpickdeals.live</a></footer>
 
 <script>
 // ── Constants ──
-var BACKEND = 'https://extrape-affiliate.onrender.com';
+// Primary: laptop server. Fallback: Render if laptop is down
+var BACKEND_PRIMARY = 'https://api.smartpickdeals.live';
+var BACKEND_FALLBACK = 'https://extrape-affiliate.onrender.com';
+var BACKEND = BACKEND_PRIMARY;
+
+// Test primary server, switch to fallback if down
+(async function() {
+  try {
+    var r = await fetch(BACKEND_PRIMARY + '/ping', { signal: AbortSignal.timeout(5000) });
+    if (r.ok) { BACKEND = BACKEND_PRIMARY; console.log('[Backend] Using laptop server'); }
+    else throw new Error('not ok');
+  } catch(e) {
+    BACKEND = BACKEND_FALLBACK;
+    console.log('[Backend] Laptop down, using Render fallback');
+  }
+})();
 
 var LOGOS = {
   Amazon:'https://www.amazon.in/favicon.ico',
@@ -356,6 +371,9 @@ async function runSearch(url) {
   document.getElementById('rpFill').style.width='100%';
   document.getElementById('rpNum').textContent='100%';
   document.getElementById('rpHint').textContent='Done!';
+
+  // Track comparison search
+  fetch(BACKEND+'/track/compare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url,store:storeName})}).catch(function(){});
 
   await sleep(400);
   showResults(storeName, url, affiliateLink, compareData);
@@ -698,6 +716,13 @@ async function loadBgLinks(srcUrl, srcAffiliate) {
 }
 </script>
 
-<script>fetch('https://extrape-affiliate.onrender.com/track/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:'compare'})}).catch(function(){});</script>
+<script>
+(function(){
+  var b = window.BACKEND_PRIMARY || 'https://api.smartpickdeals.live';
+  fetch(b+'/track/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:'compare'})}).catch(function(){
+    fetch('https://extrape-affiliate.onrender.com/track/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:'compare'})}).catch(function(){});
+  });
+})();
+</script>
 </body>
 </html>
