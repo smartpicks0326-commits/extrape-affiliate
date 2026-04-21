@@ -300,8 +300,9 @@ function startDash() {
   document.getElementById('dashWrap').style.display  = 'block';
   initDates();
   loadData();
-  dataTimer  = setInterval(loadData, 1000);    // refresh every 1s
-  clockTimer = setInterval(tickClock, 1000);   // clock every 1s
+  dataTimer  = setInterval(loadData, 10000);  // full refresh every 10s (for date range)
+  clockTimer = setInterval(tickClock, 1000);  // clock every 1s
+  connectSSE();                               // real-time push updates
 }
 
 // Boot

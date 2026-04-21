@@ -298,6 +298,7 @@ async function trackClick(dest, store) {
     if (memAnalytics.recentClicks.length > 50) memAnalytics.recentClicks.pop();
   }
   console.log('[Track] Click:', s || 'unknown', d.substring(0, 60));
+  pushDashboardUpdate();
 }
 
 async function trackCompare() {
@@ -960,6 +961,78 @@ app.get('/track/click', async (req, res) => {
   const store = req.query?.store || '';
   await trackClick(dest, store).catch(e => console.error('[DB] /track/click GET:', e.message));
   res.json({ ok: true });
+});
+
+// ── Real-time dashboard via Server-Sent Events (SSE) ──
+// Browser connects once → server pushes updates instantly when data changes
+const sseClients = new Set();
+
+// Notify all connected dashboards when new data arrives
+function pushDashboardUpdate() {
+  if (sseClients.size === 0) return;
+  // Build a lightweight counter update (fast, no heavy DB query)
+  const payload = JSON.stringify({
+    type: 'counter',
+    pageVisits:  memAnalytics.pageVisits,
+    conversions: memAnalytics.conversions,
+    clicks:      memAnalytics.clicks,
+    compares:    memAnalytics.compares,
+    ts: Date.now(),
+  });
+  sseClients.forEach(client => {
+    try { client.write(`data: ${payload}
+
+`); }
+    catch(e) { sseClients.delete(client); }
+  });
+}
+
+app.get('/dashboard/live', (req, res) => {
+  res.set({
+    'Content-Type':  'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection':    'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+  res.flushHeaders();
+
+  // Send initial ping
+  res.write("data: {\"type\":\"connected\"}\n\n");
+
+  sseClients.add(res);
+  console.log('[SSE] Client connected. Total:', sseClients.size);
+
+  // Send full stats every 5s (for date-range accuracy)
+  const interval = setInterval(async () => {
+    try {
+      const now = new Date();
+      const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+      const nowUTC = Date.now();
+      const midnightIST = new Date(nowUTC + IST_OFFSET);
+      midnightIST.setUTCHours(0,0,0,0);
+      const from = new Date(midnightIST.getTime() - IST_OFFSET);
+
+      if (dbConnected) {
+        const dateFilter = { ts: { $gte: from, $lte: now } };
+        const [v,c,k,q] = await Promise.all([
+          Event.countDocuments({ type: 'visit',      ...dateFilter }),
+          Event.countDocuments({ type: 'conversion', state:'done', ...dateFilter }),
+          Event.countDocuments({ type: 'click',      ...dateFilter }),
+          Event.countDocuments({ type: 'compare',    ...dateFilter }),
+        ]);
+        const payload = JSON.stringify({ type:'stats', pageVisits:v, conversions:c, clicks:k, compares:q, ts:Date.now() });
+        res.write(`data: ${payload}
+
+`);
+      }
+    } catch(e) {}
+  }, 5000);
+
+  req.on('close', () => {
+    sseClients.delete(res);
+    clearInterval(interval);
+    console.log('[SSE] Client disconnected. Total:', sseClients.size);
+  });
 });
 
 // Dashboard stats — supports ?from=ISO&to=ISO date range
