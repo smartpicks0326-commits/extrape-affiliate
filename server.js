@@ -311,6 +311,7 @@ async function trackConversion(url, store, state) {
 
 function detectStoreFromUrl(url) {
   if (!url) return '';
+  // Direct store domains
   if (url.includes('amazon.in') || url.includes('amzn.in') || url.includes('amzn.to')) return 'Amazon';
   if (url.includes('flipkart.com') || url.includes('fkrt.co')) return 'Flipkart';
   if (url.includes('myntra.com')) return 'Myntra';
@@ -323,8 +324,27 @@ function detectStoreFromUrl(url) {
   if (url.includes('jiomart.com')) return 'JioMart';
   if (url.includes('netmeds.com')) return 'Netmeds';
   if (url.includes('lenskart.com')) return 'Lenskart';
+  if (url.includes('reliancedigital.in')) return 'Reliance Digital';
+  if (url.includes('vijaysales.com')) return 'Vijay Sales';
+  // bilty.co = ExtraPe short links for Croma + other stores
+  // Store name embedded in URL: bilty.co/CODE+StoreName+ProductName
+  if (url.includes('bilty.co')) {
+    const u = url.toLowerCase();
+    if (u.includes('croma'))    return 'Croma';
+    if (u.includes('myntra'))   return 'Myntra';
+    if (u.includes('ajio'))     return 'Ajio';
+    if (u.includes('nykaa'))    return 'Nykaa';
+    if (u.includes('tatacliq') || u.includes('tata+cliq')) return 'TataCliq';
+    if (u.includes('snapdeal')) return 'Snapdeal';
+    if (u.includes('meesho'))   return 'Meesho';
+    if (u.includes('jiomart'))  return 'JioMart';
+    if (u.includes('netmeds'))  return 'Netmeds';
+    if (u.includes('lenskart')) return 'Lenskart';
+    if (u.includes('reliance')) return 'Reliance Digital';
+    if (u.includes('vijay'))    return 'Vijay Sales';
+    return 'Croma'; // bilty.co primarily used for Croma by ExtraPe
+  }
   return '';
-  pushDashboardUpdate();
 }
 
 
