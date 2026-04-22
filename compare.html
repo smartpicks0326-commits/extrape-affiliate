@@ -137,14 +137,86 @@ section{position:relative;z-index:1;}
 
 footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px;color:var(--muted);}
 
-@media(max-width:600px){
-  .input-row{flex-direction:column;}
-  .btn-go{width:100%;}
-  .prod-card{flex-direction:column;}
-  .prod-img-wrap{width:70px;height:70px;}
-  .store-price{font-size:16px;}
-  .store-actions{grid-template-columns:1fr 1fr;}
+
+
+/* ══════════════════════════════════════════════
+   ENTERPRISE RESPONSIVE DESIGN SYSTEM
+   Breakpoints:
+     xs: < 480px  (small phones)
+     sm: < 768px  (phones)
+     md: < 1024px (tablets)
+     lg: 1024px+  (desktop)
+   ══════════════════════════════════════════════ */
+
+/* ── Bottom navigation (mobile only) ── */
+.bottom-nav {
+  display: none;
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: rgba(10,10,15,0.97);
+  border-top: 1px solid var(--border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  z-index: 100;
+  padding: 8px 0 max(8px, env(safe-area-inset-bottom));
 }
+.bn-items { display: flex; justify-content: space-around; align-items: center; }
+.bn-item {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  text-decoration: none; color: var(--muted);
+  font-size: 10px; font-weight: 600; padding: 6px 20px;
+  border-radius: 10px; transition: color .2s; min-width: 64px;
+  -webkit-tap-highlight-color: transparent;
+}
+.bn-item.active, .bn-item:hover { color: var(--accent2); }
+.bn-item svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; }
+.bn-item.active svg { stroke: var(--accent); }
+
+@media (max-width: 768px) {
+  .bottom-nav { display: block; }
+  /* Add padding so content doesn't hide behind bottom nav */
+  body { padding-bottom: 70px; }
+  /* Hide desktop nav links on mobile — bottom nav replaces them */
+  .nav-btns { display: none; }
+  /* Larger touch targets */
+  button, a, input[type=text], input[type=url], input[type=password] {
+    min-height: 44px;
+  }
+  /* Better tap highlight */
+  * { -webkit-tap-highlight-color: rgba(255,107,43,0.1); }
+}
+
+@media (max-width: 480px) {
+  body { font-size: 15px; }
+}
+
+/* ── Compare: responsive ── */
+@media (max-width: 768px) {
+  #hero { padding: 28px 16px; min-height: calc(100vh - 52px - 70px); }
+  #hero h1 { font-size: clamp(1.6rem, 7vw, 2.2rem); }
+  .input-row { flex-direction: column; gap: 8px; }
+  #urlInput { font-size: 14px; border-radius: 10px; }
+  .btn-go { width: 100%; border-radius: 10px; }
+  .wrap { padding: 0 14px; }
+  .prod-card { flex-direction: column; gap: 12px; }
+  .prod-img-wrap { width: 72px; height: 72px; }
+  .store-main { padding: 12px 14px; gap: 10px; }
+  .store-price { font-size: 17px; }
+  .store-actions { grid-template-columns: 1fr 1fr; }
+  .btn-copy, .btn-visit { font-size: 13px; padding: 11px 10px; }
+  .pct-num { font-size: 34px; }
+  .steps-card { padding: 4px 14px; }
+  .step { padding: 11px 0; gap: 10px; }
+  .step-text strong { font-size: 12px; }
+  .step-text span { font-size: 10px; }
+}
+@media (max-width: 480px) {
+  #hero h1 { font-size: 1.5rem; }
+  .store-name { font-size: 13px; }
+  .store-price { font-size: 15px; }
+  .tag { font-size: 9px; padding: 2px 6px; }
+}
+
 </style>
 </head>
 <body>
@@ -190,7 +262,7 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
           <div class="pct-num" id="rpNum">0%</div>
           <div class="pct-label">Research Progress</div>
         </div>
-        <div style="font-family:'DM Mono',monospace;font-size:13px;color:var(--muted);" id="countdown">~25s</div>
+        <div style="font-size:12px;color:var(--muted);" id="countdown">Estimated time remaining: <span style="font-family:'DM Mono',monospace;font-weight:600;" id="cdTime">00:25</span></div>
       </div>
       <div class="prog-track"><div class="prog-fill" id="rpFill"></div></div>
       <div class="prog-hint" id="rpHint">Starting...</div>
@@ -388,14 +460,21 @@ async function runSearch(url){
   nextStep();
   var timer=setInterval(nextStep,1800);
 
-  // Countdown timer
+  // Countdown timer - MM:SS format
   var totalSecs=25;
   var secsLeft=totalSecs;
-  document.getElementById('countdown').textContent='~'+secsLeft+'s';
+  function fmtCd(s){return '00:'+String(Math.max(0,s)).padStart(2,'0');}
+  var cdTimeEl=document.getElementById('cdTime');
+  if(cdTimeEl)cdTimeEl.textContent=fmtCd(secsLeft);
   var cdTimer=setInterval(function(){
     secsLeft--;
-    if(secsLeft<=0){ document.getElementById('countdown').textContent='Almost done...'; clearInterval(cdTimer); return; }
-    document.getElementById('countdown').textContent='~'+secsLeft+'s';
+    if(secsLeft<=0){
+      if(cdTimeEl)cdTimeEl.textContent='00:00';
+      var cdEl=document.getElementById('countdown');
+      if(cdEl)cdEl.innerHTML='Finalising results...';
+      clearInterval(cdTimer);return;
+    }
+    if(cdTimeEl)cdTimeEl.textContent=fmtCd(secsLeft);
   },1000);
 
   var affiliateLink=url;
@@ -412,7 +491,8 @@ async function runSearch(url){
 
   clearInterval(timer);
   clearInterval(cdTimer);
-  document.getElementById('countdown').textContent='Done';
+  var cdEl2=document.getElementById('countdown');
+  if(cdEl2)cdEl2.style.display='none';
   stepIds.forEach(function(id){var el=document.getElementById(id);el.className='step-dot done';el.textContent='✓';});
   document.getElementById('rpFill').style.width='100%';
   document.getElementById('rpNum').textContent='100%';
@@ -599,8 +679,21 @@ function wireButtons(copyId,visitId,link,name,storeObj){
   }
   if(vBtn){
     vBtn.onclick=function(){
-      var l=storeObj.affiliateLink||link;
-      fetch(BACKEND+'/track/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dest:l,store:name})}).catch(function(){});
+      var l=storeObj.affiliateLink||storeObj.displayLink||link;
+      var trackUrl=BACKEND||BACKEND_PRIMARY;
+      // Track the click
+      fetch(trackUrl+'/track/click',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({dest:l,store:name})
+      }).catch(function(){
+        // Fallback to Render if laptop unavailable
+        fetch(BACKEND_FALLBACK+'/track/click',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({dest:l,store:name})
+        }).catch(function(){});
+      });
       window.open(l,'_blank');
     };
   }
@@ -661,7 +754,10 @@ function updateStoreCard(name,link){
           });
         };
         visitBtn.onclick=function(){
-          fetch(BACKEND+'/track/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dest:link,store:name})}).catch(function(){});
+          var trackUrl=BACKEND||BACKEND_PRIMARY;
+          fetch(trackUrl+'/track/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dest:link,store:name})}).catch(function(){
+            fetch(BACKEND_FALLBACK+'/track/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dest:link,store:name})}).catch(function(){});
+          });
           window.open(link,'_blank');
         };
       }
@@ -677,5 +773,13 @@ function updateStoreCard(name,link){
   });
 })();
 </script>
+
+<nav class="bottom-nav">
+  <div class="bn-items">
+    <a class="bn-item" href="index.html"><svg viewBox="0 0 24 24"><polyline points="10 3 10 10 3 10"/><path d="M14 21H5a2 2 0 0 1-2-2V5"/><path d="m21 15-5-5-4 4"/></svg>Convert</a>
+    <a class="bn-item active" href="compare.html"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>Compare</a>
+    <a class="bn-item" href="dashboard.html"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Dashboard</a>
+  </div>
+</nav>
 </body>
 </html>

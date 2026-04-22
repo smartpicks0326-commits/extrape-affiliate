@@ -103,16 +103,96 @@ tr:last-child td{border-bottom:none;}
 .b-err{color:#ff4b6e;background:rgba(255,75,110,.1);border:1px solid rgba(255,75,110,.2);}
 .empty{text-align:center;padding:24px;color:var(--muted);font-size:13px;}
 
-@media(max-width:700px){
-  .page{padding:14px 12px 40px;}
-  .stats{grid-template-columns:1fr 1fr;}
-  .date-bar{flex-direction:column;align-items:flex-start;}
-  .apply{width:100%;}
-  nav{padding:10px 14px;}
-  table{font-size:11px;}
-  .mono{max-width:140px;}
+
+
+
+/* ══════════════════════════════════════════════
+   ENTERPRISE RESPONSIVE DESIGN SYSTEM
+   Breakpoints:
+     xs: < 480px  (small phones)
+     sm: < 768px  (phones)
+     md: < 1024px (tablets)
+     lg: 1024px+  (desktop)
+   ══════════════════════════════════════════════ */
+
+/* ── Bottom navigation (mobile only) ── */
+.bottom-nav {
+  display: none;
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: rgba(10,10,15,0.97);
+  border-top: 1px solid var(--border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  z-index: 100;
+  padding: 8px 0 max(8px, env(safe-area-inset-bottom));
 }
-@media(max-width:400px){.stats{grid-template-columns:1fr;}}
+.bn-items { display: flex; justify-content: space-around; align-items: center; }
+.bn-item {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  text-decoration: none; color: var(--muted);
+  font-size: 10px; font-weight: 600; padding: 6px 20px;
+  border-radius: 10px; transition: color .2s; min-width: 64px;
+  -webkit-tap-highlight-color: transparent;
+}
+.bn-item.active, .bn-item:hover { color: var(--accent2); }
+.bn-item svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; }
+.bn-item.active svg { stroke: var(--accent); }
+
+@media (max-width: 768px) {
+  .bottom-nav { display: block; }
+  /* Add padding so content doesn't hide behind bottom nav */
+  body { padding-bottom: 70px; }
+  /* Hide desktop nav links on mobile — bottom nav replaces them */
+  .nav-btns { display: none; }
+  /* Larger touch targets */
+  button, a, input[type=text], input[type=url], input[type=password] {
+    min-height: 44px;
+  }
+  /* Better tap highlight */
+  * { -webkit-tap-highlight-color: rgba(255,107,43,0.1); }
+}
+
+@media (max-width: 480px) {
+  body { font-size: 15px; }
+}
+
+/* ── Dashboard: responsive ── */
+@media (max-width: 768px) {
+  .page { padding: 14px 12px 80px; }
+  nav { padding: 10px 14px; }
+  .nav-logo { font-size: 13px; }
+  .stats { grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+  .stat { padding: 14px 14px; }
+  .stat-val { font-size: 24px; }
+  .stat-lbl { font-size: 10px; }
+  .date-bar { flex-direction: column; align-items: stretch; gap: 8px; padding: 12px 14px; }
+  .date-in { width: 100%; }
+  .presets { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; -webkit-overflow-scrolling: touch; }
+  .preset { white-space: nowrap; flex-shrink: 0; }
+  .apply { width: 100%; margin-left: 0; }
+  .section { padding: 14px 14px; }
+  .sec-hdr { flex-wrap: wrap; gap: 6px; }
+  .bar-lbl { width: 70px; font-size: 11px; }
+  .bar-val { font-size: 11px; width: 28px; }
+  /* Tables: horizontal scroll */
+  .sec-body table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { min-width: 400px; }
+  td, th { padding: 8px 6px; font-size: 11px; }
+  .mono { max-width: 140px; font-size: 10px; }
+  .time-td { font-size: 10px; white-space: nowrap; }
+  .status-row { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .db-badge, .bat-charge, .bat-discharge, .bat-low, .bat-down { font-size: 11px; }
+}
+@media (max-width: 480px) {
+  .stats { grid-template-columns: 1fr 1fr; }
+  .stat-val { font-size: 20px; }
+  nav .live-badge { display: none; }
+}
+@media (max-width: 360px) {
+  .stats { grid-template-columns: 1fr; }
+}
+
 </style>
 </head>
 <body>
@@ -536,5 +616,13 @@ function table(headers, rows) {
   return '<table><thead><tr>' + th + '</tr></thead><tbody>' + tr + '</tbody></table>';
 }
 </script>
+
+<nav class="bottom-nav">
+  <div class="bn-items">
+    <a class="bn-item" href="index.html"><svg viewBox="0 0 24 24"><polyline points="10 3 10 10 3 10"/><path d="M14 21H5a2 2 0 0 1-2-2V5"/><path d="m21 15-5-5-4 4"/></svg>Convert</a>
+    <a class="bn-item" href="compare.html"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>Compare</a>
+    <a class="bn-item active" href="dashboard.html"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Dashboard</a>
+  </div>
+</nav>
 </body>
 </html>

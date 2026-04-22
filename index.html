@@ -399,16 +399,80 @@
       to   { transform: translateX(-50%); }
     }
   
-@media(max-width:600px){
-  nav{padding:10px 14px;}
-  .nav-btn{padding:5px 10px;font-size:11px;}
-  .hero-title,#hero h1{font-size:1.9rem !important;}
-  .input-row,form{flex-direction:column;}
-  input[type=text],input[type=url],#productUrl{width:100% !important;border-radius:10px !important;}
-  button#convertBtn,.btn-convert{width:100%;border-radius:10px !important;}
-  .result-row,.affiliate-row{flex-direction:column;gap:8px;}
-  .copy-btn,.open-btn{width:100%;}
+
+
+/* ══════════════════════════════════════════════
+   ENTERPRISE RESPONSIVE DESIGN SYSTEM
+   Breakpoints:
+     xs: < 480px  (small phones)
+     sm: < 768px  (phones)
+     md: < 1024px (tablets)
+     lg: 1024px+  (desktop)
+   ══════════════════════════════════════════════ */
+
+/* ── Bottom navigation (mobile only) ── */
+.bottom-nav {
+  display: none;
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: rgba(10,10,15,0.97);
+  border-top: 1px solid var(--border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  z-index: 100;
+  padding: 8px 0 max(8px, env(safe-area-inset-bottom));
 }
+.bn-items { display: flex; justify-content: space-around; align-items: center; }
+.bn-item {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  text-decoration: none; color: var(--muted);
+  font-size: 10px; font-weight: 600; padding: 6px 20px;
+  border-radius: 10px; transition: color .2s; min-width: 64px;
+  -webkit-tap-highlight-color: transparent;
+}
+.bn-item.active, .bn-item:hover { color: var(--accent2); }
+.bn-item svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; }
+.bn-item.active svg { stroke: var(--accent); }
+
+@media (max-width: 768px) {
+  .bottom-nav { display: block; }
+  /* Add padding so content doesn't hide behind bottom nav */
+  body { padding-bottom: 70px; }
+  /* Hide desktop nav links on mobile — bottom nav replaces them */
+  .nav-btns { display: none; }
+  /* Larger touch targets */
+  button, a, input[type=text], input[type=url], input[type=password] {
+    min-height: 44px;
+  }
+  /* Better tap highlight */
+  * { -webkit-tap-highlight-color: rgba(255,107,43,0.1); }
+}
+
+@media (max-width: 480px) {
+  body { font-size: 15px; }
+}
+
+/* ── Index: responsive ── */
+@media (max-width: 768px) {
+  header { padding: 32px 16px 0; }
+  h1 { font-size: clamp(1.8rem, 8vw, 2.4rem); margin-bottom: 12px; }
+  .subtitle { font-size: .9rem; }
+  .input-row { flex-direction: column; gap: 8px; }
+  #productUrl { font-size: 14px; padding: 14px 16px; border-radius: 10px; }
+  button#convertBtn { width: 100%; border-radius: 10px; font-size: 15px; padding: 14px; }
+  .card { padding: 18px 16px; margin: 0 0 14px; }
+  .result-link { font-size: 13px; padding: 12px 14px; }
+  .action-btns { flex-direction: column; gap: 8px; }
+  .action-btns button { width: 100%; justify-content: center; }
+  .supported-stores { gap: 6px; }
+  .store-chip { font-size: 11px; padding: 4px 8px; }
+}
+@media (max-width: 480px) {
+  header { padding: 24px 12px 0; }
+  h1 { font-size: 1.7rem; }
+  .card { padding: 14px 12px; }
+}
+
 </style>
 </head>
 <body>
@@ -753,5 +817,13 @@
   </script>
 
 <script>fetch((typeof BACKEND_URL!=='undefined'?BACKEND_URL:'https://api.smartpickdeals.live')+'/track/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:'converter'})}).catch(()=>{});</script>
+
+<nav class="bottom-nav">
+  <div class="bn-items">
+    <a class="bn-item active" href="index.html"><svg viewBox="0 0 24 24"><polyline points="10 3 10 10 3 10"/><path d="M14 21H5a2 2 0 0 1-2-2V5"/><path d="m21 15-5-5-4 4"/></svg>Convert</a>
+    <a class="bn-item" href="compare.html"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>Compare</a>
+    <a class="bn-item" href="dashboard.html"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Dashboard</a>
+  </div>
+</nav>
 </body>
 </html>

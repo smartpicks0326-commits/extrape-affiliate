@@ -964,17 +964,23 @@ app.post('/flash/compare', async (req, res) => {
 // Backfill store names for existing clicks missing store field
 app.post('/admin/backfill-stores', async (req, res) => {
   if (!dbConnected) return res.json({ ok: false, reason: 'DB not connected' });
+  const force = req.query.force === 'true';
   try {
     const clicks = await Event.find({ type: 'click' }).lean();
     let updated = 0;
+    const details = [];
     for (const c of clicks) {
       const store = detectStoreFromUrl(c.dest || '');
-      if (store && store !== c.store) {
+      // Update if: force mode, OR store is empty/blank, OR store improved
+      if (store && (force || !c.store || c.store !== store)) {
         await Event.updateOne({ _id: c._id }, { $set: { store } });
-        updated++;
+        if (store !== c.store) {
+          details.push({ dest: (c.dest||'').substring(0,50), old: c.store||'', new: store });
+          updated++;
+        }
       }
     }
-    res.json({ ok: true, total: clicks.length, updated, message: updated + ' records updated' });
+    res.json({ ok: true, total: clicks.length, updated, details: details.slice(0,20), message: updated + ' records updated' });
   } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
