@@ -139,6 +139,34 @@ const memAnalytics = {
   storeBreakdown: {}, recentConversions: [], recentClicks: [],
 };
 
+// ── Short URL → Store mapping (populated when conversions happen) ──
+// When user converts croma.com → gets bilty.co short link
+// We map bilty.co/CODE → 'Croma' so click tracking knows the store
+const shortUrlStoreMap = new Map(); // shortUrl → storeName
+
+function cacheShortUrlStore(shortUrl, store) {
+  if (shortUrl && store) {
+    shortUrlStoreMap.set(shortUrl, store);
+    // Also cache partial match (just the path code)
+    try {
+      const path = new URL(shortUrl).pathname.split('/')[1];
+      if (path) shortUrlStoreMap.set(path, store);
+    } catch(e) {}
+  }
+}
+
+function lookupShortUrlStore(url) {
+  if (!url) return '';
+  // Exact match
+  if (shortUrlStoreMap.has(url)) return shortUrlStoreMap.get(url);
+  // Partial match by path code
+  try {
+    const path = new URL(url).pathname.split('/')[1];
+    if (path && shortUrlStoreMap.has(path)) return shortUrlStoreMap.get(path);
+  } catch(e) {}
+  return '';
+}
+
 // ── SSE: declared here so all track functions can call pushDashboardUpdate ──
 const sseClients = new Set();
 function pushDashboardUpdate() {
@@ -295,7 +323,11 @@ async function trackVisit(page) {
   pushDashboardUpdate();
 }
 
-async function trackConversion(url, store, state) {
+async function trackConversion(url, store, state, affiliateLink) {
+  // Cache affiliate short URL → store mapping for click tracking
+  if (affiliateLink && store && state === 'done') {
+    cacheShortUrlStore(affiliateLink, store);
+  }
   if (dbConnected) {
     const inc = { conversions: 1 };
     if (store && state === 'done') inc['storeBreakdown.' + store] = 1;
@@ -312,37 +344,43 @@ async function trackConversion(url, store, state) {
 function detectStoreFromUrl(url) {
   if (!url) return '';
   // Direct store domains
-  if (url.includes('amazon.in') || url.includes('amzn.in') || url.includes('amzn.to')) return 'Amazon';
-  if (url.includes('flipkart.com') || url.includes('fkrt.co')) return 'Flipkart';
-  if (url.includes('myntra.com')) return 'Myntra';
-  if (url.includes('ajio.com')) return 'Ajio';
-  if (url.includes('nykaa.com')) return 'Nykaa';
-  if (url.includes('tatacliq.com')) return 'TataCliq';
+  if (url.includes('amazon.in') || url.includes('amzn.in') || url.includes('amzn.to') || url.includes('amazon.com')) return 'Amazon';
+  if (url.includes('flipkart.com') || url.includes('fkrt.co') || url.includes('dl.flipkart.com')) return 'Flipkart';
+  if (url.includes('myntra.com') || url.includes('myntr.co')) return 'Myntra';
+  if (url.includes('ajio.com') || url.includes('ajiio.co')) return 'Ajio';
+  if (url.includes('nykaa.com') || url.includes('nykaafashion.com')) return 'Nykaa';
+  if (url.includes('tatacliq.com') || url.includes('tata.cliq') || url.includes('tatacl.iq')) return 'TataCliq';
   if (url.includes('croma.com')) return 'Croma';
-  if (url.includes('snapdeal.com')) return 'Snapdeal';
-  if (url.includes('meesho.com')) return 'Meesho';
-  if (url.includes('jiomart.com')) return 'JioMart';
+  if (url.includes('snapdeal.com') || url.includes('sdl.me')) return 'Snapdeal';
+  if (url.includes('meesho.com') || url.includes('meesho.in')) return 'Meesho';
+  if (url.includes('jiomart.com') || url.includes('jiom.art')) return 'JioMart';
   if (url.includes('netmeds.com')) return 'Netmeds';
-  if (url.includes('lenskart.com')) return 'Lenskart';
-  if (url.includes('reliancedigital.in')) return 'Reliance Digital';
+  if (url.includes('lenskart.com') || url.includes('lk.ms')) return 'Lenskart';
+  if (url.includes('reliancedigital.in') || url.includes('rlnc.in')) return 'Reliance Digital';
   if (url.includes('vijaysales.com')) return 'Vijay Sales';
-  // bilty.co = ExtraPe short links for Croma + other stores
-  // Store name embedded in URL: bilty.co/CODE+StoreName+ProductName
-  if (url.includes('bilty.co')) {
+  if (url.includes('shopclues.com')) return 'ShopClues';
+  if (url.includes('paytmmall.com')) return 'Paytm Mall';
+  if (url.includes('bigbasket.com')) return 'BigBasket';
+
+  // ExtraPe short link domains — store name embedded in URL path
+  if (url.includes('bilty.co') || url.includes('ajiio.co') || url.includes('cliq.ly') || url.includes('myntr.co')) {
     const u = url.toLowerCase();
-    if (u.includes('croma'))    return 'Croma';
-    if (u.includes('myntra'))   return 'Myntra';
-    if (u.includes('ajio'))     return 'Ajio';
-    if (u.includes('nykaa'))    return 'Nykaa';
-    if (u.includes('tatacliq') || u.includes('tata+cliq')) return 'TataCliq';
-    if (u.includes('snapdeal')) return 'Snapdeal';
-    if (u.includes('meesho'))   return 'Meesho';
-    if (u.includes('jiomart'))  return 'JioMart';
-    if (u.includes('netmeds'))  return 'Netmeds';
-    if (u.includes('lenskart')) return 'Lenskart';
-    if (u.includes('reliance')) return 'Reliance Digital';
-    if (u.includes('vijay'))    return 'Vijay Sales';
-    return 'Croma'; // bilty.co primarily used for Croma by ExtraPe
+    if (u.includes('croma'))              return 'Croma';
+    if (u.includes('ajio') || url.includes('ajiio.co')) return 'Ajio';
+    if (u.includes('myntra'))             return 'Myntra';
+    if (u.includes('nykaa'))              return 'Nykaa';
+    if (u.includes('tatacliq') || u.includes('tata+cliq') || u.includes('tata cliq')) return 'TataCliq';
+    if (u.includes('snapdeal'))           return 'Snapdeal';
+    if (u.includes('meesho'))             return 'Meesho';
+    if (u.includes('jiomart'))            return 'JioMart';
+    if (u.includes('netmeds'))            return 'Netmeds';
+    if (u.includes('lenskart'))           return 'Lenskart';
+    if (u.includes('reliance'))           return 'Reliance Digital';
+    if (u.includes('vijay'))              return 'Vijay Sales';
+    if (u.includes('flipkart'))           return 'Flipkart';
+    if (u.includes('amazon'))            return 'Amazon';
+    if (url.includes('bilty.co'))         return 'Croma'; // bilty.co = primarily Croma
+    if (url.includes('ajiio.co'))         return 'Ajio';  // ajiio.co = Ajio
   }
   return '';
 }
@@ -350,7 +388,8 @@ function detectStoreFromUrl(url) {
 
 async function trackClick(dest, store) {
   const d = (dest || 'unknown').substring(0, 300);
-  const s = store || detectStoreFromUrl(d) || '';  // auto-detect from URL
+  // Try: explicit store → cached short URL map → URL detection
+  const s = store || lookupShortUrlStore(d) || detectStoreFromUrl(d) || '';
   if (dbConnected) {
     await Counter.updateOne({ _id: 'main' }, { $inc: { clicks: 1 } })
       .catch(e => console.error('[DB] trackClick:', e.message));
@@ -456,10 +495,10 @@ async function processQueue() {
       req.affiliateLink = req.displayLink = result;
     }
     req.state = 'done';
-    trackConversion(req.url, req.store, 'done');
+    trackConversion(req.url, req.store, 'done', req.affiliateLink);
   } catch(e) {
     req.state = 'error'; req.error = e.message;
-    trackConversion(req.url, req.store, 'error');
+    trackConversion(req.url, req.store, 'error', null);
     console.error('Queue error:', e.message);
   } finally {
     processing = false; processQueue();

@@ -119,7 +119,7 @@ section{position:relative;z-index:1;}
 
 /* Action buttons - flash.co style: full width bottom row */
 .store-actions{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--border);}
-.btn-copy,.btn-visit{font-family:'Inter',sans-serif;font-weight:700;font-size:13px;padding:12px;cursor:pointer;border:none;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:6px;}
+.btn-copy,.btn-visit{font-family:'Inter',sans-serif;font-weight:600;font-size:12px;padding:9px 12px;cursor:pointer;border:none;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px;letter-spacing:.01em;}
 .btn-copy{background:transparent;color:var(--muted);border-right:1px solid var(--border);}
 .btn-copy:hover{background:rgba(255,255,255,.04);color:var(--text);}
 .btn-copy.ok{color:var(--success);}
@@ -159,7 +159,7 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
 <!-- HERO -->
 <section id="hero">
   <h1>Compare Prices.<br/><em>Save More.</em></h1>
-  <p>Paste any product link. We compare prices across Amazon, Flipkart, Myntra, Croma and 200+ stores. We compare prices instantly.</p>
+  <p>Paste any product link. We compare prices across Amazon, Flipkart, Myntra, Croma and 200+ stores — with links ready to use.</p>
   <div class="input-wrap">
     <div class="input-row">
       <input id="urlInput" type="text" placeholder="Paste Amazon, Flipkart, Croma link..." autocomplete="off"/>
@@ -185,9 +185,12 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
       </div>
     </div>
     <div class="progress-card">
-      <div class="pct-row">
-        <div class="pct-num" id="rpNum">0%</div>
-        <div class="pct-label">Research Progress</div>
+      <div class="pct-row" style="justify-content:space-between;display:flex;align-items:baseline;">
+        <div style="display:flex;align-items:baseline;gap:8px;">
+          <div class="pct-num" id="rpNum">0%</div>
+          <div class="pct-label">Research Progress</div>
+        </div>
+        <div style="font-family:'DM Mono',monospace;font-size:13px;color:var(--muted);" id="countdown">~25s</div>
       </div>
       <div class="prog-track"><div class="prog-fill" id="rpFill"></div></div>
       <div class="prog-hint" id="rpHint">Starting...</div>
@@ -385,6 +388,16 @@ async function runSearch(url){
   nextStep();
   var timer=setInterval(nextStep,1800);
 
+  // Countdown timer
+  var totalSecs=25;
+  var secsLeft=totalSecs;
+  document.getElementById('countdown').textContent='~'+secsLeft+'s';
+  var cdTimer=setInterval(function(){
+    secsLeft--;
+    if(secsLeft<=0){ document.getElementById('countdown').textContent='Almost done...'; clearInterval(cdTimer); return; }
+    document.getElementById('countdown').textContent='~'+secsLeft+'s';
+  },1000);
+
   var affiliateLink=url;
   var compareData=null;
 
@@ -398,6 +411,8 @@ async function runSearch(url){
   }catch(e){console.error('[Compare] error:',e);}
 
   clearInterval(timer);
+  clearInterval(cdTimer);
+  document.getElementById('countdown').textContent='Done';
   stepIds.forEach(function(id){var el=document.getElementById(id);el.className='step-dot done';el.textContent='✓';});
   document.getElementById('rpFill').style.width='100%';
   document.getElementById('rpNum').textContent='100%';
@@ -561,7 +576,7 @@ function renderList(id,stores){
       '</div>'+
       (s.affiliateLoading?'<div class="aff-status" id="'+affStatusId+'">⏳ Generating affiliate link...</div>':'')+
       '<div class="store-actions">'+
-        '<button class="btn-copy" id="'+copyId+'">📋 Copy Link</button>'+
+        '<button class="btn-copy" id="'+copyId+'">Copy</button>'+
         '<button class="btn-visit" id="'+visitId+'">Open ↗</button>'+
       '</div>';
 
@@ -578,7 +593,7 @@ function wireButtons(copyId,visitId,link,name,storeObj){
       var l=storeObj.affiliateLink||link;
       navigator.clipboard.writeText(l).then(function(){
         cBtn.textContent='✅ Copied!';cBtn.classList.add('ok');
-        setTimeout(function(){cBtn.innerHTML='📋 Copy Link';cBtn.classList.remove('ok');},2500);
+        setTimeout(function(){cBtn.textContent='Copy';cBtn.classList.remove('ok');},2500);
       });
     };
   }
@@ -642,7 +657,7 @@ function updateStoreCard(name,link){
         copyBtn.onclick=function(){
           navigator.clipboard.writeText(link).then(function(){
             copyBtn.textContent='✅ Copied!';copyBtn.classList.add('ok');
-            setTimeout(function(){copyBtn.innerHTML='📋 Copy Link';copyBtn.classList.remove('ok');},2500);
+            setTimeout(function(){copyBtn.textContent='Copy';copyBtn.classList.remove('ok');},2500);
           });
         };
         visitBtn.onclick=function(){
