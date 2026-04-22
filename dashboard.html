@@ -308,16 +308,11 @@ function connectSSE() {
       try {
         var d = JSON.parse(e.data);
         if (!d || d.type === 'connected') return;
-        if (d.pageVisits  !== undefined) document.getElementById('sV').textContent = fmt(d.pageVisits);
-        if (d.conversions !== undefined) document.getElementById('sC').textContent = fmt(d.conversions);
-        if (d.clicks      !== undefined) document.getElementById('sK').textContent = fmt(d.clicks);
-        if (d.compares    !== undefined) document.getElementById('sQ').textContent = fmt(d.compares);
-        if (cache) {
-          if (d.pageVisits  !== undefined) cache.pageVisits  = d.pageVisits;
-          if (d.conversions !== undefined) cache.conversions = d.conversions;
-          if (d.clicks      !== undefined) cache.clicks      = d.clicks;
-          if (d.compares    !== undefined) cache.compares    = d.compares;
-        }
+        // SSE tells us something changed — trigger a fresh load with current date range
+        // This keeps date-filtered stats accurate (7d, 30d, today etc)
+        // Debounce: don't fire more than once per 2s
+        if (sseConn._debounce) clearTimeout(sseConn._debounce);
+        sseConn._debounce = setTimeout(loadData, 500);
       } catch(err) {}
     };
 

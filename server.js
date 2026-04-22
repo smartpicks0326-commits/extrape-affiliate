@@ -258,21 +258,29 @@ async function syncFromRender() {
 // Run sync 5 seconds after startup (gives DB time to connect)
 setTimeout(syncFromRender, 5000);
 
-// Backfill store names for any events missing store field on startup
+// Backfill ALL click events with store names (runs after DB connects)
 async function backfillStoresOnStart() {
-  if (!dbConnected) return;
+  // Wait until DB is connected (poll every 2s, max 30s)
+  for (let i = 0; i < 15; i++) {
+    if (dbConnected) break;
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  if (!dbConnected) return console.log('[Backfill] Skipped — DB not connected');
   try {
-    await new Promise(r => setTimeout(r, 8000)); // wait for DB ready
-    const clicks = await Event.find({ type: 'click', $or: [{ store: '' }, { store: null }, { store: { $exists: false } }] }).lean();
+    // Find ALL clicks and update store if missing or wrong
+    const clicks = await Event.find({ type: 'click' }).lean();
     let updated = 0;
     for (const c of clicks) {
       const store = detectStoreFromUrl(c.dest || '');
-      if (store) { await Event.updateOne({ _id: c._id }, { $set: { store } }); updated++; }
+      if (store && store !== c.store) {
+        await Event.updateOne({ _id: c._id }, { $set: { store } });
+        updated++;
+      }
     }
-    if (updated > 0) console.log('[Startup] Backfilled store names for', updated, 'clicks');
-  } catch(e) {}
+    console.log('[Startup] Backfilled store names: checked', clicks.length, '| updated', updated);
+  } catch(e) { console.log('[Backfill] Error:', e.message); }
 }
-setTimeout(backfillStoresOnStart, 3000);
+setTimeout(backfillStoresOnStart, 5000);
 
 // ── Track functions ──
 async function trackVisit(page) {
