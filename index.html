@@ -440,6 +440,7 @@
   body { padding-bottom: 70px; }
   /* Hide desktop nav links on mobile — bottom nav replaces them */
   .nav-btns { display: none; }
+  .desktop-nav-btns { display: none !important; }
   /* Larger touch targets */
   button, a, input[type=text], input[type=url], input[type=password] {
     min-height: 44px;
@@ -461,9 +462,34 @@
   #productUrl { font-size: 14px; padding: 14px 16px; border-radius: 10px; }
   button#convertBtn { width: 100%; border-radius: 10px; font-size: 15px; padding: 14px; }
   .card { padding: 18px 16px; margin: 0 0 14px; }
-  .result-link { font-size: 13px; padding: 12px 14px; }
-  .action-btns { flex-direction: column; gap: 8px; }
-  .action-btns button { width: 100%; justify-content: center; }
+  /* Result link: wrap cleanly on mobile */
+  .result-box {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .result-link {
+    font-size: 12px;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    line-height: 1.6;
+    white-space: normal;
+    min-width: 0;
+    flex: none;
+    width: 100%;
+  }
+  .result-actions-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: nowrap;
+  }
+  .result-actions-row button {
+    flex: 1;
+    justify-content: center;
+    font-size: 13px;
+    padding: 11px 8px;
+  }
+  #shareBtn { flex: 0 0 auto; }
   .supported-stores { gap: 6px; }
   .store-chip { font-size: 11px; padding: 4px 8px; }
 }
@@ -473,6 +499,67 @@
   .card { padding: 14px 12px; }
 }
 
+
+/* ── Mobile: result URL display ── */
+@media (max-width: 768px) {
+  .result-box {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .result-link {
+    font-size: 13px;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    text-align: left;
+  }
+  .result-actions-row {
+    display: flex;
+    gap: 8px;
+  }
+  .result-actions-row button {
+    flex: 1;
+    justify-content: center;
+  }
+  button#copyBtn, button#openBtn, button#shareBtn {
+    width: 100%;
+    min-height: 44px;
+    font-size: 14px;
+  }
+}
+
+
+/* ── Mobile result box: URL full width, buttons below ── */
+@media (max-width: 768px) {
+  .result-box {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 14px 14px;
+  }
+  .result-link {
+    font-size: 13px;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    line-height: 1.6;
+    width: 100%;
+  }
+  .result-actions-row {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+  }
+  .result-actions-row button {
+    flex: 1;
+    justify-content: center;
+    min-height: 44px;
+    font-size: 13px !important;
+    padding: 10px 12px !important;
+  }
+  #shareBtn { flex: 0 0 auto !important; min-width: 80px; }
+}
 </style>
 </head>
 <body>
@@ -480,9 +567,9 @@
   <!-- NAV -->
   <nav style="position:relative;z-index:10;display:flex;align-items:center;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--border);background:rgba(10,10,15,.9);backdrop-filter:blur(12px);width:100%;">
     <span style="font-size:16px;font-weight:800;color:var(--text);">Smart Pick <span style="background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Deals</span></span>
-    <div style="display:flex;gap:8px;">
-      <a href="index.html" style="font-family:'Inter',sans-serif;font-size:12px;font-weight:700;padding:8px 16px;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:5px;background:var(--accent);color:#fff;border:1px solid var(--accent);box-shadow:0 4px 16px rgba(255,107,43,.25);">🔗 Convert Link</a>
-      <a href="compare.html" style="font-family:'Inter',sans-serif;font-size:12px;font-weight:700;padding:8px 16px;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--muted);border:1px solid var(--border);">📊 Compare Prices</a>
+    <div class="nav-btns desktop-only">
+      <a class="nav-btn nb-fill" href="index.html">🔗 Convert</a>
+      <a class="nav-btn nb-out" href="compare.html">📊 Compare</a>
     </div>
   </nav>
 
@@ -545,8 +632,11 @@
         <div class="result-label">Link ready</div>
         <div class="result-box">
           <span class="result-link" id="affiliateLink"></span>
-          <button id="copyBtn" onclick="copyLink()">Copy</button>
-          <button id="openBtn" onclick="openLink()" style="background:rgba(255,107,43,0.12);color:var(--accent2);border:1px solid rgba(255,107,43,0.25);font-family:'Inter',sans-serif;font-weight:600;font-size:12px;padding:8px 16px;border-radius:8px;cursor:pointer;white-space:nowrap;transition:background 0.2s;flex-shrink:0;">Open ↗</button>
+          <div class="result-actions-row">
+            <button id="shareBtn" onclick="shareLink()" style="display:none;background:rgba(255,107,43,0.12);color:var(--accent2);border:1px solid rgba(255,107,43,0.25);font-family:'Inter',sans-serif;font-weight:600;font-size:12px;padding:8px 16px;border-radius:8px;cursor:pointer;white-space:nowrap;transition:background .2s;flex-shrink:0;">⬆ Share</button>
+            <button id="copyBtn" onclick="copyLink()">Copy</button>
+            <button id="openBtn" onclick="openLink()" style="background:rgba(255,107,43,0.12);color:var(--accent2);border:1px solid rgba(255,107,43,0.25);font-family:'Inter',sans-serif;font-weight:600;font-size:12px;padding:8px 16px;border-radius:8px;cursor:pointer;white-space:nowrap;transition:background 0.2s;flex-shrink:0;">Open ↗</button>
+          </div>
         </div>
       </div>
 
@@ -793,6 +883,26 @@
       });
     }
 
+    // Show share button only if Web Share API is available
+    if (navigator.share) {
+      const shareBtn = document.getElementById('shareBtn');
+      if (shareBtn) shareBtn.style.display = '';
+    }
+
+    async function shareUrl(url,title){if(navigator.share){navigator.share({title:title||"Smart Pick Deals",url:url}).catch(function(e){if(e.name!=="AbortError")console.log(e);});}else{navigator.clipboard.writeText(url).then(function(){alert("Link copied!");});}}
+
+    function shareLink() {
+      const el  = document.getElementById('affiliateLink');
+      const url = el.dataset.clickUrl || el.textContent.trim();
+      const title = document.getElementById('storeDetected')?.textContent || 'Smart Pick Deals';
+      try {
+        await navigator.share({ title: title + ' — Best Deal', url });
+      } catch(e) {
+        // Fallback to copy if share cancelled
+        if (e.name !== 'AbortError') copyLink();
+      }
+    }
+
     function openLink() {
       const el       = document.getElementById('affiliateLink');
       const clickUrl = el.dataset.clickUrl || el.textContent.trim();
@@ -820,9 +930,14 @@
 
 <nav class="bottom-nav">
   <div class="bn-items">
-    <a class="bn-item active" href="index.html"><svg viewBox="0 0 24 24"><polyline points="10 3 10 10 3 10"/><path d="M14 21H5a2 2 0 0 1-2-2V5"/><path d="m21 15-5-5-4 4"/></svg>Convert</a>
-    <a class="bn-item" href="compare.html"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>Compare</a>
-    <a class="bn-item" href="dashboard.html"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Dashboard</a>
+    <a class="bn-item active" href="index.html">
+      <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      Convert
+    </a>
+    <a class="bn-item " href="compare.html">
+      <svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+      Compare
+    </a>
   </div>
 </nav>
 </body>

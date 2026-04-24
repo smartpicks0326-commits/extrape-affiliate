@@ -13,7 +13,8 @@
   --text:#f0ede8;--muted:#6b6878;
   --success:#29d87a;--error:#ff4b6e;
 }
-body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;}
+html,body{max-width:100%;overflow-x:hidden;}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;width:100%;max-width:100vw;}
 body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:48px 48px;opacity:.35;pointer-events:none;z-index:0;}
 body::after{content:'';position:fixed;top:-200px;left:50%;transform:translateX(-50%);width:700px;height:500px;background:radial-gradient(ellipse,rgba(255,107,43,.1) 0%,transparent 70%);pointer-events:none;z-index:0;}
 
@@ -28,16 +29,16 @@ nav{position:relative;z-index:10;display:flex;align-items:center;justify-content
 .nb-fill:hover{background:var(--accent2);}
 
 section{position:relative;z-index:1;}
-.wrap{max-width:600px;margin:0 auto;padding:0 20px;}
+.wrap{max-width:600px;margin:0 auto;padding:0 20px;box-sizing:border-box;width:100%;}
 
 /* HERO */
-#hero{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:calc(100vh - 52px);text-align:center;padding:40px 20px;}
+#hero{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:calc(100vh - 52px);text-align:center;padding:40px 20px;overflow-x:hidden;width:100%;}
 #hero h1{font-size:clamp(1.8rem,5vw,3rem);font-weight:800;line-height:1.1;letter-spacing:-.03em;margin-bottom:12px;}
 #hero h1 em{font-style:normal;color:var(--accent);}
 #hero p{color:var(--muted);font-size:.9rem;max-width:420px;margin:0 auto 24px;line-height:1.6;}
-.input-wrap{width:100%;max-width:580px;}
-.input-row{display:flex;gap:10px;width:100%;}
-#urlInput{flex:1;background:var(--surface);border:1.5px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:13px;padding:13px 18px;border-radius:12px;outline:none;transition:border-color .2s;}
+.input-wrap{width:100%;max-width:580px;box-sizing:border-box;}
+.input-row{display:flex;gap:10px;width:100%;min-width:0;}
+#urlInput{flex:1;min-width:0;width:100%;max-width:100%;background:var(--surface);border:1.5px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:16px;padding:13px 18px;border-radius:12px;outline:none;transition:border-color .2s;-webkit-appearance:none;box-sizing:border-box;}
 #urlInput:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(255,107,43,.1);}
 #urlInput::placeholder{color:var(--muted);}
 .btn-go{background:var(--accent);color:#fff;border:none;font-family:'Inter',sans-serif;font-weight:700;font-size:14px;padding:13px 24px;border-radius:12px;cursor:pointer;white-space:nowrap;transition:background .2s;box-shadow:0 4px 18px rgba(255,107,43,.28);}
@@ -47,7 +48,7 @@ section{position:relative;z-index:1;}
 .flash-tip small{color:var(--muted);font-size:11px;display:block;margin-top:2px;}
 
 /* LOADING */
-#loading{display:none;padding:40px 0 60px;}
+#loading{display:none;padding:40px 0 60px;overflow-x:hidden;}
 .src-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 18px;margin-bottom:14px;display:flex;align-items:center;gap:12px;}
 .src-logo{width:40px;height:40px;border-radius:10px;background:rgba(255,255,255,.06);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;font-size:16px;font-weight:800;}
 .src-logo img{width:26px;height:26px;object-fit:contain;}
@@ -217,12 +218,24 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
   .tag { font-size: 9px; padding: 2px 6px; }
 }
 
+
+/* ── Prevent horizontal overflow on mobile ── */
+html, body { max-width: 100vw; overflow-x: hidden; }
+.wrap { max-width: 100%; overflow: hidden; }
+#urlInput {
+  max-width: 100%;
+  min-width: 0;
+  /* Prevent zoom on focus in iOS */
+  font-size: 16px !important;
+}
+#hero { overflow: hidden; }
+.input-wrap, .input-row { max-width: 100%; }
 </style>
 </head>
 <body>
 <nav>
   <a class="logo" href="index.html">Smart Pick <em>Deals</em></a>
-  <div class="nav-btns">
+  <div class="nav-btns desktop-only">
     <a class="nav-btn nb-out" href="index.html">🔗 Convert</a>
     <a class="nav-btn nb-fill" href="compare.html">📊 Compare</a>
   </div>
@@ -681,20 +694,15 @@ function wireButtons(copyId,visitId,link,name,storeObj){
     vBtn.onclick=function(){
       var l=storeObj.affiliateLink||storeObj.displayLink||link;
       var trackUrl=BACKEND||BACKEND_PRIMARY;
-      // Track the click
-      fetch(trackUrl+'/track/click',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({dest:l,store:name})
-      }).catch(function(){
-        // Fallback to Render if laptop unavailable
-        fetch(BACKEND_FALLBACK+'/track/click',{
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({dest:l,store:name})
-        }).catch(function(){});
+      fetch(trackUrl+'/track/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dest:l,store:name})}).catch(function(){
+        fetch(BACKEND_FALLBACK+'/track/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dest:l,store:name})}).catch(function(){});
       });
-      window.open(l,'_blank');
+      // Use Web Share API on mobile if available
+      if(navigator.share && /Mobi|Android/i.test(navigator.userAgent)){
+        navigator.share({title:name+' — Best Price',url:l}).catch(function(){window.open(l,'_blank');});
+      } else {
+        window.open(l,'_blank');
+      }
     };
   }
 }
@@ -776,9 +784,14 @@ function updateStoreCard(name,link){
 
 <nav class="bottom-nav">
   <div class="bn-items">
-    <a class="bn-item" href="index.html"><svg viewBox="0 0 24 24"><polyline points="10 3 10 10 3 10"/><path d="M14 21H5a2 2 0 0 1-2-2V5"/><path d="m21 15-5-5-4 4"/></svg>Convert</a>
-    <a class="bn-item active" href="compare.html"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>Compare</a>
-    <a class="bn-item" href="dashboard.html"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Dashboard</a>
+    <a class="bn-item " href="index.html">
+      <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      Convert
+    </a>
+    <a class="bn-item active" href="compare.html">
+      <svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+      Compare
+    </a>
   </div>
 </nav>
 </body>
