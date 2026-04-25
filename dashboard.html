@@ -17,8 +17,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:48px 48px;opacity:.25;pointer-events:none;z-index:0;}
 
 /* LOGIN */
-#loginWrap{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100;}
-.login-box{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:40px;width:320px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.6);}
+#loginWrap{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px;box-sizing:border-box;}
+.login-box{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:32px 24px;width:min(320px,100%);text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.6);}
 .login-logo{font-size:24px;font-weight:800;margin-bottom:6px;}
 .login-logo em{font-style:normal;color:var(--accent);}
 .login-sub{font-size:13px;color:var(--muted);margin-bottom:24px;}
@@ -142,7 +142,6 @@ tr:last-child td{border-bottom:none;}
 @media (max-width: 768px) {
   .bottom-nav { display: block; }
   /* Add padding so content doesn't hide behind bottom nav */
-  body { padding-bottom: 70px; }
   /* Hide desktop nav links on mobile — bottom nav replaces them */
   .nav-btns { display: none; }
   /* Larger touch targets */
@@ -158,7 +157,14 @@ tr:last-child td{border-bottom:none;}
 }
 
 /* ── Dashboard: responsive ── */
+/* No bottom nav on dashboard - override shared body padding */
+body { padding-bottom: 0 !important; }
 @media (max-width: 768px) {
+  body { padding-bottom: 0 !important; }
+  .login-box { padding: 24px 20px; border-radius: 16px; }
+  .login-pwd, .login-go { font-size: 16px; } /* prevent iOS zoom */
+  #loginWrap { padding: 0; }
+  .login-box { width: calc(100vw - 32px); max-width: 320px; padding: 28px 20px; }
   .page { padding: 14px 12px 80px; }
   nav { padding: 10px 14px; }
   .nav-logo { font-size: 13px; }
@@ -621,7 +627,6 @@ function table(headers, rows) {
   <div class="bn-items">
     <a class="bn-item" href="index.html"><svg viewBox="0 0 24 24"><polyline points="10 3 10 10 3 10"/><path d="M14 21H5a2 2 0 0 1-2-2V5"/><path d="m21 15-5-5-4 4"/></svg>Convert</a>
     <a class="bn-item" href="compare.html"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>Compare</a>
-    <a class="bn-item active" href="dashboard.html"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Dashboard</a>
   </div>
 </nav>
 </body>

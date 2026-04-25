@@ -401,6 +401,12 @@
   
 
 
+.nav-btn{font-family:'Inter',sans-serif;font-size:12px;font-weight:700;padding:7px 14px;border-radius:8px;text-decoration:none;transition:all .2s;}
+.nb-out{color:var(--muted);border:1px solid var(--border);background:transparent;}
+.nb-out:hover{color:var(--text);}
+.nb-fill{background:var(--accent);color:#fff;border:1px solid transparent;}
+.nb-fill:hover{background:var(--accent2);}
+
 /* ══════════════════════════════════════════════
    ENTERPRISE RESPONSIVE DESIGN SYSTEM
    Breakpoints:
@@ -891,7 +897,7 @@
 
     async function shareUrl(url,title){if(navigator.share){navigator.share({title:title||"Smart Pick Deals",url:url}).catch(function(e){if(e.name!=="AbortError")console.log(e);});}else{navigator.clipboard.writeText(url).then(function(){alert("Link copied!");});}}
 
-    function shareLink() {
+    async function shareLink() {
       const el  = document.getElementById('affiliateLink');
       const url = el.dataset.clickUrl || el.textContent.trim();
       const title = document.getElementById('storeDetected')?.textContent || 'Smart Pick Deals';
