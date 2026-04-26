@@ -1264,7 +1264,7 @@ app.get('/compare/search', async (req, res) => {
 
   try {
     console.log('[Compare] URL:', url);
-    trackCompareEvent(url, '').catch(() => {});
+    // Note: tracking handled by /track/compare endpoint called from frontend
 
     // Get title
     const title = await fetchTitle(url);
