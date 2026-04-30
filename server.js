@@ -523,28 +523,225 @@ async function fetchTitle(url) {
 
 function normalizeStore(s) {
   s = (s||'').toLowerCase();
-  if (s.includes('amazon'))   return 'Amazon';
-  if (s.includes('flipkart')) return 'Flipkart';
-  if (s.includes('myntra'))   return 'Myntra';
-  if (s.includes('ajio'))     return 'Ajio';
-  if (s.includes('nykaa'))    return 'Nykaa';
-  if (s.includes('tatacliq') || s.includes('tata cliq')) return 'TataCliq';
-  if (s.includes('croma'))    return 'Croma';
-  if (s.includes('snapdeal')) return 'Snapdeal';
+  if (s.includes('amazon'))                                    return 'Amazon';
+  if (s.includes('flipkart'))                                  return 'Flipkart';
+  if (s.includes('myntra'))                                    return 'Myntra';
+  if (s.includes('ajio'))                                      return 'Ajio';
+  if (s.includes('nykaa'))                                     return 'Nykaa';
+  if (s.includes('tatacliq') || s.includes('tata cliq'))      return 'TataCliq';
+  if (s.includes('croma'))                                     return 'Croma';
+  if (s.includes('snapdeal'))                                  return 'Snapdeal';
+  if (s.includes('meesho'))                                    return 'Meesho';
+  if (s.includes('jiomart') || s.includes('jio mart'))        return 'JioMart';
+  if (s.includes('reliance digital') || s.includes('reliancedigital')) return 'Reliance Digital';
+  if (s.includes('vijay sales') || s.includes('vijaysales'))  return 'Vijay Sales';
+  if (s.includes('netmeds'))                                   return 'Netmeds';
+  if (s.includes('lenskart'))                                  return 'Lenskart';
+  if (s.includes('pepperfry'))                                 return 'Pepperfry';
+  if (s.includes('firstcry'))                                  return 'FirstCry';
+  if (s.includes('bigbasket'))                                 return 'BigBasket';
   return '';
 }
 
 function storeSearchUrl(store, q) {
   const eq = encodeURIComponent(q);
-  if (store==='Amazon')   return 'https://www.amazon.in/s?k='+eq;
-  if (store==='Flipkart') return 'https://www.flipkart.com/search?q='+eq;
-  if (store==='Myntra')   return 'https://www.myntra.com/'+eq;
-  if (store==='Ajio')     return 'https://www.ajio.com/search/?text='+eq;
-  if (store==='Nykaa')    return 'https://www.nykaa.com/search/result/?q='+eq;
-  if (store==='TataCliq') return 'https://www.tatacliq.com/search/?text='+eq;
-  if (store==='Croma')    return 'https://www.croma.com/searchB?q='+eq;
-  if (store==='Snapdeal') return 'https://www.snapdeal.com/search?keyword='+eq;
-  return 'https://www.google.com/search?q='+eq;
+  if (store==='Amazon')           return 'https://www.amazon.in/s?k='+eq;
+  if (store==='Flipkart')         return 'https://www.flipkart.com/search?q='+eq;
+  if (store==='Myntra')           return 'https://www.myntra.com/'+eq;
+  if (store==='Ajio')             return 'https://www.ajio.com/search/?text='+eq;
+  if (store==='Nykaa')            return 'https://www.nykaa.com/search/result/?q='+eq;
+  if (store==='TataCliq')         return 'https://www.tatacliq.com/search/?text='+eq;
+  if (store==='Croma')            return 'https://www.croma.com/searchB?q='+eq;
+  if (store==='Snapdeal')         return 'https://www.snapdeal.com/search?keyword='+eq;
+  if (store==='Meesho')           return 'https://www.meesho.com/search?q='+eq;
+  if (store==='JioMart')          return 'https://www.jiomart.com/search?q='+eq;
+  if (store==='Reliance Digital') return 'https://www.reliancedigital.in/search?q='+eq;
+  if (store==='Vijay Sales')      return 'https://www.vijaysales.com/search/'+eq;
+  if (store==='Netmeds')          return 'https://www.netmeds.com/catalogsearch/result?q='+eq;
+  if (store==='Lenskart')         return 'https://www.lenskart.com/search/?q='+eq;
+  return 'https://www.google.com/search?q=site:'+encodeURIComponent(store.toLowerCase()+'.com')+'+'+eq;
+}
+
+// ══════════════════════════════════════════════════════════════
+// BUYHATKE integration
+// No API key required. Works from Indian residential IP (laptop).
+// Extension API: api.buyhatke.com/mw/papi/v1/product/info
+// ══════════════════════════════════════════════════════════════
+
+// Fetch price comparison data from Buyhatke's extension API.
+// Buyhatke returns prices + direct store URLs for the same product.
+async function fetchBuyhatke(productUrl) {
+  // Primary endpoint used by Buyhatke browser extension
+  const apiUrl = 'https://api.buyhatke.com/mw/papi/v1/product/info'
+    + '?url=' + encodeURIComponent(productUrl)
+    + '&appId=bhk-web-ext&v=1';
+
+  console.log('[Buyhatke] Calling:', apiUrl.substring(0, 120));
+  const r = await fetch(apiUrl, {
+    headers: {
+      'Accept': 'application/json, */*',
+      'Accept-Language': 'en-IN,en;q=0.9',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+      'Referer': 'https://buyhatke.com/',
+      'Origin': 'https://buyhatke.com',
+    },
+    signal: AbortSignal.timeout(15000),
+  });
+
+  if (!r.ok) throw new Error('Buyhatke HTTP ' + r.status);
+  const data = await r.json();
+
+  // Log top-level keys so we can see the real shape in PM2 logs
+  console.log('[Buyhatke] Status:', data.status || data.statusMsg || '?',
+    '| Top keys:', Object.keys(data).join(', '));
+
+  // Accept status === 1 OR statusMsg === 'success' (API varies)
+  const ok = data.status === 1 || data.status === 'success' ||
+    (data.statusMsg && data.statusMsg.toLowerCase().includes('success'));
+  if (!ok) throw new Error('Buyhatke status not OK: ' + JSON.stringify(data).substring(0, 120));
+
+  return data;
+}
+
+// Parse Buyhatke response into the same stores[] shape used by the rest of the system.
+// The API has changed field names before — we try all known shapes defensively.
+function parseBuyhatkeResponse(data, inputUrl, srcStore) {
+  // Unwrap envelope
+  const d = data.data || data.result || data;
+
+  // ── Product info ──
+  const pi = d.productInfo || d.product || d;
+  const productName  = pi.name || pi.title || pi.productName || pi.product_name || '';
+  const productImage = pi.image || pi.imageUrl || pi.img || pi.thumbnail || pi.productImage || '';
+
+  // ── Price list — try all known field names ──
+  const rawItems = d.priceList || d.stores || d.storeList || d.prices
+    || d.pricelist || d.offer_stores || d.offerList || [];
+
+  console.log('[Buyhatke] Raw items:', rawItems.length,
+    rawItems.length > 0 ? '| Sample: ' + JSON.stringify(rawItems[0]).substring(0,150) : '');
+
+  const storeMap = {};
+
+  rawItems.forEach(item => {
+    // Store name — try every possible field name
+    const rawName = item.storeName || item.store_name || item.name
+      || item.store || item.merchant || item.retailer || '';
+    const name = normalizeStore(rawName);
+    if (!name) {
+      console.log('[Buyhatke] Unrecognised store skipped:', rawName);
+      return;
+    }
+
+    // Price — try every possible field name, strip commas/currency symbols
+    const rawPrice = item.storePrice || item.store_price || item.price
+      || item.offerPrice || item.offer_price || item.sellingPrice
+      || item.selling_price || item.mrp || 0;
+    const price = parseFloat(String(rawPrice).replace(/[^0-9.]/g, '')) || 0;
+    if (price <= 0) return;
+
+    // Product URL — direct link to product page on that store
+    const url = item.productURL || item.product_url || item.productUrl
+      || item.url || item.link || item.buyUrl || item.buy_url || '';
+    if (!url || !url.startsWith('http')) return;
+
+    // Keep only lowest price per store
+    if (!storeMap[name] || price < storeMap[name].price) {
+      storeMap[name] = { name, normalizedName: name, price, url };
+    }
+  });
+
+  // Sort by price ascending, flag best + source
+  const stores = Object.values(storeMap)
+    .sort((a, b) => a.price - b.price)
+    .map((s, i) => ({ ...s, isBest: i === 0, isSource: s.name === srcStore }));
+
+  return { stores, productName, productImage };
+}
+
+// ── SerpAPI comparison (fallback when Buyhatke returns < 2 stores) ──
+async function searchViaSerpAPI(url, srcStore) {
+  if (!SERP_API_KEY) throw new Error('SERP_API_KEY not configured');
+
+  const title = await fetchTitle(url);
+  let shortQ = '';
+  if (title && title.length > 5) {
+    const core = title
+      .replace(/|.*/g,'').replace(/[([].*?[)]]/g,'')
+      .replace(/(with|for|up to|upto|comes|get|buy|online|india|featuring).*/i,'')
+      .replace(/,.*$/,'').replace(/[^a-zA-Z0-9 ]/g,' ').replace(/s+/g,' ').trim();
+    shortQ = core.split(' ').filter(w=>w.length>0).slice(0,5).join(' ');
+  }
+  if (!shortQ) {
+    try {
+      const segs = new URL(url).pathname.split('/')
+        .filter(s=>s.length>3&&!/^[A-Z0-9]{6,}$/.test(s)&&!/^(dp|p|product|item|buy|s|ip|d)$/i.test(s));
+      shortQ = (segs[0]||'').replace(/-/g,' ').trim().split(' ').slice(0,5).join(' ');
+    } catch(e) {}
+  }
+  if (!shortQ || shortQ.length < 3) throw new Error('Could not identify product from URL');
+
+  const fullTitle = title || shortQ;
+  let asin = null;
+  try {
+    const m = new URL(url).pathname.match(/\/dp\/([A-Z0-9]{10})/i) ||
+              new URL(url).pathname.match(/\/([A-Z0-9]{10})(?:\/|$)/i);
+    if (m) asin = m[1];
+  } catch(e) {}
+
+  const brandModel = shortQ.split(' ').slice(0,3).join(' ');
+  const q1 = asin ? (asin + ' ' + brandModel) : shortQ;
+  const q2 = shortQ;
+  const q3 = brandModel;
+  console.log('[SerpAPI] Queries:', q1, '|', q2, '|', q3);
+
+  const serpSearch = (q) => fetch(
+    'https://serpapi.com/search.json?engine=google_shopping'
+    + '&q=' + encodeURIComponent(q)
+    + '&gl=in&hl=en&currency=INR&num=40&api_key=' + SERP_API_KEY,
+    { signal: AbortSignal.timeout(15000) }
+  ).then(r => r.json()).catch(() => null);
+
+  const [r1, r2, r3] = await Promise.all([serpSearch(q1), serpSearch(q2), serpSearch(q3)]);
+  const allResults = [
+    ...(r1?.shopping_results||[]),
+    ...(r2?.shopping_results||[]),
+    ...(r3?.shopping_results||[]),
+  ];
+  const productImage = r1?.shopping_results?.[0]?.thumbnail || r2?.shopping_results?.[0]?.thumbnail || '';
+  console.log('[SerpAPI] Total results:', allResults.length);
+
+  const qWords = shortQ.toLowerCase().split(' ').filter(w=>w.length>2);
+  function sim(t) {
+    if (!t) return 0;
+    const tl = t.toLowerCase();
+    if (asin && tl.includes(asin.toLowerCase())) return 1.0;
+    return qWords.filter(w=>tl.includes(w)).length / qWords.length;
+  }
+
+  const TARGET = ['Amazon','Flipkart','Myntra','Ajio','Nykaa','TataCliq','Croma','Snapdeal'];
+  const storeMap = {};
+  allResults.forEach(item => {
+    const store = normalizeStore(item.source||'');
+    if (!TARGET.includes(store)) return;
+    const price = item.extracted_price || 0;
+    if (!price) return;
+    const s = sim(item.title);
+    console.log('[SerpAPI]', store, '₹'+price, 'sim:'+Math.round(s*100)+'%', (item.title||'').substring(0,50));
+    if (s < 0.4) { console.log('  → SKIP'); return; }
+    const link = (item.product_link && !item.product_link.includes('google.com'))
+      ? item.product_link : storeSearchUrl(store, fullTitle);
+    if (!storeMap[store] || price < storeMap[store].price) {
+      storeMap[store] = { name:store, normalizedName:store, price, url:link };
+    }
+  });
+
+  const stores = Object.values(storeMap)
+    .sort((a,b)=>a.price-b.price)
+    .map((s,i)=>({ ...s, isBest:i===0, isSource:s.name===srcStore }));
+
+  console.log('[SerpAPI] FINAL:', stores.map(s=>s.name+':₹'+s.price).join(' | '));
+  return { stores, productName: fullTitle, productImage };
 }
 
 // ── Routes ──
@@ -1256,138 +1453,127 @@ app.get('/test-link', async (req, res) => {
   catch(e) { res.status(500).json({ error:e.message }); }
 });
 
-// ── Price comparison ──
+// ── Price comparison — Buyhatke (primary) + SerpAPI (fallback) ──
 app.get('/compare/search', async (req, res) => {
   const { url } = req.query;
-  if (!url) return res.status(400).json({ error:'Pass ?url=' });
-  if (!SERP_API_KEY) return res.status(503).json({ error:'SERP_API_KEY not configured', needsKey:true });
+  if (!url) return res.status(400).json({ error: 'Pass ?url=' });
 
   try {
     console.log('[Compare] URL:', url);
-    // Note: tracking handled by /track/compare endpoint called from frontend
+    // Tracking is handled by /track/compare called from frontend — not here
 
-    // Get title
-    const title = await fetchTitle(url);
-    let shortQ = '';
-    if (title && title.length > 5) {
-      const core = title
-        .replace(/\|.*/g,'').replace(/[\(\[].*?[\)\]]/g,'')
-        .replace(/\b(with|for|up to|upto|comes|get|buy|online|india|featuring)\b.*/i,'')
-        .replace(/,.*$/,'').replace(/[^a-zA-Z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
-      shortQ = core.split(' ').filter(w=>w.length>0).slice(0,5).join(' ');
-    }
-    if (!shortQ) {
-      try {
-        const segs = new URL(url).pathname.split('/').filter(s=>s.length>3&&!/^[A-Z0-9]{6,}$/.test(s)&&!/^(dp|p|product|item|buy|s|ip|d)$/i.test(s));
-        shortQ = (segs[0]||'').replace(/-/g,' ').trim().split(' ').slice(0,5).join(' ');
-      } catch(e) {}
-    }
-    if (!shortQ||shortQ.length<3) return res.status(400).json({ error:'Could not identify product' });
-
-    const fullTitle = title || shortQ;
-
-    // Extract ASIN (Amazon Standard Identification Number — unique across stores)
-    let asin = null;
-    try {
-      const m = new URL(url).pathname.match(/\/dp\/([A-Z0-9]{10})/i) ||
-                new URL(url).pathname.match(/\/([A-Z0-9]{10})(?:\/|$)/i);
-      if (m) asin = m[1];
-    } catch(e) {}
-
-    // Source store
+    // ── Source store detection (expanded for Buyhatke's wider coverage) ──
     const srcHost = (() => { try { return new URL(url).hostname.replace('www.',''); } catch(e) { return ''; } })();
     const srcStore = (() => {
-      if (srcHost.includes('amazon')||srcHost.includes('amzn')) return 'Amazon';
-      if (srcHost.includes('flipkart')) return 'Flipkart';
-      if (srcHost.includes('myntra')) return 'Myntra';
-      if (srcHost.includes('ajio')) return 'Ajio';
-      if (srcHost.includes('nykaa')) return 'Nykaa';
-      if (srcHost.includes('tatacliq')) return 'TataCliq';
-      if (srcHost.includes('croma')) return 'Croma';
-      if (srcHost.includes('snapdeal')) return 'Snapdeal';
+      if (srcHost.includes('amazon') || srcHost.includes('amzn')) return 'Amazon';
+      if (srcHost.includes('flipkart'))    return 'Flipkart';
+      if (srcHost.includes('myntra'))      return 'Myntra';
+      if (srcHost.includes('ajio'))        return 'Ajio';
+      if (srcHost.includes('nykaa'))       return 'Nykaa';
+      if (srcHost.includes('tatacliq'))   return 'TataCliq';
+      if (srcHost.includes('croma'))       return 'Croma';
+      if (srcHost.includes('snapdeal'))    return 'Snapdeal';
+      if (srcHost.includes('meesho'))      return 'Meesho';
+      if (srcHost.includes('jiomart'))     return 'JioMart';
+      if (srcHost.includes('reliancedigital')) return 'Reliance Digital';
+      if (srcHost.includes('vijaysales')) return 'Vijay Sales';
       return '';
     })();
 
-    // Search queries
-    // q1: ASIN + brand (most precise — finds exact product on all stores)
-    // q2: short title (broad — catches stores that don't index by ASIN)
-    // q3: brand + model only (even broader)
-    const brandModel = shortQ.split(' ').slice(0,3).join(' ');
-    const q1 = asin ? (asin + ' ' + brandModel) : shortQ;
-    const q2 = shortQ;
-    const q3 = brandModel;
+    let stores        = [];
+    let productName   = '';
+    let productImage  = '';
+    let dataSource    = 'none';
+    const errors      = [];
 
-    console.log('[Compare] Queries:', q1, '|', q2, '|', q3);
-
-    const serpSearch = (q) => fetch(
-      'https://serpapi.com/search.json?engine=google_shopping'
-      + '&q=' + encodeURIComponent(q)
-      + '&gl=in&hl=en&currency=INR&num=40&api_key=' + SERP_API_KEY,
-      { signal: AbortSignal.timeout(15000) }
-    ).then(r => r.json()).catch(() => null);
-
-    const [r1, r2, r3] = await Promise.all([serpSearch(q1), serpSearch(q2), serpSearch(q3)]);
-
-    const allResults = [
-      ...(r1?.shopping_results||[]),
-      ...(r2?.shopping_results||[]),
-      ...(r3?.shopping_results||[]),
-    ];
-    const productImage = r1?.shopping_results?.[0]?.thumbnail || r2?.shopping_results?.[0]?.thumbnail || '';
-    console.log('[Compare] Total results:', allResults.length);
-
-    // Similarity: % of query keywords in result title
-    const qWords = shortQ.toLowerCase().split(' ').filter(w=>w.length>2);
-    function sim(t) {
-      if (!t) return 0;
-      const tl = t.toLowerCase();
-      // ASIN match = perfect
-      if (asin && tl.includes(asin.toLowerCase())) return 1.0;
-      // Keyword overlap
-      return qWords.filter(w=>tl.includes(w)).length / qWords.length;
+    // ── Strategy 1: Buyhatke (no API key, Indian IP, wider store coverage) ──
+    try {
+      const bhRaw    = await fetchBuyhatke(url);
+      const bhParsed = parseBuyhatkeResponse(bhRaw, url, srcStore);
+      stores       = bhParsed.stores;
+      productName  = bhParsed.productName;
+      productImage = bhParsed.productImage;
+      dataSource   = 'buyhatke';
+      console.log('[Compare] Buyhatke returned', stores.length, 'stores');
+    } catch(e) {
+      errors.push('Buyhatke: ' + e.message);
+      console.log('[Compare] Buyhatke failed:', e.message);
     }
 
-    const TARGET = ['Amazon','Flipkart','Myntra','Ajio','Nykaa','TataCliq','Croma','Snapdeal'];
-    const storeMap = {};
-
-    allResults.forEach(item => {
-      const store = normalizeStore(item.source||'');
-      if (!TARGET.includes(store)) return;
-      const price = item.extracted_price || 0;
-      if (price === 0) return;
-      const s = sim(item.title);
-
-      // Log every result for Render logs debugging
-      console.log('[Compare]', store, '₹'+price, 'sim:'+Math.round(s*100)+'%', (item.title||'').substring(0,50));
-
-      // Accept if ≥ 40% keyword match OR perfect ASIN match
-      if (s < 0.4) { console.log('  → SKIP'); return; }
-
-      // Direct product link preferred over Google redirect
-      const link = (item.product_link && !item.product_link.includes('google.com'))
-        ? item.product_link : storeSearchUrl(store, fullTitle);
-
-      if (!storeMap[store] || price < storeMap[store].price) {
-        storeMap[store] = { name:store, normalizedName:store, price, url:link };
+    // ── Strategy 2: SerpAPI fallback (if Buyhatke returned <2 useful stores) ──
+    if (stores.length < 2 && SERP_API_KEY) {
+      console.log('[Compare] Buyhatke insufficient — falling back to SerpAPI');
+      try {
+        const serp    = await searchViaSerpAPI(url, srcStore);
+        stores        = serp.stores;
+        if (!productName)  productName  = serp.productName;
+        if (!productImage) productImage = serp.productImage;
+        dataSource    = 'serpapi';
+      } catch(e) {
+        errors.push('SerpAPI: ' + e.message);
+        console.log('[Compare] SerpAPI also failed:', e.message);
       }
-    });
+    }
 
-    let stores = Object.values(storeMap).sort((a,b)=>a.price-b.price)
-      .map((s,i)=>({ ...s, isBest:i===0, isSource:s.name===srcStore }));
+    if (stores.length === 0) {
+      return res.status(404).json({
+        error: 'No price comparison results found. ' + errors.join(' | '),
+        tried: errors,
+      });
+    }
 
-    const src = stores.find(s=>s.isSource);
-    const savings = src && !src.isBest ? src.price - stores[0].price : 0;
+    const srcEntry  = stores.find(s => s.isSource);
+    const savings   = srcEntry && !srcEntry.isBest
+      ? srcEntry.price - stores[0].price : 0;
 
-    console.log('[Compare] FINAL:', stores.map(s=>s.name+':₹'+s.price+(s.isSource?'[src]':'')+(s.isBest?'[best]':'')).join(' | '));
+    console.log('[Compare] FINAL via', dataSource + ':',
+      stores.map(s => s.name + ':₹' + s.price + (s.isSource?'[src]':'') + (s.isBest?'[best]':'')).join(' | '));
 
     return res.json({
-      stores, productName:fullTitle, productImage,
-      totalStores:stores.length, savings:savings>0?savings:0, searchQuery:shortQ
+      stores,
+      productName:  productName || url,
+      productImage,
+      totalStores:  stores.length,
+      savings:      savings > 0 ? savings : 0,
+      dataSource,           // tells the frontend which source was used
     });
 
   } catch(e) {
-    console.error('[Compare] Error:', e.message);
-    res.status(500).json({ error:e.message });
+    console.error('[Compare] Unhandled error:', e.message);
+    return res.status(500).json({ error: e.message });
+  }
+});
+// Buyhatke debug — test raw API response for any product URL
+// Usage: https://api.smartpickdeals.live/buyhatke/debug?url=https://amzn.in/d/xxx
+app.get('/buyhatke/debug', async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.json({
+    usage: 'Add ?url=YOUR_PRODUCT_URL',
+    example: '/buyhatke/debug?url=https://www.amazon.in/dp/B0XXXXX',
+  });
+  try {
+    const raw    = await fetchBuyhatke(url);
+    const d      = raw.data || raw.result || raw;
+    // Show first 3 items of every array field so you can see field names
+    const preview = {};
+    for (const [k, v] of Object.entries(d)) {
+      preview[k] = Array.isArray(v)
+        ? v.slice(0, 3).map(x => JSON.stringify(x).substring(0, 300))
+        : (typeof v === 'object' ? v : v);
+    }
+    const parsed = parseBuyhatkeResponse(raw, url, '');
+    return res.json({
+      status:         raw.status,
+      statusMsg:      raw.statusMsg,
+      topLevelKeys:   Object.keys(raw),
+      dataKeys:       Object.keys(d),
+      dataPreview:    preview,
+      parsedStores:   parsed.stores,
+      productName:    parsed.productName,
+      productImage:   parsed.productImage,
+    });
+  } catch(e) {
+    return res.json({ error: e.message });
   }
 });
 
