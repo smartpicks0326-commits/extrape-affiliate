@@ -118,8 +118,11 @@ section{position:relative;z-index:1;}
 .store-price{font-family:'DM Mono',monospace;font-size:20px;font-weight:800;flex-shrink:0;text-align:right;}
 .store-price small{font-size:12px;font-weight:400;color:var(--muted);display:block;}
 
-/* Action buttons - flash.co style: full width bottom row */
-.store-actions{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--border);}
+/* Action buttons: Share full-width, then Copy + Open side-by-side */
+.store-actions{display:flex;flex-direction:column;border-top:1px solid var(--border);}
+.btn-share{width:100%;background:rgba(255,107,43,.07);color:var(--accent2);border:none;border-bottom:1px solid var(--border);font-family:'Inter',sans-serif;font-weight:600;font-size:12px;padding:9px 12px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;letter-spacing:.01em;transition:background .2s;}
+.btn-share:hover{background:rgba(255,107,43,.14);}
+.store-action-row{display:grid;grid-template-columns:1fr 1fr;}
 .btn-copy,.btn-visit{font-family:'Inter',sans-serif;font-weight:600;font-size:12px;padding:9px 12px;cursor:pointer;border:none;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px;letter-spacing:.01em;}
 .btn-copy{background:transparent;color:var(--muted);border-right:1px solid var(--border);}
 .btn-copy:hover{background:rgba(255,255,255,.04);color:var(--text);}
@@ -655,6 +658,7 @@ function renderList(id,stores){
     var cardClass='store-card'+(s.isBest?' best':'')+(s.isSource?' source':'');
     var copyId='copy-'+id+'-'+idx;
     var visitId='visit-'+id+'-'+idx;
+    var shareId='share-'+id+'-'+idx;
     var affStatusId='aff-'+id+'-'+idx;
 
     var div=document.createElement('div');
@@ -668,18 +672,23 @@ function renderList(id,stores){
       '</div>'+
       (s.affiliateLoading?'<div class="aff-status" id="'+affStatusId+'">⏳ Generating affiliate link...</div>':'')+
       '<div class="store-actions">'+
-        '<button class="btn-copy" id="'+copyId+'">Copy</button>'+
-        '<button class="btn-visit" id="'+visitId+'">Open ↗</button>'+
+        '<button class="btn-share" id="'+shareId+'">⬆ Share</button>'+
+        '<div class="store-action-row">'+
+          '<button class="btn-copy" id="'+copyId+'">Copy</button>'+
+          '<button class="btn-visit" id="'+visitId+'">Open ↗</button>'+
+        '</div>'+
       '</div>';
 
     el.appendChild(div);
-    wireButtons(copyId,visitId,link,name,s);
+    wireButtons(copyId,visitId,shareId,link,name,s);
   });
 }
 
-function wireButtons(copyId,visitId,link,name,storeObj){
+function wireButtons(copyId,visitId,shareId,link,name,storeObj){
   var cBtn=document.getElementById(copyId);
   var vBtn=document.getElementById(visitId);
+  var sBtn=document.getElementById(shareId);
+
   if(cBtn){
     cBtn.onclick=function(){
       var l=storeObj.affiliateLink||link;
@@ -689,6 +698,7 @@ function wireButtons(copyId,visitId,link,name,storeObj){
       });
     };
   }
+
   if(vBtn){
     vBtn.onclick=function(){
       var l=storeObj.affiliateLink||storeObj.displayLink||link;
@@ -696,11 +706,25 @@ function wireButtons(copyId,visitId,link,name,storeObj){
       fetch(trackUrl+'/track/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dest:l,store:name})}).catch(function(){
         fetch(BACKEND_FALLBACK+'/track/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dest:l,store:name})}).catch(function(){});
       });
-      // Use Web Share API on mobile if available
-      if(navigator.share && /Mobi|Android/i.test(navigator.userAgent)){
-        navigator.share({title:name+' — Best Price',url:l}).catch(function(){window.open(l,'_blank');});
+      window.open(l,'_blank');
+    };
+  }
+
+  if(sBtn){
+    sBtn.onclick=function(){
+      var l=storeObj.affiliateLink||storeObj.displayLink||link;
+      if(navigator.share){
+        navigator.share({title:name+' — Best Price',url:l}).catch(function(){
+          navigator.clipboard.writeText(l).then(function(){
+            sBtn.textContent='✅ Copied!';
+            setTimeout(function(){sBtn.textContent='⬆ Share';},2500);
+          }).catch(function(){});
+        });
       } else {
-        window.open(l,'_blank');
+        navigator.clipboard.writeText(l).then(function(){
+          sBtn.textContent='✅ Copied!';
+          setTimeout(function(){sBtn.textContent='⬆ Share';},2500);
+        });
       }
     };
   }
@@ -753,6 +777,7 @@ function updateStoreCard(name,link){
       var storeObj=allStores.find(function(s){return (s.normalizedName||s.name)===name&&!s.isSource;});
       var copyBtn=card.querySelector('.btn-copy');
       var visitBtn=card.querySelector('.btn-visit');
+      var shareBtn=card.querySelector('.btn-share');
       if(storeObj&&copyBtn&&visitBtn){
         copyBtn.onclick=function(){
           navigator.clipboard.writeText(link).then(function(){
@@ -767,6 +792,23 @@ function updateStoreCard(name,link){
           });
           window.open(link,'_blank');
         };
+        if(shareBtn){
+          shareBtn.onclick=function(){
+            if(navigator.share){
+              navigator.share({title:name+' — Best Price',url:link}).catch(function(){
+                navigator.clipboard.writeText(link).then(function(){
+                  shareBtn.textContent='✅ Copied!';
+                  setTimeout(function(){shareBtn.textContent='⬆ Share';},2500);
+                }).catch(function(){});
+              });
+            } else {
+              navigator.clipboard.writeText(link).then(function(){
+                shareBtn.textContent='✅ Copied!';
+                setTimeout(function(){shareBtn.textContent='⬆ Share';},2500);
+              });
+            }
+          };
+        }
       }
     }
   });

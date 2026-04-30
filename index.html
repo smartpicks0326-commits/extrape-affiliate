@@ -264,8 +264,8 @@
 
     .result-box {
       display: flex;
-      align-items: center;
-      gap: 10px;
+      flex-direction: column;
+      gap: 12px;
       background: var(--bg);
       border: 1.5px solid rgba(41, 216, 122, 0.25);
       border-radius: 12px;
@@ -273,13 +273,37 @@
     }
 
     .result-link {
-      flex: 1;
       font-family: 'DM Mono', monospace;
       font-size: 13px;
       color: var(--success);
-      word-break: break-all;
-      line-height: 1.5;
+      overflow-wrap: break-word;
+      word-break: break-word;
+      line-height: 1.6;
+      width: 100%;
     }
+
+    /* Share button — full width, shown only when navigator.share available */
+    button#shareBtn {
+      width: 100%;
+      background: rgba(255,107,43,0.1);
+      color: var(--accent2);
+      border: 1px solid rgba(255,107,43,0.2);
+      font-family: 'Inter', sans-serif;
+      font-weight: 600;
+      font-size: 13px;
+      padding: 10px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button#shareBtn:hover { background: rgba(255,107,43,0.18); }
+
+    /* Copy + Open row */
+    .result-actions-row {
+      display: flex;
+      gap: 8px;
+    }
+    .result-actions-row button { flex: 1; }
 
     button#copyBtn {
       background: rgba(41, 216, 122, 0.12);
@@ -288,16 +312,27 @@
       font-family: 'Inter', sans-serif;
       font-weight: 600;
       font-size: 12px;
-      padding: 8px 16px;
+      padding: 10px 16px;
       border-radius: 8px;
       cursor: pointer;
-      white-space: nowrap;
       transition: background 0.2s;
-      flex-shrink: 0;
     }
-
     button#copyBtn:hover { background: rgba(41, 216, 122, 0.2); }
     button#copyBtn.copied { color: #fff; background: var(--success); border-color: var(--success); }
+
+    button#openBtn {
+      background: rgba(255,107,43,0.12);
+      color: var(--accent2);
+      border: 1px solid rgba(255,107,43,0.25);
+      font-family: 'Inter', sans-serif;
+      font-weight: 600;
+      font-size: 12px;
+      padding: 10px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button#openBtn:hover { background: rgba(255,107,43,0.18); }
 
     /* ── ERROR ── */
     #error {
@@ -468,34 +503,10 @@
   #productUrl { font-size: 14px; padding: 14px 16px; border-radius: 10px; }
   button#convertBtn { width: 100%; border-radius: 10px; font-size: 15px; padding: 14px; }
   .card { padding: 18px 16px; margin: 0 0 14px; }
-  /* Result link: wrap cleanly on mobile */
-  .result-box {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
-  }
-  .result-link {
-    font-size: 12px;
-    word-break: break-word;
-    overflow-wrap: anywhere;
-    line-height: 1.6;
-    white-space: normal;
-    min-width: 0;
-    flex: none;
-    width: 100%;
-  }
-  .result-actions-row {
-    display: flex;
-    gap: 8px;
-    flex-wrap: nowrap;
-  }
-  .result-actions-row button {
-    flex: 1;
-    justify-content: center;
-    font-size: 13px;
-    padding: 11px 8px;
-  }
-  #shareBtn { flex: 0 0 auto; }
+  .result-box { padding: 14px; gap: 10px; }
+  .result-link { font-size: 13px; }
+  button#shareBtn { font-size: 14px; padding: 12px 16px; }
+  .result-actions-row button { min-height: 44px; font-size: 14px; }
   .supported-stores { gap: 6px; }
   .store-chip { font-size: 11px; padding: 4px 8px; }
 }
@@ -503,68 +514,6 @@
   header { padding: 24px 12px 0; }
   h1 { font-size: 1.7rem; }
   .card { padding: 14px 12px; }
-}
-
-
-/* ── Mobile: result URL display ── */
-@media (max-width: 768px) {
-  .result-box {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
-  }
-  .result-link {
-    font-size: 13px;
-    word-break: break-word;
-    overflow-wrap: anywhere;
-    white-space: normal;
-    text-align: left;
-  }
-  .result-actions-row {
-    display: flex;
-    gap: 8px;
-  }
-  .result-actions-row button {
-    flex: 1;
-    justify-content: center;
-  }
-  button#copyBtn, button#openBtn, button#shareBtn {
-    width: 100%;
-    min-height: 44px;
-    font-size: 14px;
-  }
-}
-
-
-/* ── Mobile result box: URL full width, buttons below ── */
-@media (max-width: 768px) {
-  .result-box {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
-    padding: 14px 14px;
-  }
-  .result-link {
-    font-size: 13px;
-    word-break: break-word;
-    overflow-wrap: anywhere;
-    white-space: normal;
-    line-height: 1.6;
-    width: 100%;
-  }
-  .result-actions-row {
-    display: flex;
-    gap: 8px;
-    width: 100%;
-  }
-  .result-actions-row button {
-    flex: 1;
-    justify-content: center;
-    min-height: 44px;
-    font-size: 13px !important;
-    padding: 10px 12px !important;
-  }
-  #shareBtn { flex: 0 0 auto !important; min-width: 80px; }
 }
 </style>
 </head>
@@ -638,10 +587,10 @@
         <div class="result-label">Link ready</div>
         <div class="result-box">
           <span class="result-link" id="affiliateLink"></span>
+          <button id="shareBtn" onclick="shareLink()" style="display:none;">⬆ Share</button>
           <div class="result-actions-row">
-            <button id="shareBtn" onclick="shareLink()" style="display:none;background:rgba(255,107,43,0.12);color:var(--accent2);border:1px solid rgba(255,107,43,0.25);font-family:'Inter',sans-serif;font-weight:600;font-size:12px;padding:8px 16px;border-radius:8px;cursor:pointer;white-space:nowrap;transition:background .2s;flex-shrink:0;">⬆ Share</button>
             <button id="copyBtn" onclick="copyLink()">Copy</button>
-            <button id="openBtn" onclick="openLink()" style="background:rgba(255,107,43,0.12);color:var(--accent2);border:1px solid rgba(255,107,43,0.25);font-family:'Inter',sans-serif;font-weight:600;font-size:12px;padding:8px 16px;border-radius:8px;cursor:pointer;white-space:nowrap;transition:background 0.2s;flex-shrink:0;">Open ↗</button>
+            <button id="openBtn" onclick="openLink()">Open ↗</button>
           </div>
         </div>
       </div>
