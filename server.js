@@ -734,42 +734,90 @@ async function bhkGetProductData(pos, pid) {
 async function bhkGetMultiStorePrices(internalPid, srcPid, srcPos) {
   const rawResponses = [];
 
-  // ── Strategy A: getRawProdSpecs with browser XHR headers ──
-  // The browser gets JSON from this endpoint via same-origin XHR.
-  // We simulate those headers to try to get the JSON response instead of HTML.
-  const rawSpecsUrl = `https://buyhatke.com/api/getRawProdSpecs?pid_id=${internalPid}&pos=${srcPos}`;
-  try {
-    console.log('[BHK] getRawProdSpecs (XHR sim):', rawSpecsUrl);
-    const r = await fetch(rawSpecsUrl, {
-      headers: BHK_XHR_HEADERS,
-      signal: AbortSignal.timeout(12000),
-    });
-    const text = await r.text();
-    let d = null;
-    try { d = JSON.parse(text); } catch(e) {}
+  // ── Strategy A: search-new.bitbns.com — Buyhatke's actual backend API ──
+  // bitbns.com is Buyhatke's parent company. Their backend API is separate from
+  // the buyhatke.com frontend and may not have the same browser restrictions.
+  // We try several endpoint patterns that match what the SvelteKit app calls.
+  const bitbnsEndpoints = [
+    `https://search-new.bitbns.com/buyhatke/getRawProdSpecs?pid_id=${internalPid}&pos=${srcPos}`,
+    `https://search-new.bitbns.com/buyhatke/getPriceList?pid_id=${internalPid}&pos=${srcPos}`,
+    `https://search-new.bitbns.com/buyhatke/getStoreList?internalPid=${internalPid}`,
+    `https://search-new.bitbns.com/buyhatke/productData?internalPid=${internalPid}`,
+  ];
 
-    if (d && d.status === 1) {
-      const items = extractStoreItems(d);
-      if (items && items.length > 0) {
-        console.log(`[BHK] ✅ getRawProdSpecs returned JSON → ${items.length} stores`);
-        rawResponses.push({ strategy: 'getRawProdSpecs-xhr', status: r.status, storesFound: items.length });
-        return { items, endpoint: rawSpecsUrl, rawResponses };
+  const bitbnsHeaders = {
+    ...BHK_XHR_HEADERS,
+    'Referer': `https://buyhatke.com/`,
+    'Origin': 'https://buyhatke.com',
+  };
+
+  for (const endpoint of bitbnsEndpoints) {
+    try {
+      console.log('[BHK] bitbns try:', endpoint.substring(0, 80));
+      const r = await fetch(endpoint, { headers: bitbnsHeaders, signal: AbortSignal.timeout(8000) });
+      const text = await r.text();
+      let d = null;
+      try { d = JSON.parse(text); } catch(e) {}
+
+      if (d) {
+        console.log('[BHK] bitbns JSON from:', endpoint, '| keys:', Object.keys(d).join(', '));
+        const items = extractStoreItems(d);
+        if (items && items.length > 0) {
+          console.log(`[BHK] ✅ bitbns endpoint works → ${items.length} stores`);
+          rawResponses.push({ strategy: 'bitbns', endpoint, status: r.status, storesFound: items.length });
+          return { items, endpoint, rawResponses };
+        }
+        rawResponses.push({ strategy: 'bitbns', endpoint, status: r.status,
+          note: 'JSON but no store array', topKeys: Object.keys(d), preview: JSON.stringify(d).substring(0, 300) });
+      } else {
+        rawResponses.push({ strategy: 'bitbns', endpoint, status: r.status,
+          note: 'HTML/non-JSON', preview: text.substring(0, 150) });
       }
-      // JSON but no store array — log keys for diagnosis
-      const d2 = d.data || d;
-      rawResponses.push({ strategy: 'getRawProdSpecs-xhr', status: r.status,
-        note: 'JSON but no store array', keys: Object.keys(d2) });
-      console.log('[BHK] getRawProdSpecs JSON but no store array. Keys:', Object.keys(d2).join(', '));
-      console.log('[BHK] Full response (first 500):', JSON.stringify(d).substring(0, 500));
-    } else {
-      rawResponses.push({ strategy: 'getRawProdSpecs-xhr', status: r.status,
-        note: d ? 'JSON status!=1' : 'HTML (XHR sim did not unlock JSON)',
-        preview: text.substring(0, 150) });
-      console.log('[BHK] getRawProdSpecs: still getting HTML or bad status');
+    } catch(e) {
+      rawResponses.push({ strategy: 'bitbns', endpoint, error: e.message });
     }
+  }
+
+  // ── Strategy A2: Scan getRawProdSpecs HTML for SvelteKit embedded data ──
+  // SvelteKit embeds server-loaded data in script tags in various formats.
+  // We try to extract any JSON block that contains price/store data.
+  try {
+    const rawSpecsUrl = `https://buyhatke.com/api/getRawProdSpecs?pid_id=${internalPid}&pos=${srcPos}`;
+    const r = await fetch(rawSpecsUrl, { headers: BHK_XHR_HEADERS, signal: AbortSignal.timeout(12000) });
+    const html = await r.text();
+
+    // Extract ALL <script> tag contents and try to find price data in any of them
+    const scriptMatches = [...html.matchAll(/<script[^>]*>([\s\S]{20,10000}?)<\/script>/g)];
+    console.log('[BHK] getRawProdSpecs HTML script tags:', scriptMatches.length);
+
+    for (const match of scriptMatches) {
+      const src = match[1];
+      // Look for JSON-like content with price/store patterns
+      if (!src.includes('cur_price') && !src.includes('site_name') &&
+          !src.includes('storeData') && !src.includes('price') && !src.includes('stores')) continue;
+      console.log('[BHK] Promising script tag:', src.substring(0, 200));
+      // Try to extract JSON objects from it
+      const jsonMatches = src.match(/\{[\s\S]{50,}\}/g) || [];
+      for (const jm of jsonMatches) {
+        try {
+          const d = JSON.parse(jm);
+          const items = extractStoreItems(d);
+          if (items && items.length > 0) {
+            console.log('[BHK] ✅ Found store data in HTML script tag!', items.length, 'stores');
+            rawResponses.push({ strategy: 'html-script-scan', storesFound: items.length });
+            return { items, endpoint: rawSpecsUrl, rawResponses };
+          }
+        } catch(e) { /* not valid JSON */ }
+      }
+    }
+    rawResponses.push({
+      strategy: 'html-script-scan',
+      scriptTagCount: scriptMatches.length,
+      note: 'No store data found in any script tag',
+      scriptPreviews: scriptMatches.slice(0, 3).map(m => m[1].substring(0, 100)),
+    });
   } catch(e) {
-    rawResponses.push({ strategy: 'getRawProdSpecs-xhr', error: e.message });
-    console.log('[BHK] getRawProdSpecs error:', e.message);
+    rawResponses.push({ strategy: 'html-script-scan', error: e.message });
   }
 
   // ── Strategy B: posList + per-store productData (confirmed working for source store) ──
