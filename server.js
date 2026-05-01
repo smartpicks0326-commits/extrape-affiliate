@@ -602,39 +602,81 @@ const BHK_POS = {
 
 // Extract (pos, pid) from a product URL so we can call productData.
 // Returns null if the URL is not from a recognised store.
+// Detect short URLs that need redirect-resolution before we can extract params.
+// These are links like amzn.in/d/xxx or dl.flipkart.com/s/xxx — they carry
+// no ASIN/pid in the URL itself; we must follow the redirect first.
+function isShortUrl(productUrl) {
+  try {
+    const host = new URL(productUrl).hostname.replace('www.', '');
+    return (
+      host === 'amzn.in'  || host === 'amzn.to' ||   // Amazon short links
+      host === 'dl.flipkart.com' ||                    // Flipkart deep-link short
+      host === 'fkrt.co'  ||                           // Flipkart native short
+      host === 'ajiio.co' ||                           // Ajio ExtraPe short
+      host === 'bilty.co' ||                           // Croma ExtraPe short
+      host === 'myntr.co'                              // Myntra ExtraPe short
+    );
+  } catch(e) { return false; }
+}
+
+// Follow redirects and return the final destination URL.
+// Uses HEAD first (fast), falls back to GET if server rejects HEAD.
+async function resolveRedirect(shortUrl) {
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+    'Accept': 'text/html,*/*',
+  };
+  try {
+    const r = await fetch(shortUrl, {
+      method: 'HEAD', headers, redirect: 'follow',
+      signal: AbortSignal.timeout(10000),
+    });
+    console.log('[BHK] Resolved', shortUrl.substring(0,60), '→', r.url.substring(0,80));
+    return r.url;
+  } catch(e) {
+    // HEAD failed — try GET (some servers block HEAD on redirects)
+    const r = await fetch(shortUrl, {
+      method: 'GET', headers, redirect: 'follow',
+      signal: AbortSignal.timeout(10000),
+    });
+    console.log('[BHK] Resolved (GET)', shortUrl.substring(0,60), '→', r.url.substring(0,80));
+    return r.url;
+  }
+}
+
 function extractBhkParams(productUrl) {
   try {
     const u    = new URL(productUrl);
     const host = u.hostname.replace('www.', '');
 
-    // Amazon — ASIN is the pid, pos = 63
-    if (host.includes('amazon') || host.includes('amzn')) {
+    // Amazon long URL — ASIN in /dp/XXXXXXXXXX
+    if (host.includes('amazon')) {
       const m = u.pathname.match(/\/dp\/([A-Z0-9]{10})/i)
              || u.pathname.match(/\/([A-Z0-9]{10})(?:\/|$)/i);
       if (m) return { pos: BHK_POS.amazon, pid: m[1] };
     }
 
-    // Flipkart — pid is in the URL as /p/pid or ?pid=
-    if (host.includes('flipkart')) {
+    // Flipkart long URL — pid in ?pid= or /p/ITCODE
+    if (host.includes('flipkart') && host !== 'dl.flipkart.com') {
       const pid = u.searchParams.get('pid')
-               || (u.pathname.match(/\/p\/([a-z0-9]+)/i) || [])[1];
+               || (u.pathname.match(/\/p\/([a-zA-Z0-9]+)/i) || [])[1];
       if (pid) return { pos: BHK_POS.flipkart, pid };
     }
 
-    // Myntra — product ID is the last numeric segment
+    // Myntra — numeric product ID is the last path segment
     if (host.includes('myntra')) {
       const m = u.pathname.match(/\/(\d{6,})(?:\/|$)/);
       if (m) return { pos: BHK_POS.myntra, pid: m[1] };
     }
 
-    // Ajio — product code is the last path segment
-    if (host.includes('ajio')) {
+    // Ajio long URL — product code is last path segment
+    if (host.includes('ajio') && host !== 'ajiio.co') {
       const segs = u.pathname.split('/').filter(Boolean);
       const pid  = segs[segs.length - 1];
       if (pid && pid.length > 4) return { pos: BHK_POS.ajio, pid };
     }
 
-    // Nykaa — product ID in URL
+    // Nykaa — numeric product ID in path
     if (host.includes('nykaa')) {
       const m = u.pathname.match(/\/(\d{4,})(?:\/|$)/);
       if (m) return { pos: BHK_POS.nykaa, pid: m[1] };
