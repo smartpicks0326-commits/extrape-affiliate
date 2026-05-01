@@ -570,92 +570,252 @@ function storeSearchUrl(store, q) {
 
 // Fetch price comparison data from Buyhatke's extension API.
 // Buyhatke returns prices + direct store URLs for the same product.
-async function fetchBuyhatke(productUrl) {
-  // Primary endpoint used by Buyhatke browser extension
-  const apiUrl = 'https://api.buyhatke.com/mw/papi/v1/product/info'
-    + '?url=' + encodeURIComponent(productUrl)
-    + '&appId=bhk-web-ext&v=1';
+// ══════════════════════════════════════════════════════════════════════
+// BUYHATKE — confirmed two-step API (discovered via DevTools, May 2026)
+//
+// Step 1 — productData: gets source product + internalPid
+//   GET https://buyhatke.com/api/productData?pos={pos}&pid={pid}
+//   pos = store index (Amazon India = 63, Flipkart = 1, Myntra = 4 …)
+//   pid = store's own product ID (ASIN for Amazon, pid for Flipkart)
+//   Returns: name, image, link, cur_price, site_name, internalPid
+//
+// Step 2 — getRawProdSpecs: gets cross-store price comparison by internalPid
+//   GET https://buyhatke.com/api/getRawProdSpecs?pid_id={internalPid}&pos={pos}
+//   Returns: array of {site_name, site_pos, pid, price, link, inStock …}
+// ══════════════════════════════════════════════════════════════════════
 
-  console.log('[Buyhatke] Calling:', apiUrl.substring(0, 120));
-  const r = await fetch(apiUrl, {
-    headers: {
-      'Accept': 'application/json, */*',
-      'Accept-Language': 'en-IN,en;q=0.9',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-      'Referer': 'https://buyhatke.com/',
-      'Origin': 'https://buyhatke.com',
-    },
-    signal: AbortSignal.timeout(15000),
-  });
+// Buyhatke store position numbers (pos param in productData endpoint).
+// pos=63 confirmed for Amazon India. Others are best-known values —
+// add more as you discover them via DevTools on buyhatke.com.
+const BHK_POS = {
+  amazon:    63,
+  flipkart:  1,
+  myntra:    4,
+  ajio:      14,
+  nykaa:     11,
+  croma:     7,
+  snapdeal:  3,
+  tatacliq:  10,
+  meesho:    22,
+  jiomart:   20,
+};
 
-  if (!r.ok) throw new Error('Buyhatke HTTP ' + r.status);
-  const data = await r.json();
+// Extract (pos, pid) from a product URL so we can call productData.
+// Returns null if the URL is not from a recognised store.
+function extractBhkParams(productUrl) {
+  try {
+    const u    = new URL(productUrl);
+    const host = u.hostname.replace('www.', '');
 
-  // Log top-level keys so we can see the real shape in PM2 logs
-  console.log('[Buyhatke] Status:', data.status || data.statusMsg || '?',
-    '| Top keys:', Object.keys(data).join(', '));
+    // Amazon — ASIN is the pid, pos = 63
+    if (host.includes('amazon') || host.includes('amzn')) {
+      const m = u.pathname.match(/\/dp\/([A-Z0-9]{10})/i)
+             || u.pathname.match(/\/([A-Z0-9]{10})(?:\/|$)/i);
+      if (m) return { pos: BHK_POS.amazon, pid: m[1] };
+    }
 
-  // Accept status === 1 OR statusMsg === 'success' (API varies)
-  const ok = data.status === 1 || data.status === 'success' ||
-    (data.statusMsg && data.statusMsg.toLowerCase().includes('success'));
-  if (!ok) throw new Error('Buyhatke status not OK: ' + JSON.stringify(data).substring(0, 120));
+    // Flipkart — pid is in the URL as /p/pid or ?pid=
+    if (host.includes('flipkart')) {
+      const pid = u.searchParams.get('pid')
+               || (u.pathname.match(/\/p\/([a-z0-9]+)/i) || [])[1];
+      if (pid) return { pos: BHK_POS.flipkart, pid };
+    }
 
-  return data;
+    // Myntra — product ID is the last numeric segment
+    if (host.includes('myntra')) {
+      const m = u.pathname.match(/\/(\d{6,})(?:\/|$)/);
+      if (m) return { pos: BHK_POS.myntra, pid: m[1] };
+    }
+
+    // Ajio — product code is the last path segment
+    if (host.includes('ajio')) {
+      const segs = u.pathname.split('/').filter(Boolean);
+      const pid  = segs[segs.length - 1];
+      if (pid && pid.length > 4) return { pos: BHK_POS.ajio, pid };
+    }
+
+    // Nykaa — product ID in URL
+    if (host.includes('nykaa')) {
+      const m = u.pathname.match(/\/(\d{4,})(?:\/|$)/);
+      if (m) return { pos: BHK_POS.nykaa, pid: m[1] };
+    }
+
+    return null;
+  } catch(e) { return null; }
 }
 
-// Parse Buyhatke response into the same stores[] shape used by the rest of the system.
-// The API has changed field names before — we try all known shapes defensively.
-function parseBuyhatkeResponse(data, inputUrl, srcStore) {
-  // Unwrap envelope
-  const d = data.data || data.result || data;
+const BHK_HEADERS = {
+  'Accept':          'application/json, */*',
+  'Accept-Language': 'en-IN,en;q=0.9',
+  'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+  'Referer':         'https://buyhatke.com/',
+  'Origin':          'https://buyhatke.com',
+};
 
-  // ── Product info ──
-  const pi = d.productInfo || d.product || d;
-  const productName  = pi.name || pi.title || pi.productName || pi.product_name || '';
-  const productImage = pi.image || pi.imageUrl || pi.img || pi.thumbnail || pi.productImage || '';
+// Step 1: resolve input URL → { name, image, cur_price, internalPid, site_name, link }
+async function bhkGetProductData(pos, pid) {
+  const url = `https://buyhatke.com/api/productData?pos=${pos}&pid=${encodeURIComponent(pid)}`;
+  console.log('[BHK] productData:', url);
+  const r = await fetch(url, { headers: BHK_HEADERS, signal: AbortSignal.timeout(12000) });
+  if (!r.ok) throw new Error(`productData HTTP ${r.status}`);
+  const d = await r.json();
+  if (!d.data || !d.data.internalPid) throw new Error('productData: no internalPid in response');
+  console.log(`[BHK] Got product: "${(d.data.name||'').substring(0,50)}" internalPid=${d.data.internalPid}`);
+  return d.data;
+}
 
-  // ── Price list — try all known field names ──
-  const rawItems = d.priceList || d.stores || d.storeList || d.prices
-    || d.pricelist || d.offer_stores || d.offerList || [];
+// Step 2: get cross-store prices by internalPid.
+// Primary: getRawProdSpecs (seen in DevTools).
+// Fallback candidates probed silently if primary returns no store list.
+async function bhkGetMultiStorePrices(internalPid, pos) {
+  const candidates = [
+    `https://buyhatke.com/api/getRawProdSpecs?pid_id=${internalPid}&pos=${pos}`,
+    `https://buyhatke.com/api/getRawProdSpecs?pid_id=${internalPid}`,
+    `https://buyhatke.com/api/compareData?internalPid=${internalPid}&pos=${pos}`,
+    `https://buyhatke.com/api/prodPriceList?internalPid=${internalPid}`,
+    `https://buyhatke.com/api/allPrices?pid=${internalPid}`,
+  ];
 
-  console.log('[Buyhatke] Raw items:', rawItems.length,
-    rawItems.length > 0 ? '| Sample: ' + JSON.stringify(rawItems[0]).substring(0,150) : '');
+  for (const endpoint of candidates) {
+    try {
+      const r = await fetch(endpoint, { headers: BHK_HEADERS, signal: AbortSignal.timeout(12000) });
+      if (!r.ok) { console.log(`[BHK] multiStore ${r.status}:`, endpoint.substring(60)); continue; }
+      const d = await r.json();
+      console.log(`[BHK] multiStore keys at ${endpoint.substring(30,80)}:`, JSON.stringify(d).substring(0, 120));
 
+      // Detect a store list — try all shapes the API has ever returned
+      const items = extractStoreItems(d);
+      if (items && items.length > 0) {
+        console.log(`[BHK] ✅ multiStore endpoint works: ${endpoint} → ${items.length} items`);
+        return { items, endpoint };
+      }
+      console.log('[BHK] multiStore: no store list found in response, trying next candidate');
+    } catch(e) {
+      console.log('[BHK] multiStore error:', e.message.substring(0, 60));
+    }
+  }
+  return { items: [], endpoint: null };
+}
+
+// Detect store item array from any response shape
+function extractStoreItems(d) {
+  const root = d.data || d.result || d;
+  // Named array fields
+  for (const key of ['storeData', 'stores', 'priceList', 'storeList', 'prices',
+                      'pricelist', 'offer_stores', 'offerList', 'items', 'results']) {
+    if (Array.isArray(root[key]) && root[key].length > 0) return root[key];
+  }
+  // Root-level array
+  if (Array.isArray(root) && root.length > 0) return root;
+  // Array inside data.data
+  if (root.data && Array.isArray(root.data) && root.data.length > 0) return root.data;
+  return null;
+}
+
+// Parse one store item from getRawProdSpecs (or any similar shape)
+// into { name, price, url }. Returns null if unusable.
+function parseStoreItem(item) {
+  // Store name — confirmed fields from getRawProdSpecs + defensive alternatives
+  const rawName = item.site_name || item.storeName || item.store_name
+    || item.name  || item.store   || item.merchant  || '';
+  const name = normalizeStore(rawName);
+  if (!name) return null;
+
+  // Price — confirmed: cur_price. Also try alternatives.
+  const rawPrice = item.cur_price  || item.price      || item.storePrice
+    || item.offerPrice || item.selling_price || item.mrp || 0;
+  const price = parseFloat(String(rawPrice).replace(/[^0-9.]/g, '')) || 0;
+  if (price <= 0) return null;
+
+  // Stock — skip out-of-stock items
+  if (item.inStock === 0 || item.inStock === false) return null;
+
+  // URL — confirmed: link. Also try alternatives.
+  const url = item.link || item.url || item.productURL || item.product_url
+    || item.buyUrl  || item.buy_url  || '';
+  if (!url || !url.startsWith('http')) return null;
+
+  return { name, normalizedName: name, price, url };
+}
+
+// Main Buyhatke fetch — two-step, returns same shape as before
+async function fetchBuyhatke(productUrl) {
+  const params = extractBhkParams(productUrl);
+  if (!params) throw new Error(
+    'URL not recognised as a supported store (Amazon/Flipkart/Myntra/Ajio/Nykaa). ' +
+    'Got: ' + productUrl.substring(0, 80)
+  );
+
+  const { pos, pid } = params;
+
+  // Step 1 — source product
+  const srcProduct = await bhkGetProductData(pos, pid);
+  const { internalPid, name: productName, image: productImage,
+          cur_price: srcPrice, link: srcLink, site_name: srcSiteName } = srcProduct;
+
+  // Step 2 — cross-store prices
+  const { items } = await bhkGetMultiStorePrices(internalPid, pos);
+
+  // Build store list — include source store always (it's confirmed from step 1)
   const storeMap = {};
 
-  rawItems.forEach(item => {
-    // Store name — try every possible field name
-    const rawName = item.storeName || item.store_name || item.name
-      || item.store || item.merchant || item.retailer || '';
-    const name = normalizeStore(rawName);
-    if (!name) {
-      console.log('[Buyhatke] Unrecognised store skipped:', rawName);
-      return;
-    }
+  // Add source store from step-1 data (always present, accurate)
+  const srcStoreName = normalizeStore(srcSiteName || '');
+  if (srcStoreName && srcPrice > 0 && srcLink) {
+    storeMap[srcStoreName] = { name: srcStoreName, normalizedName: srcStoreName,
+                               price: srcPrice, url: srcLink };
+  }
 
-    // Price — try every possible field name, strip commas/currency symbols
-    const rawPrice = item.storePrice || item.store_price || item.price
-      || item.offerPrice || item.offer_price || item.sellingPrice
-      || item.selling_price || item.mrp || 0;
-    const price = parseFloat(String(rawPrice).replace(/[^0-9.]/g, '')) || 0;
-    if (price <= 0) return;
-
-    // Product URL — direct link to product page on that store
-    const url = item.productURL || item.product_url || item.productUrl
-      || item.url || item.link || item.buyUrl || item.buy_url || '';
-    if (!url || !url.startsWith('http')) return;
-
-    // Keep only lowest price per store
-    if (!storeMap[name] || price < storeMap[name].price) {
-      storeMap[name] = { name, normalizedName: name, price, url };
+  // Add cross-store results from step 2
+  items.forEach(item => {
+    const parsed = parseStoreItem(item);
+    if (!parsed) return;
+    // Keep lowest price per store
+    if (!storeMap[parsed.name] || parsed.price < storeMap[parsed.name].price) {
+      storeMap[parsed.name] = parsed;
     }
   });
 
-  // Sort by price ascending, flag best + source
+  console.log(`[BHK] Total stores collected: ${Object.keys(storeMap).length} —`,
+    Object.values(storeMap).map(s => s.name + ':₹' + s.price).join(' | '));
+
+  return {
+    _bhkParsed: true,   // flag so parseBuyhatkeResponse knows we pre-parsed
+    stores:       Object.values(storeMap),
+    productName:  productName || '',
+    productImage: productImage || '',
+  };
+}
+
+// parseBuyhatkeResponse — called by /compare/search and /buyhatke/debug
+// fetchBuyhatke now returns pre-parsed data, so this just applies
+// isBest/isSource flags and sorts. Kept for backwards compat.
+function parseBuyhatkeResponse(data, inputUrl, srcStore) {
+  // New pre-parsed path
+  if (data._bhkParsed) {
+    const stores = data.stores
+      .sort((a, b) => a.price - b.price)
+      .map((s, i) => ({ ...s, isBest: i === 0, isSource: s.name === srcStore }));
+    return { stores, productName: data.productName, productImage: data.productImage };
+  }
+
+  // Legacy path — raw API response (kept in case /buyhatke/debug is called
+  // with data from an older version or a manual test)
+  const d = data.data || data.result || data;
+  const productName  = d.name  || d.productName  || '';
+  const productImage = d.image || d.productImage || '';
+  const rawItems     = extractStoreItems(d) || [];
+  const storeMap     = {};
+  rawItems.forEach(item => {
+    const parsed = parseStoreItem(item);
+    if (!parsed) return;
+    if (!storeMap[parsed.name] || parsed.price < storeMap[parsed.name].price) {
+      storeMap[parsed.name] = parsed;
+    }
+  });
   const stores = Object.values(storeMap)
     .sort((a, b) => a.price - b.price)
     .map((s, i) => ({ ...s, isBest: i === 0, isSource: s.name === srcStore }));
-
   return { stores, productName, productImage };
 }
 
@@ -1543,38 +1703,63 @@ app.get('/compare/search', async (req, res) => {
     return res.status(500).json({ error: e.message });
   }
 });
-// Buyhatke debug — test raw API response for any product URL
-// Usage: https://api.smartpickdeals.live/buyhatke/debug?url=https://amzn.in/d/xxx
+// Buyhatke debug — shows full two-step diagnostic for any product URL
+// Usage: https://api.smartpickdeals.live/buyhatke/debug?url=https://www.amazon.in/dp/B0FVS8V372
 app.get('/buyhatke/debug', async (req, res) => {
   const { url } = req.query;
   if (!url) return res.json({
-    usage: 'Add ?url=YOUR_PRODUCT_URL',
-    example: '/buyhatke/debug?url=https://www.amazon.in/dp/B0XXXXX',
+    usage:   'Add ?url=YOUR_PRODUCT_URL',
+    example: '/buyhatke/debug?url=https://www.amazon.in/dp/B0FVS8V372',
+    supportedStores: 'Amazon, Flipkart, Myntra, Ajio, Nykaa',
   });
+
+  // Step 1: param extraction
+  const params = extractBhkParams(url);
+  if (!params) return res.json({
+    error: 'URL not from a supported store (Amazon/Flipkart/Myntra/Ajio/Nykaa)',
+    url,
+  });
+  const { pos, pid } = params;
+
+  // Step 2: productData call
+  let srcProduct = null;
   try {
-    const raw    = await fetchBuyhatke(url);
-    const d      = raw.data || raw.result || raw;
-    // Show first 3 items of every array field so you can see field names
-    const preview = {};
-    for (const [k, v] of Object.entries(d)) {
-      preview[k] = Array.isArray(v)
-        ? v.slice(0, 3).map(x => JSON.stringify(x).substring(0, 300))
-        : (typeof v === 'object' ? v : v);
-    }
-    const parsed = parseBuyhatkeResponse(raw, url, '');
-    return res.json({
-      status:         raw.status,
-      statusMsg:      raw.statusMsg,
-      topLevelKeys:   Object.keys(raw),
-      dataKeys:       Object.keys(d),
-      dataPreview:    preview,
-      parsedStores:   parsed.stores,
-      productName:    parsed.productName,
-      productImage:   parsed.productImage,
-    });
+    srcProduct = await bhkGetProductData(pos, pid);
   } catch(e) {
-    return res.json({ error: e.message });
+    return res.json({ step: 'productData', error: e.message, pos, pid });
   }
+
+  // Step 3: multi-store call
+  const { items, endpoint: multiEndpoint } = await bhkGetMultiStorePrices(srcProduct.internalPid, pos);
+
+  // Step 4: full parse
+  const raw    = { _bhkParsed: true, stores: [], productName: srcProduct.name, productImage: srcProduct.image };
+  const parsed = parseBuyhatkeResponse(
+    await fetchBuyhatke(url).catch(() => raw),
+    url, ''
+  );
+
+  return res.json({
+    step1_params:          { pos, pid },
+    step1_productData:     {
+      name:        srcProduct.name,
+      site_name:   srcProduct.site_name,
+      cur_price:   srcProduct.cur_price,
+      internalPid: srcProduct.internalPid,
+      inStock:     srcProduct.inStock,
+      link:        srcProduct.link,
+    },
+    step2_multiStoreEndpoint: multiEndpoint || 'NONE — all candidates failed, see PM2 logs',
+    step2_rawItemCount:    items.length,
+    step2_sampleItems:     items.slice(0, 3),
+    parsedStores:          parsed.stores,
+    parsedCount:           parsed.stores.length,
+    productName:           parsed.productName,
+    productImage:          parsed.productImage,
+    nextStep: items.length === 0
+      ? 'Step 2 failed — check PM2 logs (pm2 logs smartpickdeals --lines 40) to see which endpoints were tried and what they returned'
+      : '✅ Integration working',
+  });
 });
 
 // Debug endpoint
