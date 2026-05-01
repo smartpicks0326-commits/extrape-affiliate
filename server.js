@@ -701,7 +701,13 @@ async function bhkGetProductData(pos, pid) {
   const r = await fetch(url, { headers: BHK_HEADERS, signal: AbortSignal.timeout(12000) });
   if (!r.ok) throw new Error(`productData HTTP ${r.status}`);
   const d = await r.json();
-  if (!d.data || !d.data.internalPid) throw new Error('productData: no internalPid in response');
+  if (!d.data || !d.data.internalPid) {
+    // Product not in Buyhatke index — log full response for diagnosis, throw for SerpAPI fallback
+    console.log('[BHK] productData missing internalPid. Full response:', JSON.stringify(d).substring(0, 400));
+    const err = new Error('productData: no internalPid — product not in Buyhatke index');
+    err.rawResponse = d;
+    throw err;
+  }
   console.log(`[BHK] Got product: "${(d.data.name||'').substring(0,50)}" internalPid=${d.data.internalPid}`);
   return d.data;
 }
@@ -718,25 +724,39 @@ async function bhkGetMultiStorePrices(internalPid, pos) {
     `https://buyhatke.com/api/allPrices?pid=${internalPid}`,
   ];
 
+  const rawResponses = [];   // collected for debug endpoint
   for (const endpoint of candidates) {
     try {
       const r = await fetch(endpoint, { headers: BHK_HEADERS, signal: AbortSignal.timeout(12000) });
-      if (!r.ok) { console.log(`[BHK] multiStore ${r.status}:`, endpoint.substring(60)); continue; }
-      const d = await r.json();
-      console.log(`[BHK] multiStore keys at ${endpoint.substring(30,80)}:`, JSON.stringify(d).substring(0, 120));
+      const status = r.status;
+      if (!r.ok) {
+        console.log(`[BHK] multiStore HTTP ${status}:`, endpoint.substring(40));
+        rawResponses.push({ endpoint, status, error: `HTTP ${status}` });
+        continue;
+      }
+      const text = await r.text();
+      let d;
+      try { d = JSON.parse(text); } catch(e) {
+        console.log(`[BHK] multiStore non-JSON (${text.length} chars):`, text.substring(0, 80));
+        rawResponses.push({ endpoint, status, error: 'non-JSON', preview: text.substring(0, 200) });
+        continue;
+      }
+      const preview = JSON.stringify(d).substring(0, 300);
+      console.log(`[BHK] multiStore OK at ${endpoint.substring(40)}:`, preview);
+      rawResponses.push({ endpoint, status, preview });
 
-      // Detect a store list — try all shapes the API has ever returned
       const items = extractStoreItems(d);
       if (items && items.length > 0) {
-        console.log(`[BHK] ✅ multiStore endpoint works: ${endpoint} → ${items.length} items`);
-        return { items, endpoint };
+        console.log(`[BHK] ✅ multiStore works: ${endpoint} → ${items.length} stores`);
+        return { items, endpoint, rawResponses };
       }
-      console.log('[BHK] multiStore: no store list found in response, trying next candidate');
+      console.log('[BHK] multiStore: 200 but no store array found — trying next');
     } catch(e) {
-      console.log('[BHK] multiStore error:', e.message.substring(0, 60));
+      console.log('[BHK] multiStore error:', e.message.substring(0, 80));
+      rawResponses.push({ endpoint, error: e.message });
     }
   }
-  return { items: [], endpoint: null };
+  return { items: [], endpoint: null, rawResponses };
 }
 
 // Detect store item array from any response shape
@@ -1768,22 +1788,40 @@ app.get('/buyhatke/debug', async (req, res) => {
   try {
     srcProduct = await bhkGetProductData(pos, pid);
   } catch(e) {
-    return res.json({ step: 'productData', error: e.message, pos, pid });
+    return res.json({
+      step:            'productData',
+      error:           e.message,
+      pos, pid,
+      rawResponse:     e.rawResponse || null,
+      diagnosis:       'Product not in Buyhatke index — compare will fall back to SerpAPI for this URL',
+    });
   }
 
-  // Step 3: multi-store call
-  const { items, endpoint: multiEndpoint } = await bhkGetMultiStorePrices(srcProduct.internalPid, pos);
+  // Step 3: multi-store call — collect raw responses for diagnosis
+  const { items, endpoint: multiEndpoint, rawResponses } =
+    await bhkGetMultiStorePrices(srcProduct.internalPid, pos);
 
-  // Step 4: full parse
-  const raw    = { _bhkParsed: true, stores: [], productName: srcProduct.name, productImage: srcProduct.image };
-  const parsed = parseBuyhatkeResponse(
-    await fetchBuyhatke(url).catch(() => raw),
-    url, ''
-  );
+  // Step 4: parse what we have (source store always present from step 1)
+  const srcStoreName = normalizeStore(srcProduct.site_name || '');
+  const storeMap = {};
+  if (srcStoreName && srcProduct.cur_price > 0 && srcProduct.link) {
+    storeMap[srcStoreName] = { name: srcStoreName, normalizedName: srcStoreName,
+                               price: srcProduct.cur_price, url: srcProduct.link,
+                               isBest: true, isSource: true };
+  }
+  items.forEach(item => {
+    const p = parseStoreItem(item);
+    if (!p) return;
+    if (!storeMap[p.name] || p.price < storeMap[p.name].price) {
+      storeMap[p.name] = { ...p, isBest: false, isSource: p.name === srcStoreName };
+    }
+  });
+  const parsedStores = Object.values(storeMap).sort((a,b) => a.price - b.price)
+    .map((s,i) => ({ ...s, isBest: i === 0 }));
 
   return res.json({
-    step1_params:          { pos, pid },
-    step1_productData:     {
+    step1_params:     { pos, pid },
+    step1_productData: {
       name:        srcProduct.name,
       site_name:   srcProduct.site_name,
       cur_price:   srcProduct.cur_price,
@@ -1791,16 +1829,18 @@ app.get('/buyhatke/debug', async (req, res) => {
       inStock:     srcProduct.inStock,
       link:        srcProduct.link,
     },
-    step2_multiStoreEndpoint: multiEndpoint || 'NONE — all candidates failed, see PM2 logs',
+    step2_workingEndpoint: multiEndpoint || null,
     step2_rawItemCount:    items.length,
-    step2_sampleItems:     items.slice(0, 3),
-    parsedStores:          parsed.stores,
-    parsedCount:           parsed.stores.length,
-    productName:           parsed.productName,
-    productImage:          parsed.productImage,
-    nextStep: items.length === 0
-      ? 'Step 2 failed — check PM2 logs (pm2 logs smartpickdeals --lines 40) to see which endpoints were tried and what they returned'
-      : '✅ Integration working',
+    step2_sampleItems:     items.slice(0, 2),
+    // Raw response from EACH candidate — key for diagnosing step 2 failures:
+    step2_allAttempts:     rawResponses,
+    parsedStores,
+    parsedCount:           parsedStores.length,
+    productName:           srcProduct.name,
+    productImage:          srcProduct.image,
+    status: items.length > 0 ? '✅ Full multi-store data' :
+            parsedStores.length > 0 ? '⚠️ Source store only — step 2 failed, check step2_allAttempts' :
+            '❌ No data',
   });
 });
 
