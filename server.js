@@ -715,94 +715,74 @@ async function bhkGetProductData(pos, pid) {
 // Step 2: get cross-store prices by internalPid.
 // Primary: getRawProdSpecs (seen in DevTools).
 // Fallback candidates probed silently if primary returns no store list.
-async function bhkGetMultiStorePrices(internalPid, pos) {
-  // Candidates ordered by likelihood.
-  // getRawProdSpecs confirmed visible in DevTools but returns Next.js SSR HTML —
-  // we parse __NEXT_DATA__ from it. posList seen in DevTools on homepage.
-  // compare.buyhatke.com is the subdomain used for site_logo URLs (may host API too).
-  const candidates = [
-    `https://buyhatke.com/api/getRawProdSpecs?pid_id=${internalPid}&pos=${pos}`,
-    `https://buyhatke.com/api/posList?internalPid=${internalPid}&pos=${pos}`,
-    `https://buyhatke.com/api/posList?pid_id=${internalPid}&pos=${pos}`,
-    `https://compare.buyhatke.com/api/getRawProdSpecs?pid_id=${internalPid}&pos=${pos}`,
-    `https://compare.buyhatke.com/api/posList?pid_id=${internalPid}&pos=${pos}`,
-    `https://buyhatke.com/api/getRawProdSpecs?pid_id=${internalPid}`,
-    `https://buyhatke.com/api/compareData?internalPid=${internalPid}&pos=${pos}`,
-    `https://buyhatke.com/api/prodPriceList?internalPid=${internalPid}`,
-  ];
+async function bhkGetMultiStorePrices(internalPid, srcPid, srcPos) {
+  // ── Step 2a: posList — confirmed working. Returns { domain: pos } for all stores. ──
+  const posListUrl = `https://buyhatke.com/api/posList?internalPid=${internalPid}`;
+  console.log('[BHK] posList:', posListUrl);
 
-  const rawResponses = [];   // collected for debug endpoint
-
-  for (const endpoint of candidates) {
-    try {
-      const r = await fetch(endpoint, { headers: BHK_HEADERS, signal: AbortSignal.timeout(12000) });
-      const status = r.status;
-      if (!r.ok) {
-        console.log(`[BHK] multiStore HTTP ${status}:`, endpoint.substring(40));
-        rawResponses.push({ endpoint, status, error: `HTTP ${status}` });
-        continue;
-      }
-
-      const text = await r.text();
-
-      // ── Try JSON first ──
-      let d = null;
-      try {
-        d = JSON.parse(text);
-      } catch(e) {
-        // Not JSON — check if it is a Next.js SSR page with __NEXT_DATA__ embedded.
-        // Next.js embeds all getServerSideProps data as:
-        //   <script id="__NEXT_DATA__" type="application/json">{...}</script>
-        const ndMatch = text.match(/<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/);
-        if (ndMatch) {
-          try {
-            const nd = JSON.parse(ndMatch[1]);
-            console.log('[BHK] __NEXT_DATA__ found, keys:', Object.keys(nd.props || {}).join(', '));
-            // Navigate the Next.js structure: props → pageProps → *
-            const pp = (nd.props || {}).pageProps || {};
-            console.log('[BHK] pageProps keys:', Object.keys(pp).join(', '));
-            // Try all plausible pageProps fields that might hold the price list
-            d = pp;
-            rawResponses.push({
-              endpoint, status,
-              source: '__NEXT_DATA__',
-              pagePropsKeys: Object.keys(pp),
-              preview: JSON.stringify(pp).substring(0, 400),
-            });
-          } catch(e2) {
-            rawResponses.push({ endpoint, status, error: 'HTML with invalid __NEXT_DATA__', preview: text.substring(0, 200) });
-            continue;
-          }
-        } else {
-          console.log(`[BHK] non-JSON, no __NEXT_DATA__ (${text.length} chars):`, text.substring(0, 100));
-          rawResponses.push({ endpoint, status, error: 'HTML no __NEXT_DATA__', preview: text.substring(0, 200) });
-          continue;
-        }
-      }
-
-      if (!d) continue;
-
-      // ── Try to extract store items from whatever shape d is ──
-      const items = extractStoreItems(d);
-      if (items && items.length > 0) {
-        console.log(`[BHK] ✅ multiStore works: ${endpoint} → ${items.length} stores`);
-        if (!rawResponses.find(r => r.endpoint === endpoint)) {
-          rawResponses.push({ endpoint, status, preview: JSON.stringify(d).substring(0, 300) });
-        }
-        return { items, endpoint, rawResponses };
-      }
-
-      console.log('[BHK] multiStore: 200 but no store array — trying next. Keys:', Object.keys(d).join(', '));
-      if (!rawResponses.find(r => r.endpoint === endpoint)) {
-        rawResponses.push({ endpoint, status, preview: JSON.stringify(d).substring(0, 300) });
-      }
-
-    } catch(e) {
-      console.log('[BHK] multiStore error:', e.message.substring(0, 80));
-      rawResponses.push({ endpoint, error: e.message });
+  let posMap = null;   // { "www.flipkart.com": 2, "www.amazon.in": 63, ... }
+  try {
+    const r = await fetch(posListUrl, { headers: BHK_HEADERS, signal: AbortSignal.timeout(10000) });
+    if (!r.ok) throw new Error(`posList HTTP ${r.status}`);
+    const d = await r.json();
+    if (d.status !== 1 || !d.data || typeof d.data !== 'object') {
+      throw new Error('posList unexpected shape: ' + JSON.stringify(d).substring(0, 100));
     }
+    posMap = d.data;
+    console.log('[BHK] posList stores:', Object.keys(posMap).join(', '));
+  } catch(e) {
+    console.log('[BHK] posList failed:', e.message);
+    return { items: [], endpoint: null, rawResponses: [{ endpoint: posListUrl, error: e.message }] };
   }
-  return { items: [], endpoint: null, rawResponses };
+
+  // Map domain names to our normalised store names and filter to supported ones
+  const storesToFetch = [];
+  for (const [domain, storePos] of Object.entries(posMap)) {
+    const name = normalizeStore(domain);
+    if (!name) { console.log('[BHK] posList: skipping unsupported domain:', domain); continue; }
+    storesToFetch.push({ domain, name, storePos });
+  }
+  console.log('[BHK] Fetching productData for', storesToFetch.length, 'stores');
+
+  // ── Step 2b: productData for each store concurrently ──
+  // pid param: try internalPid first (Buyhatke's universal key),
+  // fall back to srcPid (the ASIN / source store pid).
+  const fetchStoreData = async ({ domain, name, storePos }) => {
+    // Skip source store — we already have it from step 1
+    // Try internalPid as pid (works when Buyhatke maps it universally)
+    const urls = [
+      `https://buyhatke.com/api/productData?pos=${storePos}&pid=${internalPid}`,
+      `https://buyhatke.com/api/productData?pos=${storePos}&pid=${encodeURIComponent(srcPid)}`,
+    ];
+
+    for (const url of urls) {
+      try {
+        const r = await fetch(url, { headers: BHK_HEADERS, signal: AbortSignal.timeout(10000) });
+        if (!r.ok) continue;
+        const d = await r.json();
+        if (!d.data || !d.data.cur_price) continue;
+        const { cur_price, link, inStock } = d.data;
+        if (!cur_price || cur_price <= 0 || inStock === 0) continue;
+        if (!link || !link.startsWith('http')) continue;
+        console.log(`[BHK] ${name} ₹${cur_price} via ${url.substring(40, 90)}`);
+        return { name, normalizedName: name, price: cur_price, url: link };
+      } catch(e) { /* try next url */ }
+    }
+    console.log(`[BHK] ${name} (pos ${storePos}): no data`);
+    return null;
+  };
+
+  const results = await Promise.all(storesToFetch.map(fetchStoreData));
+  const items = results.filter(Boolean);
+
+  console.log(`[BHK] ✅ Got ${items.length} stores:`,
+    items.map(s => s.name + ':₹' + s.price).join(' | '));
+
+  return {
+    items,
+    endpoint: posListUrl,
+    rawResponses: [{ endpoint: posListUrl, status: 200, posMap, storesFetched: storesToFetch.length, storesWithData: items.length }],
+  };
 }
 
 // Detect store item array from any response shape
@@ -862,7 +842,7 @@ async function fetchBuyhatke(productUrl) {
           cur_price: srcPrice, link: srcLink, site_name: srcSiteName } = srcProduct;
 
   // Step 2 — cross-store prices
-  const { items } = await bhkGetMultiStorePrices(internalPid, pos);
+  const { items } = await bhkGetMultiStorePrices(internalPid, pid, pos);
 
   // Build store list — include source store always (it's confirmed from step 1)
   const storeMap = {};
@@ -1845,7 +1825,7 @@ app.get('/buyhatke/debug', async (req, res) => {
 
   // Step 3: multi-store call — collect raw responses for diagnosis
   const { items, endpoint: multiEndpoint, rawResponses } =
-    await bhkGetMultiStorePrices(srcProduct.internalPid, pos);
+    await bhkGetMultiStorePrices(srcProduct.internalPid, pid, pos);
 
   // Step 4: parse what we have (source store always present from step 1)
   const srcStoreName = normalizeStore(srcProduct.site_name || '');
