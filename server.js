@@ -694,6 +694,22 @@ const BHK_HEADERS = {
   'Origin':          'https://buyhatke.com',
 };
 
+// Same-origin XHR headers — used for getRawProdSpecs which returns JSON to browser
+// XHR but falls back to SSR HTML for plain fetch requests.
+// The sec-fetch-* headers tell the server this is a same-origin AJAX call, not
+// a browser navigation — that's why the browser gets JSON and we were getting HTML.
+const BHK_XHR_HEADERS = {
+  ...BHK_HEADERS,
+  'Accept':            'application/json, text/plain, */*',
+  'sec-fetch-dest':    'empty',
+  'sec-fetch-mode':    'cors',
+  'sec-fetch-site':    'same-origin',
+  'sec-ch-ua':         '"Google Chrome";v="124", "Chromium";v="124", "Not-A.Brand";v="99"',
+  'sec-ch-ua-mobile':  '?0',
+  'sec-ch-ua-platform': '"Windows"',
+  'x-requested-with':  'XMLHttpRequest',
+};
+
 // Step 1: resolve input URL → { name, image, cur_price, internalPid, site_name, link }
 async function bhkGetProductData(pos, pid) {
   const url = `https://buyhatke.com/api/productData?pos=${pos}&pid=${encodeURIComponent(pid)}`;
@@ -716,11 +732,53 @@ async function bhkGetProductData(pos, pid) {
 // Primary: getRawProdSpecs (seen in DevTools).
 // Fallback candidates probed silently if primary returns no store list.
 async function bhkGetMultiStorePrices(internalPid, srcPid, srcPos) {
-  // ── Step 2a: posList — confirmed working. Returns { domain: pos } for all stores. ──
-  const posListUrl = `https://buyhatke.com/api/posList?internalPid=${internalPid}`;
-  console.log('[BHK] posList:', posListUrl);
+  const rawResponses = [];
 
-  let posMap = null;   // { "www.flipkart.com": 2, "www.amazon.in": 63, ... }
+  // ── Strategy A: getRawProdSpecs with browser XHR headers ──
+  // The browser gets JSON from this endpoint via same-origin XHR.
+  // We simulate those headers to try to get the JSON response instead of HTML.
+  const rawSpecsUrl = `https://buyhatke.com/api/getRawProdSpecs?pid_id=${internalPid}&pos=${srcPos}`;
+  try {
+    console.log('[BHK] getRawProdSpecs (XHR sim):', rawSpecsUrl);
+    const r = await fetch(rawSpecsUrl, {
+      headers: BHK_XHR_HEADERS,
+      signal: AbortSignal.timeout(12000),
+    });
+    const text = await r.text();
+    let d = null;
+    try { d = JSON.parse(text); } catch(e) {}
+
+    if (d && d.status === 1) {
+      const items = extractStoreItems(d);
+      if (items && items.length > 0) {
+        console.log(`[BHK] ✅ getRawProdSpecs returned JSON → ${items.length} stores`);
+        rawResponses.push({ strategy: 'getRawProdSpecs-xhr', status: r.status, storesFound: items.length });
+        return { items, endpoint: rawSpecsUrl, rawResponses };
+      }
+      // JSON but no store array — log keys for diagnosis
+      const d2 = d.data || d;
+      rawResponses.push({ strategy: 'getRawProdSpecs-xhr', status: r.status,
+        note: 'JSON but no store array', keys: Object.keys(d2) });
+      console.log('[BHK] getRawProdSpecs JSON but no store array. Keys:', Object.keys(d2).join(', '));
+      console.log('[BHK] Full response (first 500):', JSON.stringify(d).substring(0, 500));
+    } else {
+      rawResponses.push({ strategy: 'getRawProdSpecs-xhr', status: r.status,
+        note: d ? 'JSON status!=1' : 'HTML (XHR sim did not unlock JSON)',
+        preview: text.substring(0, 150) });
+      console.log('[BHK] getRawProdSpecs: still getting HTML or bad status');
+    }
+  } catch(e) {
+    rawResponses.push({ strategy: 'getRawProdSpecs-xhr', error: e.message });
+    console.log('[BHK] getRawProdSpecs error:', e.message);
+  }
+
+  // ── Strategy B: posList + per-store productData (confirmed working for source store) ──
+  // posList gives us { domain: pos } for all stores.
+  // productData?pos={storePos}&pid={internalPid} works when Buyhatke stores cross-store pids.
+  const posListUrl = `https://buyhatke.com/api/posList?internalPid=${internalPid}`;
+  console.log('[BHK] Falling back to posList strategy:', posListUrl);
+
+  let posMap = null;
   try {
     const r = await fetch(posListUrl, { headers: BHK_HEADERS, signal: AbortSignal.timeout(10000) });
     if (!r.ok) throw new Error(`posList HTTP ${r.status}`);
@@ -729,60 +787,64 @@ async function bhkGetMultiStorePrices(internalPid, srcPid, srcPos) {
       throw new Error('posList unexpected shape: ' + JSON.stringify(d).substring(0, 100));
     }
     posMap = d.data;
-    console.log('[BHK] posList stores:', Object.keys(posMap).join(', '));
+    console.log('[BHK] posList stores:', Object.keys(posMap).length, 'total');
   } catch(e) {
     console.log('[BHK] posList failed:', e.message);
-    return { items: [], endpoint: null, rawResponses: [{ endpoint: posListUrl, error: e.message }] };
+    rawResponses.push({ strategy: 'posList', error: e.message });
+    return { items: [], endpoint: null, rawResponses };
   }
 
-  // Map domain names to our normalised store names and filter to supported ones
+  // Filter to supported stores only
   const storesToFetch = [];
   for (const [domain, storePos] of Object.entries(posMap)) {
+    if (storePos === srcPos) continue;  // skip source store — already in step 1
     const name = normalizeStore(domain);
-    if (!name) { console.log('[BHK] posList: skipping unsupported domain:', domain); continue; }
+    if (!name) continue;
     storesToFetch.push({ domain, name, storePos });
   }
-  console.log('[BHK] Fetching productData for', storesToFetch.length, 'stores');
+  // Deduplicate by name (take lowest pos — most likely the canonical entry)
+  const seen = {};
+  const dedupedStores = storesToFetch.filter(s => {
+    if (seen[s.name]) return false;
+    seen[s.name] = true;
+    return true;
+  });
+  console.log('[BHK] posList: fetching', dedupedStores.length, 'unique stores');
 
-  // ── Step 2b: productData for each store concurrently ──
-  // pid param: try internalPid first (Buyhatke's universal key),
-  // fall back to srcPid (the ASIN / source store pid).
-  const fetchStoreData = async ({ domain, name, storePos }) => {
-    // Skip source store — we already have it from step 1
-    // Try internalPid as pid (works when Buyhatke maps it universally)
-    const urls = [
-      `https://buyhatke.com/api/productData?pos=${storePos}&pid=${internalPid}`,
-      `https://buyhatke.com/api/productData?pos=${storePos}&pid=${encodeURIComponent(srcPid)}`,
-    ];
-
-    for (const url of urls) {
+  // Fetch productData for each store concurrently
+  // Try internalPid as pid first, then srcPid (ASIN) as fallback
+  const fetchStoreData = async ({ name, storePos }) => {
+    const pidsToTry = [String(internalPid), String(srcPid)];
+    for (const pid of pidsToTry) {
       try {
-        const r = await fetch(url, { headers: BHK_HEADERS, signal: AbortSignal.timeout(10000) });
+        const url = `https://buyhatke.com/api/productData?pos=${storePos}&pid=${encodeURIComponent(pid)}`;
+        const r = await fetch(url, { headers: BHK_HEADERS, signal: AbortSignal.timeout(8000) });
         if (!r.ok) continue;
         const d = await r.json();
-        if (!d.data || !d.data.cur_price) continue;
+        if (!d.data) continue;
         const { cur_price, link, inStock } = d.data;
-        if (!cur_price || cur_price <= 0 || inStock === 0) continue;
+        if (!cur_price || cur_price <= 0) continue;
+        if (inStock === 0 || inStock === false) continue;
         if (!link || !link.startsWith('http')) continue;
-        console.log(`[BHK] ${name} ₹${cur_price} via ${url.substring(40, 90)}`);
+        console.log(`[BHK] ${name} ₹${cur_price} (pid=${pid.substring(0,8)})`);
         return { name, normalizedName: name, price: cur_price, url: link };
-      } catch(e) { /* try next url */ }
+      } catch(e) { /* try next */ }
     }
-    console.log(`[BHK] ${name} (pos ${storePos}): no data`);
     return null;
   };
 
-  const results = await Promise.all(storesToFetch.map(fetchStoreData));
+  const results = await Promise.all(dedupedStores.map(fetchStoreData));
   const items = results.filter(Boolean);
 
-  console.log(`[BHK] ✅ Got ${items.length} stores:`,
-    items.map(s => s.name + ':₹' + s.price).join(' | '));
+  console.log(`[BHK] posList strategy: ${items.length}/${dedupedStores.length} stores returned data`);
+  rawResponses.push({
+    strategy: 'posList',
+    storesFetched: dedupedStores.length,
+    storesWithData: items.length,
+    stores: items.map(s => s.name + ':₹' + s.price),
+  });
 
-  return {
-    items,
-    endpoint: posListUrl,
-    rawResponses: [{ endpoint: posListUrl, status: 200, posMap, storesFetched: storesToFetch.length, storesWithData: items.length }],
-  };
+  return { items, endpoint: posListUrl, rawResponses };
 }
 
 // Detect store item array from any response shape
