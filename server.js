@@ -792,26 +792,41 @@ async function bhkGetMultiStorePrices(internalPid, srcPid, srcPos) {
 
   console.log('[BHK] Fetching storePids via getRawProdSpecs for', otherStores.length, 'stores');
 
+  // Fetch store-specific pid AND log full diagnostic for debug endpoint
+  const storeSpecDiag = [];
   const fetchStorePid = async ([name, storePos]) => {
     const url = `https://search-new.bitbns.com/buyhatke/getRawProdSpecs?pid_id=${internalPid}&pos=${storePos}`;
     try {
       const r = await fetch(url, { headers: specsHeaders, signal: AbortSignal.timeout(8000) });
-      if (!r.ok) return null;
+      const diag = { name, pos: storePos, httpStatus: r.status };
+      if (!r.ok) { storeSpecDiag.push(diag); return null; }
       const d = await r.json();
-      if (!d || !d.spec_json) return null;
-      const spec = typeof d.spec_json === 'string' ? JSON.parse(d.spec_json) : d.spec_json;
-
-      // Extract store-specific pid from spec_json
-      // Amazon: ASIN field. Flipkart: FSN or pid. Others: any short alphanumeric id field.
-      const storePid = extractStorePidFromSpec(spec, name, storePos);
-      if (!storePid) {
-        console.log(`[BHK] No storePid found for ${name} (pos ${storePos}). spec keys: ${Object.keys(spec).slice(0,8).join(',')}`);
+      diag.responseKeys = Object.keys(d);
+      if (!d.spec_json) {
+        diag.note = 'no spec_json field';
+        storeSpecDiag.push(diag);
         return null;
       }
+      const spec = typeof d.spec_json === 'string' ? JSON.parse(d.spec_json) : d.spec_json;
+      diag.specKeys = Object.keys(spec).slice(0, 12);
+      // Log first 5 spec fields so we can see actual key names
+      const specSample = {};
+      Object.entries(spec).slice(0, 5).forEach(([k,v]) => { specSample[k] = String(v).substring(0,40); });
+      diag.specSample = specSample;
+
+      const storePid = extractStorePidFromSpec(spec, name, storePos);
+      if (!storePid) {
+        diag.note = 'no pid extracted — check specKeys/specSample to identify correct field';
+        storeSpecDiag.push(diag);
+        console.log(`[BHK] No storePid for ${name} pos=${storePos}. specKeys: ${diag.specKeys.join(',')}`);
+        return null;
+      }
+      diag.storePid = storePid;
+      storeSpecDiag.push(diag);
       console.log(`[BHK] ${name} pos=${storePos} storePid=${storePid}`);
       return [storePos, storePid];
     } catch(e) {
-      console.log(`[BHK] getRawProdSpecs failed for ${name}:`, e.message.substring(0,60));
+      storeSpecDiag.push({ name, pos: storePos, error: e.message.substring(0,60) });
       return null;
     }
   };
@@ -821,8 +836,12 @@ async function bhkGetMultiStorePrices(internalPid, srcPid, srcPos) {
 
   console.log('[BHK] thunder pairs collected:', thunderPairs.length,
     '| pairs:', thunderPairs.map(p=>p[0]+'~'+p[1]).join(' '));
-  rawResponses.push({ step: 'getRawProdSpecs-mapping', pairsFound: thunderPairs.length,
-    pairs: thunderPairs.map(p => ({ pos: p[0], pid: p[1] })) });
+  rawResponses.push({
+    step: 'getRawProdSpecs-mapping',
+    pairsFound: thunderPairs.length,
+    pairs: thunderPairs.map(p => ({ pos: p[0], pid: p[1] })),
+    perStoreDiagnostics: storeSpecDiag,   // ← key: shows spec fields for each store
+  });
 
   // ── Step 2b: Call thunder/priceData with all pairs ──
   try {
