@@ -738,11 +738,25 @@ async function bhkGetMultiStorePrices(internalPid, srcPid, srcPos) {
   // bitbns.com is Buyhatke's parent company. Their backend API is separate from
   // the buyhatke.com frontend and may not have the same browser restrictions.
   // We try several endpoint patterns that match what the SvelteKit app calls.
+  // bitbns confirmed returning JSON freely — try price-focused endpoints first,
+  // then fall back to per-store productData calls via bitbns.
+  // getRawProdSpecs = specs only (confirmed). Price data is a separate endpoint.
+  // All on search-new.bitbns.com since that domain bypasses the Cloudflare block.
   const bitbnsEndpoints = [
-    `https://search-new.bitbns.com/buyhatke/getRawProdSpecs?pid_id=${internalPid}&pos=${srcPos}`,
+    `https://search-new.bitbns.com/buyhatke/posList?internalPid=${internalPid}&pos=${srcPos}`,
+    `https://search-new.bitbns.com/buyhatke/posList?pid_id=${internalPid}&pos=${srcPos}`,
     `https://search-new.bitbns.com/buyhatke/getPriceList?pid_id=${internalPid}&pos=${srcPos}`,
-    `https://search-new.bitbns.com/buyhatke/getStoreList?internalPid=${internalPid}`,
-    `https://search-new.bitbns.com/buyhatke/productData?internalPid=${internalPid}`,
+    `https://search-new.bitbns.com/buyhatke/getPriceList?internalPid=${internalPid}`,
+    `https://search-new.bitbns.com/buyhatke/priceList?internalPid=${internalPid}`,
+    `https://search-new.bitbns.com/buyhatke/getProductPrices?internalPid=${internalPid}`,
+    `https://search-new.bitbns.com/buyhatke/compareList?internalPid=${internalPid}&pos=${srcPos}`,
+    `https://search-new.bitbns.com/buyhatke/comparePrices?internalPid=${internalPid}`,
+    `https://search-new.bitbns.com/buyhatke/getCompareList?pid_id=${internalPid}`,
+    `https://search-new.bitbns.com/buyhatke/allPrices?pid_id=${internalPid}`,
+    `https://search-new.bitbns.com/buyhatke/productData?pid_id=${internalPid}`,
+    `https://search-new.bitbns.com/buyhatke/getStoreData?pid_id=${internalPid}&pos=${srcPos}`,
+    `https://search-new.bitbns.com/buyhatke/comparePrice?pid_id=${internalPid}&pos=${srcPos}`,
+    `https://search-new.bitbns.com/buyhatke/getStoreList?pid_id=${internalPid}&pos=${srcPos}`,
   ];
 
   const bitbnsHeaders = {
@@ -760,7 +774,11 @@ async function bhkGetMultiStorePrices(internalPid, srcPid, srcPos) {
       try { d = JSON.parse(text); } catch(e) {}
 
       if (d) {
-        console.log('[BHK] bitbns JSON from:', endpoint, '| keys:', Object.keys(d).join(', '));
+        const topKeys = Object.keys(d);
+        const dataKeys = d.data ? Object.keys(d.data) : [];
+        const preview = JSON.stringify(d).substring(0, 600);
+        console.log('[BHK] bitbns JSON:', endpoint.substring(40), '| keys:', topKeys.join(','), '| dataKeys:', dataKeys.join(','));
+        console.log('[BHK] bitbns full:', preview);
         const items = extractStoreItems(d);
         if (items && items.length > 0) {
           console.log(`[BHK] ✅ bitbns endpoint works → ${items.length} stores`);
@@ -768,17 +786,77 @@ async function bhkGetMultiStorePrices(internalPid, srcPid, srcPos) {
           return { items, endpoint, rawResponses };
         }
         rawResponses.push({ strategy: 'bitbns', endpoint, status: r.status,
-          note: 'JSON but no store array', topKeys: Object.keys(d), preview: JSON.stringify(d).substring(0, 300) });
+          note: 'JSON but no store array', topKeys, dataKeys, fullResponse: preview });
       } else {
         rawResponses.push({ strategy: 'bitbns', endpoint, status: r.status,
-          note: 'HTML/non-JSON', preview: text.substring(0, 150) });
+          note: 'non-JSON', preview: text.substring(0, 100) });
       }
     } catch(e) {
       rawResponses.push({ strategy: 'bitbns', endpoint, error: e.message });
     }
   }
 
-  // ── Strategy A2: Scan getRawProdSpecs HTML for SvelteKit embedded data ──
+  // ── Strategy A2: posList + productData via bitbns (bitbns returns JSON freely) ──
+  // We know bitbns returns JSON without browser restrictions.
+  // Use posList to get store positions, then call bitbns productData for each store.
+  {
+    let posMap2 = null;
+    try {
+      const plr = await fetch(`https://buyhatke.com/api/posList?internalPid=${internalPid}`,
+        { headers: BHK_HEADERS, signal: AbortSignal.timeout(8000) });
+      const pld = await plr.json();
+      if (pld.status === 1 && pld.data) posMap2 = pld.data;
+    } catch(e) {}
+
+    if (posMap2) {
+      const storesToTry = [];
+      const seenNames = {};
+      for (const [domain, storePos] of Object.entries(posMap2)) {
+        if (storePos === srcPos) continue;
+        const name = normalizeStore(domain);
+        if (!name || seenNames[name]) continue;
+        seenNames[name] = true;
+        storesToTry.push({ name, storePos });
+      }
+      console.log('[BHK] A2: trying bitbns productData for', storesToTry.length, 'stores');
+
+      const fetchBitbnsStore = async ({ name, storePos }) => {
+        // Try internalPid then srcPid as the pid
+        for (const pid of [String(internalPid), String(srcPid)]) {
+          const urls = [
+            `https://search-new.bitbns.com/buyhatke/productData?pos=${storePos}&pid=${encodeURIComponent(pid)}`,
+            `https://buyhatke.com/api/productData?pos=${storePos}&pid=${encodeURIComponent(pid)}`,
+          ];
+          for (const url of urls) {
+            try {
+              const r = await fetch(url, { headers: BHK_XHR_HEADERS, signal: AbortSignal.timeout(8000) });
+              if (!r.ok) continue;
+              const text = await r.text();
+              let d; try { d = JSON.parse(text); } catch(e) { continue; }
+              if (!d.data) continue;
+              const { cur_price, link, inStock } = d.data;
+              if (!cur_price || cur_price <= 0 || inStock === 0) continue;
+              if (!link || !link.startsWith('http')) continue;
+              console.log(`[BHK] A2 ✅ ${name} ₹${cur_price} from ${url.substring(0,50)}`);
+              return { name, normalizedName: name, price: cur_price, url: link };
+            } catch(e) {}
+          }
+        }
+        return null;
+      };
+
+      const a2results = await Promise.all(storesToTry.map(fetchBitbnsStore));
+      const a2items = a2results.filter(Boolean);
+      console.log(`[BHK] A2: ${a2items.length}/${storesToTry.length} stores returned data`);
+      rawResponses.push({ strategy: 'bitbns-per-store', storesFetched: storesToTry.length, storesWithData: a2items.length, stores: a2items.map(s=>s.name+':₹'+s.price) });
+
+      if (a2items.length > 0) {
+        return { items: a2items, endpoint: 'bitbns-per-store', rawResponses };
+      }
+    }
+  }
+
+  // ── Strategy A3: Scan getRawProdSpecs HTML for SvelteKit embedded data ──
   // SvelteKit embeds server-loaded data in script tags in various formats.
   // We try to extract any JSON block that contains price/store data.
   try {
@@ -895,18 +973,27 @@ async function bhkGetMultiStorePrices(internalPid, srcPid, srcPos) {
   return { items, endpoint: posListUrl, rawResponses };
 }
 
-// Detect store item array from any response shape
+// Detect store item array from any response shape.
+// Items must have a numeric price field — spec objects (with spec_json) are excluded.
+function isStoreItem(item) {
+  if (!item || typeof item !== 'object') return false;
+  if (item.spec_json) return false;  // this is a product spec, not a price entry
+  const price = item.cur_price || item.price || item.storePrice || item.offerPrice
+    || item.selling_price || item.mrp;
+  return price && parseFloat(String(price).replace(/[^0-9.]/g,'')) > 0;
+}
+
 function extractStoreItems(d) {
   const root = d.data || d.result || d;
   // Named array fields
   for (const key of ['storeData', 'stores', 'priceList', 'storeList', 'prices',
                       'pricelist', 'offer_stores', 'offerList', 'items', 'results']) {
-    if (Array.isArray(root[key]) && root[key].length > 0) return root[key];
+    if (Array.isArray(root[key]) && root[key].length > 0 && root[key].some(isStoreItem)) return root[key].filter(isStoreItem);
   }
   // Root-level array
-  if (Array.isArray(root) && root.length > 0) return root;
+  if (Array.isArray(root) && root.length > 0 && root.some(isStoreItem)) return root.filter(isStoreItem);
   // Array inside data.data
-  if (root.data && Array.isArray(root.data) && root.data.length > 0) return root.data;
+  if (root.data && Array.isArray(root.data) && root.data.length > 0 && root.data.some(isStoreItem)) return root.data.filter(isStoreItem);
   return null;
 }
 
