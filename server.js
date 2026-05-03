@@ -802,29 +802,55 @@ async function bhkGetMultiStorePrices(internalPid, srcPid, srcPos) {
       if (!r.ok) { storeSpecDiag.push(diag); return null; }
       const d = await r.json();
       diag.responseKeys = Object.keys(d);
-      if (!d.spec_json) {
-        diag.note = 'no spec_json field';
-        storeSpecDiag.push(diag);
-        return null;
-      }
-      const spec = typeof d.spec_json === 'string' ? JSON.parse(d.spec_json) : d.spec_json;
-      diag.specKeys = Object.keys(spec).slice(0, 12);
-      // Log first 5 spec fields so we can see actual key names
-      const specSample = {};
-      Object.entries(spec).slice(0, 5).forEach(([k,v]) => { specSample[k] = String(v).substring(0,40); });
-      diag.specSample = specSample;
+      diag.count = d.count;
 
-      const storePid = extractStorePidFromSpec(spec, name, storePos);
-      if (!storePid) {
-        diag.note = 'no pid extracted — check specKeys/specSample to identify correct field';
+      // Resolve spec object — may be at top level (Amazon) or inside data array
+      // {spec_json:...}  OR  {success, count, data:[{pid_id,pos,spec_json},...]  }
+      let spec = null;
+      let rawPid = null;
+
+      if (d.spec_json) {
+        // Direct spec_json at top level (Amazon pattern)
+        spec = typeof d.spec_json === 'string' ? JSON.parse(d.spec_json) : d.spec_json;
+      } else if (Array.isArray(d.data) && d.data.length > 0) {
+        // Array pattern — first item should have the spec and store pid
+        const item = d.data[0];
+        diag.dataItem0Keys = Object.keys(item);
+        diag.dataItem0Sample = JSON.stringify(item).substring(0, 400);
+        if (item.spec_json) {
+          spec = typeof item.spec_json === 'string' ? JSON.parse(item.spec_json) : item.spec_json;
+        }
+        // The item itself may carry the store pid directly
+        rawPid = item.pid || item.product_id || item.storePid || item.store_pid || null;
+      } else {
+        // count=0 — product not listed on this store
+        diag.note = d.count === 0 ? 'count=0: product not on this store' : 'no spec_json, empty data';
         storeSpecDiag.push(diag);
-        console.log(`[BHK] No storePid for ${name} pos=${storePos}. specKeys: ${diag.specKeys.join(',')}`);
         return null;
       }
-      diag.storePid = storePid;
+
+      if (spec) {
+        diag.specKeys = Object.keys(spec).slice(0, 15);
+        const specSample = {};
+        Object.entries(spec).slice(0, 6).forEach(([k,v]) => { specSample[k] = String(v).substring(0, 50); });
+        diag.specSample = specSample;
+        const storePid = rawPid || extractStorePidFromSpec(spec, name, storePos);
+        if (!storePid) {
+          diag.note = 'no pid extracted — check specKeys/specSample';
+          storeSpecDiag.push(diag);
+          console.log(`[BHK] No storePid for ${name} pos=${storePos}. specKeys: ${diag.specKeys.join(',')}`);
+          return null;
+        }
+        diag.storePid = storePid;
+        storeSpecDiag.push(diag);
+        console.log(`[BHK] ${name} pos=${storePos} storePid=${storePid}`);
+        return [storePos, storePid];
+      }
+
+      // No spec at all — log raw item for diagnosis
+      diag.note = 'no spec_json anywhere';
       storeSpecDiag.push(diag);
-      console.log(`[BHK] ${name} pos=${storePos} storePid=${storePid}`);
-      return [storePos, storePid];
+      return null;
     } catch(e) {
       storeSpecDiag.push({ name, pos: storePos, error: e.message.substring(0,60) });
       return null;
