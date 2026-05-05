@@ -88,7 +88,6 @@ section{position:relative;z-index:1;}
 .prod-details{flex:1;min-width:0;}
 .prod-title{font-size:15px;font-weight:700;line-height:1.35;margin-bottom:6px;}
 .prod-meta{font-size:11px;color:var(--muted);margin-bottom:10px;}
-.source-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:4px 10px;border-radius:999px;background:rgba(255,107,43,.1);color:var(--accent2);border:1px solid rgba(255,107,43,.2);}
 
 /* Deal banner */
 .deal-banner{border-radius:12px;padding:12px 16px;margin-bottom:16px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:10px;}
@@ -219,17 +218,15 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
 }
 
 
-/* ── Prevent horizontal overflow on mobile ── */
+/* ── Prevent horizontal overflow — safe globally ── */
 html, body { max-width: 100vw; overflow-x: hidden; }
-.wrap { max-width: 100%; overflow: hidden; }
-#urlInput {
-  max-width: 100%;
-  min-width: 0;
-  /* Prevent zoom on focus in iOS */
-  font-size: 16px !important;
-}
 #hero { overflow: hidden; }
-.input-wrap, .input-row { max-width: 100%; }
+/* ── Mobile-only overflow fixes ── */
+@media (max-width: 768px) {
+  .wrap { max-width: 100%; overflow: hidden; }
+  #urlInput { max-width: 100%; min-width: 0; font-size: 16px !important; }
+  .input-wrap, .input-row { max-width: 100%; }
+}
 </style>
 </head>
 <body>
@@ -301,7 +298,6 @@ html, body { max-width: 100vw; overflow-x: hidden; }
       <div class="prod-details">
         <div class="prod-title" id="prodTitle">Product</div>
         <div class="prod-meta" id="prodMeta"></div>
-        <div class="source-badge" id="sourceBadge">🛒 Buyhatke</div>
       </div>
     </div>
 
@@ -594,8 +590,7 @@ function showResults(storeName,url,affiliateLink,data){
   }
   document.getElementById('prodTitle').textContent=productName;
   document.getElementById('prodMeta').textContent=stores.length>0?'Found '+stores.length+' stores · Sorted lowest to highest':'Your affiliate link is ready';
-  var srcBadge=document.getElementById('sourceBadge');
-  srcBadge.textContent=source==='flash'?'⚡ flash.co':'🛒 Buyhatke';
+
 
   // Deal banner
   var banner=document.getElementById('dealBanner');
