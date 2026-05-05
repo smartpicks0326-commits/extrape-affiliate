@@ -622,26 +622,67 @@ function isShortUrl(productUrl) {
 // Follow redirects and return the final destination URL.
 // Uses HEAD first (fast), falls back to GET if server rejects HEAD.
 async function resolveRedirect(shortUrl) {
-  const headers = {
+  // Amazon (amzn.in) serves a 200 HTML page from Indian server IPs instead
+  // of a 302 redirect — bot detection at the CDN edge. The final URL won't
+  // differ from the input. We handle this by:
+  //   1. Following redirects normally (works for Flipkart, Ajio short links)
+  //   2. If the URL didn't change, parse ASIN from HTML meta/canonical tags
+  const reqHeaders = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
-    'Accept': 'text/html,*/*',
+    'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8',
+    'Accept-Language': 'en-IN,en;q=0.9',
   };
-  try {
-    const r = await fetch(shortUrl, {
-      method: 'HEAD', headers, redirect: 'follow',
-      signal: AbortSignal.timeout(10000),
-    });
-    console.log('[BHK] Resolved', shortUrl.substring(0,60), '→', r.url.substring(0,80));
-    return r.url;
-  } catch(e) {
-    // HEAD failed — try GET (some servers block HEAD on redirects)
-    const r = await fetch(shortUrl, {
-      method: 'GET', headers, redirect: 'follow',
-      signal: AbortSignal.timeout(10000),
-    });
-    console.log('[BHK] Resolved (GET)', shortUrl.substring(0,60), '→', r.url.substring(0,80));
-    return r.url;
+
+  const r = await fetch(shortUrl, {
+    method: 'GET', headers: reqHeaders, redirect: 'follow',
+    signal: AbortSignal.timeout(12000),
+  });
+  const finalUrl = r.url;
+  console.log('[Redirect]', shortUrl.substring(0,50), '→', finalUrl.substring(0,80));
+
+  // If redirect worked — final URL differs and contains a known long-URL pattern
+  if (finalUrl !== shortUrl && !isShortUrl(finalUrl)) {
+    return finalUrl;
   }
+
+  // Redirect didn't work (Amazon bot wall). Parse ASIN from HTML response body.
+  const html = await r.text();
+
+  // Try 1: canonical link tag — most reliable
+  const canonical = html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)
+                 || html.match(/<link[^>]+href=["']([^"']+)["'][^>]+rel=["']canonical["']/i);
+  if (canonical) {
+    console.log('[Redirect] canonical:', canonical[1].substring(0,80));
+    return canonical[1];
+  }
+
+  // Try 2: og:url meta tag
+  const ogUrl = html.match(/<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/i)
+             || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:url["']/i);
+  if (ogUrl) {
+    console.log('[Redirect] og:url:', ogUrl[1].substring(0,80));
+    return ogUrl[1];
+  }
+
+  // Try 3: extract ASIN directly from any URL pattern in the HTML
+  const asinMatch = html.match(/\/dp\/([A-Z0-9]{10})/i);
+  if (asinMatch) {
+    const resolved = `https://www.amazon.in/dp/${asinMatch[1]}`;
+    console.log('[Redirect] ASIN from HTML:', resolved);
+    return resolved;
+  }
+
+  // Try 4: data-asin attribute (Amazon product page)
+  const dataAsin = html.match(/data-asin=["']([A-Z0-9]{10})["']/i);
+  if (dataAsin) {
+    const resolved = `https://www.amazon.in/dp/${dataAsin[1]}`;
+    console.log('[Redirect] data-asin from HTML:', resolved);
+    return resolved;
+  }
+
+  // Give up — return whatever URL we got
+  console.log('[Redirect] Could not extract product URL from HTML, returning:', finalUrl.substring(0,80));
+  return finalUrl;
 }
 
 function extractBhkParams(productUrl) {
