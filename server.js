@@ -1986,66 +1986,47 @@ app.get('/test-link', async (req, res) => {
   catch(e) { res.status(500).json({ error:e.message }); }
 });
 
-// ── Price comparison — Buyhatke (primary) + SerpAPI (fallback) ──
+// ── Price comparison — Buyhatke only ──
 app.get('/compare/search', async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: 'Pass ?url=' });
 
   try {
     console.log('[Compare] URL:', url);
-    // Tracking is handled by /track/compare called from frontend — not here
 
-    // ── Source store detection (expanded for Buyhatke's wider coverage) ──
+    // ── Source store detection ──
     const srcHost = (() => { try { return new URL(url).hostname.replace('www.',''); } catch(e) { return ''; } })();
     const srcStore = (() => {
       if (srcHost.includes('amazon') || srcHost.includes('amzn')) return 'Amazon';
-      if (srcHost.includes('flipkart'))    return 'Flipkart';
-      if (srcHost.includes('myntra'))      return 'Myntra';
-      if (srcHost.includes('ajio'))        return 'Ajio';
-      if (srcHost.includes('nykaa'))       return 'Nykaa';
-      if (srcHost.includes('tatacliq'))   return 'TataCliq';
-      if (srcHost.includes('croma'))       return 'Croma';
-      if (srcHost.includes('snapdeal'))    return 'Snapdeal';
-      if (srcHost.includes('meesho'))      return 'Meesho';
-      if (srcHost.includes('jiomart'))     return 'JioMart';
+      if (srcHost.includes('flipkart'))        return 'Flipkart';
+      if (srcHost.includes('myntra'))          return 'Myntra';
+      if (srcHost.includes('ajio'))            return 'Ajio';
+      if (srcHost.includes('nykaa'))           return 'Nykaa';
+      if (srcHost.includes('tatacliq'))        return 'TataCliq';
+      if (srcHost.includes('croma'))           return 'Croma';
+      if (srcHost.includes('snapdeal'))        return 'Snapdeal';
+      if (srcHost.includes('meesho'))          return 'Meesho';
+      if (srcHost.includes('jiomart'))         return 'JioMart';
       if (srcHost.includes('reliancedigital')) return 'Reliance Digital';
-      if (srcHost.includes('vijaysales')) return 'Vijay Sales';
+      if (srcHost.includes('vijaysales'))      return 'Vijay Sales';
       return '';
     })();
 
-    let stores        = [];
-    let productName   = '';
-    let productImage  = '';
-    let dataSource    = 'none';
-    const errors      = [];
+    let stores       = [];
+    let productName  = '';
+    let productImage = '';
+    const errors     = [];
 
-    // ── Strategy 1: Buyhatke (no API key, Indian IP, wider store coverage) ──
     try {
       const bhRaw    = await fetchBuyhatke(url);
       const bhParsed = parseBuyhatkeResponse(bhRaw, url, srcStore);
       stores       = bhParsed.stores;
       productName  = bhParsed.productName;
       productImage = bhParsed.productImage;
-      dataSource   = 'buyhatke';
       console.log('[Compare] Buyhatke returned', stores.length, 'stores');
     } catch(e) {
       errors.push('Buyhatke: ' + e.message);
       console.log('[Compare] Buyhatke failed:', e.message);
-    }
-
-    // ── Strategy 2: SerpAPI fallback (if Buyhatke returned <2 useful stores) ──
-    if (stores.length < 2 && SERP_API_KEY) {
-      console.log('[Compare] Buyhatke insufficient — falling back to SerpAPI');
-      try {
-        const serp    = await searchViaSerpAPI(url, srcStore);
-        stores        = serp.stores;
-        if (!productName)  productName  = serp.productName;
-        if (!productImage) productImage = serp.productImage;
-        dataSource    = 'serpapi';
-      } catch(e) {
-        errors.push('SerpAPI: ' + e.message);
-        console.log('[Compare] SerpAPI also failed:', e.message);
-      }
     }
 
     if (stores.length === 0) {
@@ -2055,11 +2036,10 @@ app.get('/compare/search', async (req, res) => {
       });
     }
 
-    const srcEntry  = stores.find(s => s.isSource);
-    const savings   = srcEntry && !srcEntry.isBest
-      ? srcEntry.price - stores[0].price : 0;
+    const srcEntry = stores.find(s => s.isSource);
+    const savings  = srcEntry && !srcEntry.isBest ? srcEntry.price - stores[0].price : 0;
 
-    console.log('[Compare] FINAL via', dataSource + ':',
+    console.log('[Compare] FINAL:',
       stores.map(s => s.name + ':₹' + s.price + (s.isSource?'[src]':'') + (s.isBest?'[best]':'')).join(' | '));
 
     return res.json({
@@ -2068,7 +2048,7 @@ app.get('/compare/search', async (req, res) => {
       productImage,
       totalStores:  stores.length,
       savings:      savings > 0 ? savings : 0,
-      dataSource,           // tells the frontend which source was used
+      dataSource:   'buyhatke',
     });
 
   } catch(e) {
