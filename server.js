@@ -1112,6 +1112,18 @@ function parseStoreItem(item) {
 
 // Main Buyhatke fetch — two-step, returns same shape as before
 async function fetchBuyhatke(productUrl) {
+  // Resolve short URLs (amzn.in/d/xxx, dl.flipkart.com/s/xxx, fkrt.co/xxx etc.)
+  // before trying to extract ASIN/pid — short URLs carry no product ID in the path.
+  if (isShortUrl(productUrl)) {
+    console.log('[BHK] Short URL detected, resolving:', productUrl);
+    try {
+      productUrl = await resolveRedirect(productUrl);
+      console.log('[BHK] Resolved to:', productUrl);
+    } catch(e) {
+      throw new Error('Could not resolve short URL: ' + e.message);
+    }
+  }
+
   const params = extractBhkParams(productUrl);
   if (!params) throw new Error(
     'URL not recognised as a supported store (Amazon/Flipkart/Myntra/Ajio/Nykaa). ' +
@@ -1988,10 +2000,21 @@ app.get('/test-link', async (req, res) => {
 
 // ── Price comparison — Buyhatke only ──
 app.get('/compare/search', async (req, res) => {
-  const { url } = req.query;
-  if (!url) return res.status(400).json({ error: 'Pass ?url=' });
+  const { url: rawUrl } = req.query;
+  if (!rawUrl) return res.status(400).json({ error: 'Pass ?url=' });
 
   try {
+    // Resolve short URLs before any further processing
+    let url = rawUrl;
+    if (isShortUrl(rawUrl)) {
+      try {
+        url = await resolveRedirect(rawUrl);
+        console.log('[Compare] Resolved', rawUrl.substring(0,50), '→', url.substring(0,70));
+      } catch(e) {
+        console.log('[Compare] Short URL resolution failed:', e.message);
+        // Keep original — fetchBuyhatke will also attempt resolution
+      }
+    }
     console.log('[Compare] URL:', url);
 
     // ── Source store detection ──
