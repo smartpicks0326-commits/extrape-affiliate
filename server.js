@@ -2082,18 +2082,30 @@ app.get('/compare/search', async (req, res) => {
 // Buyhatke debug — shows full two-step diagnostic for any product URL
 // Usage: https://api.smartpickdeals.live/buyhatke/debug?url=https://www.amazon.in/dp/B0FVS8V372
 app.get('/buyhatke/debug', async (req, res) => {
-  const { url } = req.query;
-  if (!url) return res.json({
+  const { url: rawUrl } = req.query;
+  if (!rawUrl) return res.json({
     usage:   'Add ?url=YOUR_PRODUCT_URL',
     example: '/buyhatke/debug?url=https://www.amazon.in/dp/B0FVS8V372',
     supportedStores: 'Amazon, Flipkart, Myntra, Ajio, Nykaa',
   });
 
+  // Resolve short URLs first
+  let url = rawUrl;
+  if (isShortUrl(rawUrl)) {
+    try {
+      url = await resolveRedirect(rawUrl);
+      console.log('[BHK debug] Resolved:', rawUrl, '→', url);
+    } catch(e) {
+      return res.json({ error: 'Could not resolve short URL: ' + e.message, url: rawUrl });
+    }
+  }
+
   // Step 1: param extraction
   const params = extractBhkParams(url);
   if (!params) return res.json({
     error: 'URL not from a supported store (Amazon/Flipkart/Myntra/Ajio/Nykaa)',
-    url,
+    originalUrl: rawUrl,
+    resolvedUrl: url,
   });
   const { pos, pid } = params;
 
