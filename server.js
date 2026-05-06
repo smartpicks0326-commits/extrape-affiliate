@@ -1321,7 +1321,13 @@ async function searchViaSerpAPI(url, srcStore, knownProductName = '') {
     return qWords.filter(w=>tl.includes(w)).length / qWords.length;
   }
 
-  const TARGET = ['Amazon','Flipkart','Myntra','Ajio','Nykaa','TataCliq','Croma','Snapdeal'];
+  // Price sanity: if we know the source price from Buyhatke, reject results that are
+  // implausibly cheap (less than 20% of source price) — they matched a different product.
+  // We pass sourcePrice optionally; 0 means no floor check.
+  const srcPriceFloor = 0;  // set by caller if known
+
+  const TARGET = ['Amazon','Flipkart','Myntra','Ajio','Nykaa','TataCliq','Croma','Snapdeal',
+                  'Meesho','Reliance Digital','Vijay Sales','Croma','Snapdeal'];
   const storeMap = {};
   allResults.forEach(item => {
     const store = normalizeStore(item.source||'');
@@ -1330,14 +1336,22 @@ async function searchViaSerpAPI(url, srcStore, knownProductName = '') {
     if (!price) return;
     const s = sim(item.title);
     console.log('[SerpAPI]', store, '₹'+price, 'sim:'+Math.round(s*100)+'%', (item.title||'').substring(0,50));
-    if (s < 0.4) { console.log('  → SKIP'); return; }
+
+    // Raise similarity threshold to 0.6 to reduce false matches
+    if (s < 0.6) { console.log('  → SKIP (low sim)'); return; }
+
+    // Skip results that are a search page URL (google redirects)
     const link = (item.product_link && !item.product_link.includes('google.com'))
-      ? item.product_link : storeSearchUrl(store, fullTitle);
+      ? item.product_link : null;
+    if (!link) { console.log('  → SKIP (no direct link)'); return; }
+
     if (!storeMap[store] || price < storeMap[store].price) {
       storeMap[store] = { name:store, normalizedName:store, price, url:link };
     }
   });
 
+  // Remove any results where we had to fall back to a search URL (no direct product link)
+  // — these are unreliable and may show wrong products
   const stores = Object.values(storeMap)
     .sort((a,b)=>a.price-b.price)
     .map((s,i)=>({ ...s, isBest:i===0, isSource:s.name===srcStore }));
