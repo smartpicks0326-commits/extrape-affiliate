@@ -2053,7 +2053,7 @@ app.get('/test-link', async (req, res) => {
   catch(e) { res.status(500).json({ error:e.message }); }
 });
 
-// ── Price comparison — Buyhatke only ──
+// ── Price comparison — Buyhatke (primary) + SerpAPI (fallback when <2 stores) ──
 app.get('/compare/search', async (req, res) => {
   const { url: rawUrl } = req.query;
   if (!rawUrl) return res.status(400).json({ error: 'Pass ?url=' });
@@ -2093,8 +2093,10 @@ app.get('/compare/search', async (req, res) => {
     let stores       = [];
     let productName  = '';
     let productImage = '';
+    let dataSource   = 'buyhatke';
     const errors     = [];
 
+    // ── Strategy 1: Buyhatke (primary) ──
     try {
       const bhRaw    = await fetchBuyhatke(url);
       const bhParsed = parseBuyhatkeResponse(bhRaw, url, srcStore);
@@ -2107,6 +2109,24 @@ app.get('/compare/search', async (req, res) => {
       console.log('[Compare] Buyhatke failed:', e.message);
     }
 
+    // ── Strategy 2: SerpAPI fallback (when Buyhatke returns <2 stores) ──
+    // Buyhatke's cross-store data is inconsistent — many products only return
+    // the source store. SerpAPI reliably returns 4–8 stores for any product.
+    if (stores.length < 2 && SERP_API_KEY) {
+      console.log('[Compare] Buyhatke insufficient (' + stores.length + ' stores) — falling back to SerpAPI');
+      try {
+        const serp    = await searchViaSerpAPI(url, srcStore);
+        stores        = serp.stores;
+        if (!productName)  productName  = serp.productName;
+        if (!productImage) productImage = serp.productImage;
+        dataSource    = 'serpapi';
+        console.log('[Compare] SerpAPI returned', stores.length, 'stores');
+      } catch(e) {
+        errors.push('SerpAPI: ' + e.message);
+        console.log('[Compare] SerpAPI also failed:', e.message);
+      }
+    }
+
     if (stores.length === 0) {
       return res.status(404).json({
         error: 'No price comparison results found. ' + errors.join(' | '),
@@ -2117,7 +2137,7 @@ app.get('/compare/search', async (req, res) => {
     const srcEntry = stores.find(s => s.isSource);
     const savings  = srcEntry && !srcEntry.isBest ? srcEntry.price - stores[0].price : 0;
 
-    console.log('[Compare] FINAL:',
+    console.log('[Compare] FINAL via', dataSource + ':',
       stores.map(s => s.name + ':₹' + s.price + (s.isSource?'[src]':'') + (s.isBest?'[best]':'')).join(' | '));
 
     return res.json({
@@ -2126,7 +2146,7 @@ app.get('/compare/search', async (req, res) => {
       productImage,
       totalStores:  stores.length,
       savings:      savings > 0 ? savings : 0,
-      dataSource:   'buyhatke',
+      dataSource,
     });
 
   } catch(e) {
