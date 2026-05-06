@@ -1283,6 +1283,11 @@ async function searchViaSerpAPI(url, srcStore, knownProductName = '') {
       shortQ = (segs[0]||'').replace(/-/g,' ').trim().split(' ').slice(0,6).join(' ');
     } catch(e) {}
   }
+  // If shortQ still empty but we have an ASIN — search by ASIN directly (always works)
+  if (!shortQ || shortQ.length < 3) {
+    const asinM = url.match(/[/=]([A-Z0-9]{10})(?:[/?&]|$)/i);
+    if (asinM) shortQ = asinM[1];
+  }
   if (!shortQ || shortQ.length < 3) throw new Error('Could not identify product from URL');
 
   const fullTitle = title || shortQ;
