@@ -587,17 +587,18 @@ function storeSearchUrl(store, q) {
 // Buyhatke store position numbers (pos param in productData endpoint).
 // pos=63 confirmed for Amazon India. Others are best-known values —
 // add more as you discover them via DevTools on buyhatke.com.
+// Confirmed pos values from buyhatke.com/api/posList (May 2026)
 const BHK_POS = {
   amazon:    63,
-  flipkart:  1,
-  myntra:    4,
-  ajio:      14,
-  nykaa:     11,
-  croma:     7,
-  snapdeal:  3,
-  tatacliq:  10,
-  meesho:    22,
-  jiomart:   20,
+  flipkart:  2,      // was 1 — confirmed from posList: "www.flipkart.com": 2
+  myntra:    111,    // was 4
+  ajio:      2191,   // was 14
+  nykaa:     1830,   // was 11
+  croma:     71,     // was 7
+  snapdeal:  129,    // was 3
+  tatacliq:  2190,   // was 10
+  meesho:    7376,   // was 22
+  jiomart:   6660,   // was 20
 };
 
 // Extract (pos, pid) from a product URL so we can call productData.
@@ -697,11 +698,12 @@ function extractBhkParams(productUrl) {
       if (m) return { pos: BHK_POS.amazon, pid: m[1] };
     }
 
-    // Flipkart long URL — pid in ?pid= or /p/ITCODE
+    // Flipkart long URL — extract product item ID from path (/p/itm...) NOT ?pid=
+    // ?pid= is the seller/listing ID (e.g. MOBHFN6YWTXZD8SG) — Buyhatke doesn't use it.
+    // The product ID is the itm... code in the URL path (e.g. /p/itm1834df7ee2812).
     if (host.includes('flipkart') && host !== 'dl.flipkart.com') {
-      const pid = u.searchParams.get('pid')
-               || (u.pathname.match(/\/p\/([a-zA-Z0-9]+)/i) || [])[1];
-      if (pid) return { pos: BHK_POS.flipkart, pid };
+      const pathPid = (u.pathname.match(/\/p\/([a-zA-Z0-9]+)/i) || [])[1];
+      if (pathPid) return { pos: BHK_POS.flipkart, pid: pathPid };
     }
 
     // Myntra — numeric product ID is the last path segment
