@@ -913,11 +913,18 @@ async function bhkGetMultiStorePrices(internalPid, srcPid, srcPos) {
   });
 
   // ── Step 2b: Call thunder/priceData with all pairs ──
+  // If only source pair available (no cross-store mapping found),
+  // thunder may still return cross-store matches from its own index.
+  // Also try with just [[srcPos, srcPid]] in case internalPid pairs confuse it.
+  const pairsToSend = thunderPairs.length > 1
+    ? thunderPairs
+    : [[srcPos, srcPid]];  // bare source pair — let thunder resolve cross-store
+  console.log('[BHK] thunder sending', pairsToSend.length, 'pairs');
   try {
     const r = await fetch(thunderUrl, {
       method: 'POST',
       headers: thunderHdrs,
-      body: JSON.stringify({ param: thunderPairs }),
+      body: JSON.stringify({ param: pairsToSend }),
       signal: AbortSignal.timeout(15000),
     });
     const text = await r.text();
@@ -1187,11 +1194,16 @@ async function fetchBuyhatke(productUrl) {
   // Build store list — include source store always (it's confirmed from step 1)
   const storeMap = {};
 
-  // Add source store from step-1 data (always present, accurate)
+  // Add source store from step-1 data (always present, accurate).
+  // Use the original productUrl (what the user pasted) as the source link —
+  // Buyhatke's returned link is sometimes wrong (wrong product in their DB).
+  // Fall back to Buyhatke's link only if original URL looks like a short URL still.
   const srcStoreName = normalizeStore(srcSiteName || '');
-  if (srcStoreName && srcPrice > 0 && srcLink) {
+  const bestSrcLink  = (!isShortUrl(productUrl) && productUrl.startsWith('http'))
+    ? productUrl : (srcLink || productUrl);
+  if (srcStoreName && srcPrice > 0) {
     storeMap[srcStoreName] = { name: srcStoreName, normalizedName: srcStoreName,
-                               price: srcPrice, url: srcLink };
+                               price: srcPrice, url: bestSrcLink };
   }
 
   // Add cross-store results from step 2
@@ -2173,9 +2185,11 @@ app.get('/buyhatke/debug', async (req, res) => {
   // Step 4: parse what we have (source store always present from step 1)
   const srcStoreName = normalizeStore(srcProduct.site_name || '');
   const storeMap = {};
-  if (srcStoreName && srcProduct.cur_price > 0 && srcProduct.link) {
+  // Use input URL as source link — Buyhatke's link field is sometimes wrong
+  const bestDebugLink = (!isShortUrl(url) && url.startsWith('http')) ? url : srcProduct.link;
+  if (srcStoreName && srcProduct.cur_price > 0) {
     storeMap[srcStoreName] = { name: srcStoreName, normalizedName: srcStoreName,
-                               price: srcProduct.cur_price, url: srcProduct.link,
+                               price: srcProduct.cur_price, url: bestDebugLink,
                                isBest: true, isSource: true };
   }
   items.forEach(item => {
