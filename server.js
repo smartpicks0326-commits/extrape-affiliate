@@ -1313,21 +1313,19 @@ async function searchViaSerpAPI(url, srcStore, knownProductName = '') {
   const productImage = r1?.shopping_results?.[0]?.thumbnail || r2?.shopping_results?.[0]?.thumbnail || '';
   console.log('[SerpAPI] Total results:', allResults.length);
 
-  const qWords = shortQ.toLowerCase().split(' ').filter(w=>w.length>2);
+  // Include 2-char words (model numbers: "17", "5G", "M2" etc.) — critical for matching
+  // e.g. "Apple iPhone 17" without "17" means ANY Apple iPhone matches at 100%
+  const qWords = shortQ.toLowerCase().split(' ').filter(w=>w.length>1);
   function sim(t) {
     if (!t) return 0;
     const tl = t.toLowerCase();
     if (asin && tl.includes(asin.toLowerCase())) return 1.0;
+    if (!qWords.length) return 0;
     return qWords.filter(w=>tl.includes(w)).length / qWords.length;
   }
 
-  // Price sanity: if we know the source price from Buyhatke, reject results that are
-  // implausibly cheap (less than 20% of source price) — they matched a different product.
-  // We pass sourcePrice optionally; 0 means no floor check.
-  const srcPriceFloor = 0;  // set by caller if known
-
   const TARGET = ['Amazon','Flipkart','Myntra','Ajio','Nykaa','TataCliq','Croma','Snapdeal',
-                  'Meesho','Reliance Digital','Vijay Sales','Croma','Snapdeal'];
+                  'Meesho','Reliance Digital','Vijay Sales'];
   const storeMap = {};
   allResults.forEach(item => {
     const store = normalizeStore(item.source||'');
@@ -1337,21 +1335,21 @@ async function searchViaSerpAPI(url, srcStore, knownProductName = '') {
     const s = sim(item.title);
     console.log('[SerpAPI]', store, '₹'+price, 'sim:'+Math.round(s*100)+'%', (item.title||'').substring(0,50));
 
-    // Raise similarity threshold to 0.6 to reduce false matches
-    if (s < 0.6) { console.log('  → SKIP (low sim)'); return; }
+    // 0.6 threshold — needs to match 60% of query words (model number included now)
+    if (s < 0.6) { console.log('  → SKIP (sim ' + Math.round(s*100) + '%)'); return; }
 
-    // Skip results that are a search page URL (google redirects)
-    const link = (item.product_link && !item.product_link.includes('google.com'))
-      ? item.product_link : null;
-    if (!link) { console.log('  → SKIP (no direct link)'); return; }
+    // Prefer direct product_link; fall back to item.link (Google Shopping page)
+    // Don't use storeSearchUrl — that opens a search, not a product page
+    const link = (item.product_link && !item.product_link.includes('google.com/search'))
+      ? item.product_link
+      : (item.link && !item.link.includes('google.com/search') ? item.link : null);
+    if (!link) { console.log('  → SKIP (no usable link)'); return; }
 
     if (!storeMap[store] || price < storeMap[store].price) {
       storeMap[store] = { name:store, normalizedName:store, price, url:link };
     }
   });
 
-  // Remove any results where we had to fall back to a search URL (no direct product link)
-  // — these are unreliable and may show wrong products
   const stores = Object.values(storeMap)
     .sort((a,b)=>a.price-b.price)
     .map((s,i)=>({ ...s, isBest:i===0, isSource:s.name===srcStore }));
