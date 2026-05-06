@@ -1260,10 +1260,12 @@ function parseBuyhatkeResponse(data, inputUrl, srcStore) {
 }
 
 // ── SerpAPI comparison (fallback when Buyhatke returns < 2 stores) ──
-async function searchViaSerpAPI(url, srcStore) {
+async function searchViaSerpAPI(url, srcStore, knownProductName = '') {
   if (!SERP_API_KEY) throw new Error('SERP_API_KEY not configured');
 
-  const title = await fetchTitle(url);
+  // Use pre-known product name from Buyhatke if available — avoids fetching
+  // Flipkart/store page titles which contain SEO noise like "Buy online at best price"
+  const title = knownProductName || await fetchTitle(url);
   let shortQ = '';
   if (title && title.length > 5) {
     const core = title
@@ -2113,17 +2115,39 @@ app.get('/compare/search', async (req, res) => {
     // Buyhatke's cross-store data is inconsistent — many products only return
     // the source store. SerpAPI reliably returns 4–8 stores for any product.
     if (stores.length < 2 && SERP_API_KEY) {
+      // Preserve source store from Buyhatke step 1 before SerpAPI replaces it.
+      // SerpAPI searches Google Shopping which may not find the exact source listing.
+      const bhkSourceStore = stores.find(s => s.isSource) || null;
+
       console.log('[Compare] Buyhatke insufficient (' + stores.length + ' stores) — falling back to SerpAPI');
       try {
-        const serp    = await searchViaSerpAPI(url, srcStore);
-        stores        = serp.stores;
+        // Pass the clean product name from Buyhatke to SerpAPI so it doesn't
+        // have to fetch the page title (which contains SEO noise on Flipkart etc.)
+        const serpProductName = productName || '';
+        const serp = await searchViaSerpAPI(url, srcStore, serpProductName);
+
+        // Merge: start with SerpAPI stores, then add/override with Buyhatke source store.
+        // This ensures the source store always appears with the correct link and price.
+        const storeMap = {};
+        serp.stores.forEach(s => { storeMap[s.name] = s; });
+
+        if (bhkSourceStore) {
+          // Buyhatke has verified price + correct URL for source store — prefer it
+          storeMap[bhkSourceStore.name] = { ...bhkSourceStore };
+          console.log('[Compare] Preserved Buyhatke source:', bhkSourceStore.name, '₹' + bhkSourceStore.price);
+        }
+
+        stores = Object.values(storeMap).sort((a, b) => a.price - b.price)
+                       .map((s, i) => ({ ...s, isBest: i === 0, isSource: s.name === srcStore }));
+
         if (!productName)  productName  = serp.productName;
         if (!productImage) productImage = serp.productImage;
-        dataSource    = 'serpapi';
-        console.log('[Compare] SerpAPI returned', stores.length, 'stores');
+        dataSource = 'buyhatke+serpapi';
+        console.log('[Compare] Merged result:', stores.length, 'stores');
       } catch(e) {
         errors.push('SerpAPI: ' + e.message);
         console.log('[Compare] SerpAPI also failed:', e.message);
+        // If SerpAPI fails, use whatever Buyhatke returned (even 1 store)
       }
     }
 
