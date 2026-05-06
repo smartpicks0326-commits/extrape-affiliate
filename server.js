@@ -1269,16 +1269,18 @@ async function searchViaSerpAPI(url, srcStore, knownProductName = '') {
   let shortQ = '';
   if (title && title.length > 5) {
     const core = title
-      .replace(/|.*/g,'').replace(/[([].*?[)]]/g,'')
-      .replace(/(with|for|up to|upto|comes|get|buy|online|india|featuring).*/i,'')
-      .replace(/,.*$/,'').replace(/[^a-zA-Z0-9 ]/g,' ').replace(/s+/g,' ').trim();
-    shortQ = core.split(' ').filter(w=>w.length>0).slice(0,5).join(' ');
+      // Remove parenthetical content: (Mist Blue, 256 GB), [features] etc.
+      .replace(/s*([^)]*)/g, '').replace(/s*[[^]]*]/g, '')
+      // Stop at noise words
+      .replace(/(with|for|up to|upto|comes|buy|online|india|featuring|at best).*/i, '')
+      .replace(/[^a-zA-Z0-9 ]/g, ' ').replace(/s+/g, ' ').trim();
+    shortQ = core.split(' ').filter(w => w.length > 0).slice(0, 6).join(' ');
   }
   if (!shortQ) {
     try {
       const segs = new URL(url).pathname.split('/')
         .filter(s=>s.length>3&&!/^[A-Z0-9]{6,}$/.test(s)&&!/^(dp|p|product|item|buy|s|ip|d)$/i.test(s));
-      shortQ = (segs[0]||'').replace(/-/g,' ').trim().split(' ').slice(0,5).join(' ');
+      shortQ = (segs[0]||'').replace(/-/g,' ').trim().split(' ').slice(0,6).join(' ');
     } catch(e) {}
   }
   if (!shortQ || shortQ.length < 3) throw new Error('Could not identify product from URL');
@@ -1291,11 +1293,11 @@ async function searchViaSerpAPI(url, srcStore, knownProductName = '') {
     if (m) asin = m[1];
   } catch(e) {}
 
-  const brandModel = shortQ.split(' ').slice(0,3).join(' ');
+  const brandModel = shortQ.split(' ').slice(0,4).join(' ');
   const q1 = asin ? (asin + ' ' + brandModel) : shortQ;
-  const q2 = shortQ;
+  const q2 = shortQ + ' price India';
   const q3 = brandModel;
-  console.log('[SerpAPI] Queries:', q1, '|', q2, '|', q3);
+  console.log('[SerpAPI] shortQ:', shortQ, '| Queries:', q1, '|', q2, '|', q3);
 
   const serpSearch = (q) => fetch(
     'https://serpapi.com/search.json?engine=google_shopping'
@@ -1338,12 +1340,23 @@ async function searchViaSerpAPI(url, srcStore, knownProductName = '') {
     // 0.6 threshold — needs to match 60% of query words (model number included now)
     if (s < 0.6) { console.log('  → SKIP (sim ' + Math.round(s*100) + '%)'); return; }
 
-    // Prefer direct product_link; fall back to item.link (Google Shopping page)
-    // Don't use storeSearchUrl — that opens a search, not a product page
-    const link = (item.product_link && !item.product_link.includes('google.com/search'))
-      ? item.product_link
-      : (item.link && !item.link.includes('google.com/search') ? item.link : null);
-    if (!link) { console.log('  → SKIP (no usable link)'); return; }
+    // Prefer direct store URL; accept Google Shopping page as fallback
+    const storeDomains = ['amazon.in','flipkart.com','myntra.com','ajio.com','nykaa.com',
+      'tatacliq.com','croma.com','snapdeal.com','meesho.com','reliancedigital.in','vijaysales.com'];
+    let link = null;
+    if (item.product_link) {
+      try {
+        const h = new URL(item.product_link).hostname.replace('www.','');
+        if (storeDomains.some(d => h.includes(d))) link = item.product_link;
+      } catch(e) {}
+    }
+    if (!link && item.link) {
+      // Google Shopping product page (not a /search? page) is an acceptable fallback
+      if (!item.link.includes('/search?') && item.link.includes('google.com')) {
+        link = item.link;
+      }
+    }
+    if (!link) { console.log('  → SKIP (no store link)'); return; }
 
     if (!storeMap[store] || price < storeMap[store].price) {
       storeMap[store] = { name:store, normalizedName:store, price, url:link };
