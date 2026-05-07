@@ -774,184 +774,179 @@ async function bhkGetProductData(pos, pid) {
 // Step 2: get cross-store prices by internalPid.
 // Primary: getRawProdSpecs (seen in DevTools).
 // Fallback candidates probed silently if primary returns no store list.
-async function bhkGetMultiStorePrices(internalPid, srcPid, srcPos) {
+async function bhkGetMultiStorePrices(internalPid, srcPid, srcPos, productName) {
+  // ══════════════════════════════════════════════════════════════
+  // SvelteKit /__data.json approach (May 2026)
+  //
+  // buyhatke.com is a SvelteKit app. SvelteKit bakes all server-loaded
+  // data (including cross-store prices) into the page and also exposes
+  // it at /{page-path}/__data.json — no auth required, same data the
+  // browser renders.
+  //
+  // Product page URL format:
+  //   https://buyhatke.com/{store}-{name-slug}-price-in-india-{pos}-{internalPid}
+  // ══════════════════════════════════════════════════════════════
+
   const rawResponses = [];
 
-  // ── Strategy A: search-new.bitbns.com — Buyhatke's actual backend API ──
-  // bitbns.com is Buyhatke's parent company. Their backend API is separate from
-  // the buyhatke.com frontend and may not have the same browser restrictions.
-  // We try several endpoint patterns that match what the SvelteKit app calls.
-  // bitbns confirmed returning JSON freely — try price-focused endpoints first,
-  // then fall back to per-store productData calls via bitbns.
-  // ══════════════════════════════════════════════════════════════
-  // CONFIRMED flow (DevTools, May 2026):
-  //
-  // thunder/priceData POST {"param": [[pos, "storePid"], ...]}
-  //   Response: {"status":1,"data":{"63~**~B0FVS8V372":"{"price":799,"oos":0}"}}
-  //   Key format: "{pos}~**~{storePid}" → JSON string {"price":N,"oos":0|1}
-  //
-  // Cross-store pids: getRawProdSpecs?pid_id={internalPid}&pos={storePos}
-  //   Returns spec_json which contains the store-specific pid field
-  //   e.g. Amazon pos=63 → spec_json.ASIN = "B0FVS8V372"
-  //        Flipkart pos=2 → spec_json might have FSN or pid field
-  // ══════════════════════════════════════════════════════════════
+  // Build the Buyhatke product page URL from known data
+  const storeName = normalizeStore(
+    srcPos === 63 ? 'amazon' :
+    srcPos === 2  ? 'flipkart' :
+    srcPos === 111? 'myntra' :
+    srcPos === 2191?'ajio' :
+    srcPos === 1830?'nykaa' :
+    srcPos === 71 ? 'croma' :
+    srcPos === 129 ? 'snapdeal' :
+    srcPos === 2190?'tatacliq' :
+    srcPos === 7376?'meesho' :
+    srcPos === 6660?'jiomart' :
+    srcPos === 6607?'reliancedigital' :
+    srcPos === 6645?'vijaysales' : 'amazon'
+  ).toLowerCase();
 
-  const thunderUrl  = 'https://search-new.bitbns.com/buyhatke/thunder/priceData';
-  const thunderHdrs = {
-    ...BHK_XHR_HEADERS,
-    'Content-Type': 'application/json',
-    'Referer': 'https://buyhatke.com/',
-    'Origin':  'https://buyhatke.com',
-  };
+  // Slug: lowercase product name, strip special chars, replace spaces with hyphens
+  // Truncate to ~60 chars to match Buyhatke's URL format
+  const slug = (productName || srcPid)
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .split('-').slice(0, 12).join('-');
 
-  // ── Step 2a: Get cross-store [pos, storePid] pairs ──
-  // 1. buyhatke.com/api/posList → {domain: pos} for all stores carrying this product
-  // 2. getRawProdSpecs?pid_id={internalPid}&pos={storePos} → store-specific pid in spec_json
-  let posMap = null;
+  const bhkPageUrl = `https://buyhatke.com/${storeName}-${slug}-price-in-india-${srcPos}-${internalPid}`;
+  const dataUrl    = `${bhkPageUrl}/__data.json?x-sveltekit-invalidated=001`;
+
+  console.log('[BHK] SvelteKit data URL:', dataUrl.substring(0, 120));
+
   try {
-    const r = await fetch(`https://buyhatke.com/api/posList?internalPid=${internalPid}`,
-      { headers: BHK_HEADERS, signal: AbortSignal.timeout(8000) });
-    const d = await r.json();
-    if (d.status === 1 && d.data) posMap = d.data;
-  } catch(e) { rawResponses.push({ step: 'posList', error: e.message }); }
-
-  if (!posMap) return { items: [], endpoint: null, rawResponses };
-
-  // Deduplicate stores, skip source store pos (we already have it from step 1)
-  const storePosMap = {};   // name → pos
-  for (const [domain, pos] of Object.entries(posMap)) {
-    const name = normalizeStore(domain);
-    if (!name) continue;
-    // Keep lowest pos number per store name (most canonical entry)
-    if (!storePosMap[name] || pos < storePosMap[name]) storePosMap[name] = pos;
-  }
-
-  // Always include source store with its real pid
-  const thunderPairs = [[srcPos, srcPid]];
-
-  // For each other store, call getRawProdSpecs on bitbns to get store-specific pid
-  const specsHeaders = { ...BHK_XHR_HEADERS, 'Referer': 'https://buyhatke.com/' };
-  const otherStores  = Object.entries(storePosMap).filter(([, pos]) => pos !== srcPos);
-
-  console.log('[BHK] Fetching storePids via getRawProdSpecs for', otherStores.length, 'stores');
-
-  // Fetch store-specific pid AND log full diagnostic for debug endpoint
-  const storeSpecDiag = [];
-  const fetchStorePid = async ([name, storePos]) => {
-    const url = `https://search-new.bitbns.com/buyhatke/getRawProdSpecs?pid_id=${internalPid}&pos=${storePos}`;
-    try {
-      const r = await fetch(url, { headers: specsHeaders, signal: AbortSignal.timeout(8000) });
-      const diag = { name, pos: storePos, httpStatus: r.status };
-      if (!r.ok) { storeSpecDiag.push(diag); return null; }
-      const d = await r.json();
-      diag.responseKeys = Object.keys(d);
-      diag.count = d.count;
-
-      // Resolve spec object — may be at top level (Amazon) or inside data array
-      // {spec_json:...}  OR  {success, count, data:[{pid_id,pos,spec_json},...]  }
-      let spec = null;
-      let rawPid = null;
-
-      if (d.spec_json) {
-        // Direct spec_json at top level (Amazon pattern)
-        spec = typeof d.spec_json === 'string' ? JSON.parse(d.spec_json) : d.spec_json;
-      } else if (Array.isArray(d.data) && d.data.length > 0) {
-        // Array pattern — first item should have the spec and store pid
-        const item = d.data[0];
-        diag.dataItem0Keys = Object.keys(item);
-        diag.dataItem0Sample = JSON.stringify(item).substring(0, 400);
-        if (item.spec_json) {
-          spec = typeof item.spec_json === 'string' ? JSON.parse(item.spec_json) : item.spec_json;
-        }
-        // The item itself may carry the store pid directly
-        rawPid = item.pid || item.product_id || item.storePid || item.store_pid || null;
-      } else {
-        // count=0 — product not listed on this store
-        diag.note = d.count === 0 ? 'count=0: product not on this store' : 'no spec_json, empty data';
-        storeSpecDiag.push(diag);
-        return null;
-      }
-
-      if (spec) {
-        diag.specKeys = Object.keys(spec).slice(0, 15);
-        const specSample = {};
-        Object.entries(spec).slice(0, 6).forEach(([k,v]) => { specSample[k] = String(v).substring(0, 50); });
-        diag.specSample = specSample;
-        const storePid = rawPid || extractStorePidFromSpec(spec, name, storePos);
-        if (!storePid) {
-          diag.note = 'no pid extracted — check specKeys/specSample';
-          storeSpecDiag.push(diag);
-          console.log(`[BHK] No storePid for ${name} pos=${storePos}. specKeys: ${diag.specKeys.join(',')}`);
-          return null;
-        }
-        diag.storePid = storePid;
-        storeSpecDiag.push(diag);
-        console.log(`[BHK] ${name} pos=${storePos} storePid=${storePid}`);
-        return [storePos, storePid];
-      }
-
-      // No spec at all — log raw item for diagnosis
-      diag.note = 'no spec_json anywhere';
-      storeSpecDiag.push(diag);
-      return null;
-    } catch(e) {
-      storeSpecDiag.push({ name, pos: storePos, error: e.message.substring(0,60) });
-      return null;
-    }
-  };
-
-  const pairResults = await Promise.all(otherStores.map(fetchStorePid));
-  pairResults.forEach(p => { if (p) thunderPairs.push(p); });
-
-  console.log('[BHK] thunder pairs collected:', thunderPairs.length,
-    '| pairs:', thunderPairs.map(p=>p[0]+'~'+p[1]).join(' '));
-  rawResponses.push({
-    step: 'getRawProdSpecs-mapping',
-    pairsFound: thunderPairs.length,
-    pairs: thunderPairs.map(p => ({ pos: p[0], pid: p[1] })),
-    perStoreDiagnostics: storeSpecDiag,   // ← key: shows spec fields for each store
-  });
-
-  // ── Step 2b: Call thunder/priceData with all pairs ──
-  // If only source pair available (no cross-store mapping found),
-  // thunder may still return cross-store matches from its own index.
-  // Also try with just [[srcPos, srcPid]] in case internalPid pairs confuse it.
-  const pairsToSend = thunderPairs.length > 1
-    ? thunderPairs
-    : [[srcPos, srcPid]];  // bare source pair — let thunder resolve cross-store
-  console.log('[BHK] thunder sending', pairsToSend.length, 'pairs');
-  try {
-    const r = await fetch(thunderUrl, {
-      method: 'POST',
-      headers: thunderHdrs,
-      body: JSON.stringify({ param: pairsToSend }),
+    const r = await fetch(dataUrl, {
+      headers: {
+        ...BHK_XHR_HEADERS,
+        'Accept': 'application/json, */*',
+        'Referer': bhkPageUrl,
+      },
       signal: AbortSignal.timeout(15000),
     });
-    const text = await r.text();
-    let d; try { d = JSON.parse(text); } catch(e) {}
 
-    if (!d) {
-      rawResponses.push({ step: 'thunder', note: 'non-JSON', preview: text.substring(0,200) });
-      return { items: [], endpoint: null, rawResponses };
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const text = await r.text();
+    let d;
+    try { d = JSON.parse(text); } catch(e) {
+      throw new Error('Non-JSON response: ' + text.substring(0, 100));
     }
 
-    console.log('[BHK] thunder response:', JSON.stringify(d).substring(0, 600));
-    rawResponses.push({ step: 'thunder', status: r.status,
-      preview: JSON.stringify(d).substring(0, 400) });
+    console.log('[BHK] __data.json type:', typeof d, Array.isArray(d) ? 'array['+d.length+']' : '');
+    rawResponses.push({
+      step: 'svelte-data',
+      status: r.status,
+      type: typeof d,
+      isArray: Array.isArray(d),
+      preview: JSON.stringify(d).substring(0, 500),
+    });
 
-    const items = parseThunderResponse(d, posMap);
-    console.log('[BHK] thunder parsed:', items.length, 'stores →',
-      items.map(s => s.name + ':₹' + s.price).join(' | '));
+    // SvelteKit __data.json structure:
+    // { type: 'data', nodes: [ null, { type: 'data', data: [...], uses: {} } ] }
+    // data array is a deduplication pool — values are referenced by index
+    const items = extractSvelteKitPrices(d);
+    if (items && items.length > 0) {
+      console.log('[BHK] ✅ SvelteKit data → ' + items.length + ' stores');
+      rawResponses[rawResponses.length-1].storesFound = items.length;
+      return { items, endpoint: dataUrl, rawResponses };
+    }
 
-    if (items.length > 0) {
-      return { items, endpoint: thunderUrl, rawResponses };
+    console.log('[BHK] __data.json parsed but no price items found');
+  } catch(e) {
+    console.log('[BHK] __data.json failed:', e.message.substring(0, 80));
+    rawResponses.push({ step: 'svelte-data', error: e.message });
+  }
+
+  // ── Fallback: posList + thunder with source pair ──
+  // If SvelteKit data fails, fall back to what we know works partially.
+  try {
+    const r  = await fetch(`https://buyhatke.com/api/posList?internalPid=${internalPid}`,
+      { headers: BHK_HEADERS, signal: AbortSignal.timeout(8000) });
+    const d  = await r.json();
+    if (d.status === 1 && d.data) {
+      const thunderUrl  = 'https://search-new.bitbns.com/buyhatke/thunder/priceData';
+      const thunderHdrs = { ...BHK_XHR_HEADERS, 'Content-Type': 'application/json', 'Referer': 'https://buyhatke.com/' };
+      // Send source pair — sometimes returns cross-store data
+      const tr = await fetch(thunderUrl, {
+        method: 'POST', headers: thunderHdrs,
+        body: JSON.stringify({ param: [[srcPos, srcPid]] }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const td = await tr.json();
+      if (td.status === 1 && td.data) {
+        const items = parseThunderResponse(td, d.data);
+        if (items.length > 1) {
+          rawResponses.push({ step: 'thunder-fallback', storesFound: items.length });
+          return { items, endpoint: thunderUrl, rawResponses };
+        }
+      }
     }
   } catch(e) {
-    rawResponses.push({ step: 'thunder', error: e.message });
+    rawResponses.push({ step: 'thunder-fallback', error: e.message });
   }
 
   return { items: [], endpoint: null, rawResponses };
 }
+
+// Parse SvelteKit __data.json deduplication pool to extract store prices.
+// SvelteKit serialises page data as a flat array of values + index references.
+// We search all objects in the pool for ones that look like store price entries.
+function extractSvelteKitPrices(d) {
+  const items = [];
+  const storeMap = {};
+
+  // Unwrap SvelteKit envelope: { type:'data', nodes: [{...}, { type:'data', data:[...] }] }
+  let pool = null;
+  if (d && d.nodes && Array.isArray(d.nodes)) {
+    for (const node of d.nodes) {
+      if (node && node.type === 'data' && Array.isArray(node.data)) {
+        pool = node.data; break;
+      }
+    }
+  }
+  // Also try root-level array (some SvelteKit versions)
+  if (!pool && Array.isArray(d)) pool = d;
+  // Also try d.data
+  if (!pool && d && Array.isArray(d.data)) pool = d.data;
+
+  if (!pool) {
+    console.log('[BHK] SvelteKit: no data pool found. Keys:', Object.keys(d || {}).join(','));
+    return null;
+  }
+
+  console.log('[BHK] SvelteKit pool length:', pool.length, '| sample:', JSON.stringify(pool.slice(0,5)));
+
+  // Scan all objects in pool for price/store data
+  pool.forEach(item => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return;
+
+    // Look for store price objects — must have price and some store identifier
+    const rawPrice = item.cur_price || item.price || item.offerPrice || item.storePrice || 0;
+    const price    = parseFloat(String(rawPrice).replace(/[^0-9.]/g, '')) || 0;
+    if (price <= 0) return;
+
+    const rawName = item.site_name || item.storeName || item.store_name || item.name || '';
+    const name    = normalizeStore(rawName);
+    if (!name) return;
+
+    const link = item.link || item.url || item.productURL || item.product_url || '';
+    if (!link || !link.startsWith('http')) return;
+
+    if (item.inStock === 0 || item.inStock === false || item.oos === 1) return;
+
+    if (!storeMap[name] || price < storeMap[name].price) {
+      storeMap[name] = { name, normalizedName: name, price, url: link };
+    }
+  });
+
+  return Object.values(storeMap);
+}
+
 
 // Extract store-specific pid from getRawProdSpecs spec_json
 function extractStorePidFromSpec(spec, storeName, pos) {
@@ -1188,7 +1183,7 @@ async function fetchBuyhatke(productUrl) {
           cur_price: srcPrice, link: srcLink, site_name: srcSiteName } = srcProduct;
 
   // Step 2 — cross-store prices
-  let { items } = await bhkGetMultiStorePrices(internalPid, pid, pos);
+  let { items } = await bhkGetMultiStorePrices(internalPid, pid, pos, productName);
   if (items.length > 0) items = await enrichThunderItems(items, internalPid, pid);
 
   // Build store list — include source store always (it's confirmed from step 1)
@@ -2215,7 +2210,7 @@ app.get('/buyhatke/debug', async (req, res) => {
 
   // Step 3: multi-store call — collect raw responses for diagnosis
   const { items, endpoint: multiEndpoint, rawResponses } =
-    await bhkGetMultiStorePrices(srcProduct.internalPid, pid, pos);
+    await bhkGetMultiStorePrices(srcProduct.internalPid, pid, pos, srcProduct.name);
 
   // Step 4: parse what we have (source store always present from step 1)
   const srcStoreName = normalizeStore(srcProduct.site_name || '');
