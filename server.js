@@ -2165,6 +2165,74 @@ app.get('/compare/search', async (req, res) => {
   }
 });
 // Buyhatke debug — shows full two-step diagnostic for any product URL
+// ── Buyhatke product info — step 1 only, for browser-side fetching ──
+// Returns internalPid + pos so the browser can construct the Buyhatke page URL
+// and fetch /__data.json directly (bypassing the 403 we get server-side).
+app.get('/buyhatke/productinfo', async (req, res) => {
+  const { url: rawUrl } = req.query;
+  if (!rawUrl) return res.status(400).json({ error: 'Pass ?url=' });
+  try {
+    let url = rawUrl;
+    if (isShortUrl(rawUrl)) {
+      try { url = await resolveRedirect(rawUrl); } catch(e) {}
+    }
+    const params = extractBhkParams(url);
+    if (!params) return res.status(400).json({ error: 'URL not from a supported store', url });
+    const { pos, pid } = params;
+    const product = await bhkGetProductData(pos, pid);
+    return res.json({
+      internalPid: product.internalPid,
+      pos,
+      pid,
+      name:      product.name,
+      site_name: product.site_name,
+      image:     product.image,
+      cur_price: product.cur_price,
+      inStock:   product.inStock,
+    });
+  } catch(e) {
+    return res.status(404).json({ error: e.message });
+  }
+});
+
+// ── Compare affiliate — browser POSTs raw Buyhatke store data, we return affiliate links ──
+// The browser fetches prices from Buyhatke directly, then sends the store list here.
+// We convert each store URL to an affiliate link using ExtraPe and return the enriched list.
+app.post('/compare/affiliate', async (req, res) => {
+  const { stores, productName, productImage } = req.body;
+  if (!stores || !Array.isArray(stores) || stores.length === 0) {
+    return res.status(400).json({ error: 'Pass { stores: [{name, price, url}] }' });
+  }
+
+  // Convert each store URL to affiliate link via ExtraPe (same as existing compare flow)
+  const enriched = await Promise.all(stores.map(async (store) => {
+    if (!store.url || !store.url.startsWith('http')) return store;
+    try {
+      const affResult = await getAffiliateLink(store.url);
+      const displayLink = getDisplayLink(store.url, affResult);
+      return {
+        ...store,
+        affiliateLink: affResult || store.url,
+        displayLink:   displayLink || store.url,
+      };
+    } catch(e) {
+      return { ...store, affiliateLink: store.url, displayLink: store.url };
+    }
+  }));
+
+  const sorted = enriched.sort((a, b) => a.price - b.price)
+    .map((s, i) => ({ ...s, isBest: i === 0 }));
+
+  return res.json({
+    stores:      sorted,
+    productName:  productName || '',
+    productImage: productImage || '',
+    totalStores:  sorted.length,
+    savings:      0,
+    dataSource:  'buyhatke',
+  });
+});
+
 // Usage: https://api.smartpickdeals.live/buyhatke/debug?url=https://www.amazon.in/dp/B0FVS8V372
 app.get('/buyhatke/debug', async (req, res) => {
   const { url: rawUrl } = req.query;
