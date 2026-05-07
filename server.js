@@ -2085,7 +2085,7 @@ app.get('/test-link', async (req, res) => {
   catch(e) { res.status(500).json({ error:e.message }); }
 });
 
-// ── Price comparison — Buyhatke (primary) + SerpAPI (fallback when <2 stores) ──
+// ── Price comparison — Buyhatke ──
 app.get('/compare/search', async (req, res) => {
   const { url: rawUrl } = req.query;
   if (!rawUrl) return res.status(400).json({ error: 'Pass ?url=' });
@@ -2125,7 +2125,6 @@ app.get('/compare/search', async (req, res) => {
     let stores       = [];
     let productName  = '';
     let productImage = '';
-    let dataSource   = 'buyhatke';
     const errors     = [];
 
     // ── Strategy 1: Buyhatke (primary) ──
@@ -2141,45 +2140,7 @@ app.get('/compare/search', async (req, res) => {
       console.log('[Compare] Buyhatke failed:', e.message);
     }
 
-    // ── Strategy 2: SerpAPI fallback (when Buyhatke returns <2 stores) ──
-    // Buyhatke's cross-store data is inconsistent — many products only return
-    // the source store. SerpAPI reliably returns 4–8 stores for any product.
-    if (stores.length < 2 && SERP_API_KEY) {
-      // Preserve source store from Buyhatke step 1 before SerpAPI replaces it.
-      // SerpAPI searches Google Shopping which may not find the exact source listing.
-      const bhkSourceStore = stores.find(s => s.isSource) || null;
 
-      console.log('[Compare] Buyhatke insufficient (' + stores.length + ' stores) — falling back to SerpAPI');
-      try {
-        // Pass the clean product name from Buyhatke to SerpAPI so it doesn't
-        // have to fetch the page title (which contains SEO noise on Flipkart etc.)
-        const serpProductName = productName || '';
-        const serp = await searchViaSerpAPI(url, srcStore, serpProductName);
-
-        // Merge: start with SerpAPI stores, then add/override with Buyhatke source store.
-        // This ensures the source store always appears with the correct link and price.
-        const storeMap = {};
-        serp.stores.forEach(s => { storeMap[s.name] = s; });
-
-        if (bhkSourceStore) {
-          // Buyhatke has verified price + correct URL for source store — prefer it
-          storeMap[bhkSourceStore.name] = { ...bhkSourceStore };
-          console.log('[Compare] Preserved Buyhatke source:', bhkSourceStore.name, '₹' + bhkSourceStore.price);
-        }
-
-        stores = Object.values(storeMap).sort((a, b) => a.price - b.price)
-                       .map((s, i) => ({ ...s, isBest: i === 0, isSource: s.name === srcStore }));
-
-        if (!productName)  productName  = serp.productName;
-        if (!productImage) productImage = serp.productImage;
-        dataSource = 'buyhatke+serpapi';
-        console.log('[Compare] Merged result:', stores.length, 'stores');
-      } catch(e) {
-        errors.push('SerpAPI: ' + e.message);
-        console.log('[Compare] SerpAPI also failed:', e.message);
-        // If SerpAPI fails, use whatever Buyhatke returned (even 1 store)
-      }
-    }
 
     if (stores.length === 0) {
       return res.status(404).json({
@@ -2191,7 +2152,7 @@ app.get('/compare/search', async (req, res) => {
     const srcEntry = stores.find(s => s.isSource);
     const savings  = srcEntry && !srcEntry.isBest ? srcEntry.price - stores[0].price : 0;
 
-    console.log('[Compare] FINAL via', dataSource + ':',
+    console.log('[Compare] FINAL:',
       stores.map(s => s.name + ':₹' + s.price + (s.isSource?'[src]':'') + (s.isBest?'[best]':'')).join(' | '));
 
     return res.json({
@@ -2200,7 +2161,7 @@ app.get('/compare/search', async (req, res) => {
       productImage,
       totalStores:  stores.length,
       savings:      savings > 0 ? savings : 0,
-      dataSource,
+      dataSource: 'buyhatke',
     });
 
   } catch(e) {
