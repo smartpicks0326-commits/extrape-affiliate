@@ -967,6 +967,25 @@ function parsePricePool(pool) {
     const link = obj.link || obj.url || obj.productURL || obj.product_url || '';
     if (price > 0 && name && link && link.startsWith('http')) {
       if (obj.inStock === 0 || obj.oos === 1) return;
+      // Validate the URL domain matches the store — Buyhatke sometimes has wrong cached URLs
+      // e.g. a Flipkart entry pointing to a microwave oven URL
+      try {
+        const linkHost = new URL(link).hostname.replace('www.','');
+        const expectedDomains = {
+          'Amazon': ['amazon.in','amazon.com'], 'Flipkart': ['flipkart.com'],
+          'Myntra': ['myntra.com'], 'Ajio': ['ajio.com'], 'Nykaa': ['nykaa.com'],
+          'TataCliq': ['tatacliq.com'], 'Croma': ['croma.com'], 'Snapdeal': ['snapdeal.com'],
+          'Meesho': ['meesho.com'], 'JioMart': ['jiomart.com'],
+          'Reliance Digital': ['reliancedigital.in'], 'Vijay Sales': ['vijaysales.com'],
+          'BigBasket': ['bigbasket.com'], 'Pepperfry': ['pepperfry.com'],
+          'FirstCry': ['firstcry.com'], 'Netmeds': ['netmeds.com'],
+        };
+        const allowed = expectedDomains[name] || [];
+        if (allowed.length > 0 && !allowed.some(d => linkHost.includes(d))) {
+          console.log('[BHK] Skipping wrong-domain URL for', name, ':', linkHost);
+          return;  // skip this entry — URL domain doesn't match store
+        }
+      } catch(e) {}
       if (!storeMap[name] || price < storeMap[name].price) {
         storeMap[name] = { name, normalizedName: name, price, url: link };
         console.log('[BHK] Found store in pool:', name, '₹'+price);
