@@ -88,7 +88,6 @@ section{position:relative;z-index:1;}
 .prod-details{flex:1;min-width:0;}
 .prod-title{font-size:15px;font-weight:700;line-height:1.35;margin-bottom:6px;}
 .prod-meta{font-size:11px;color:var(--muted);margin-bottom:10px;}
-.source-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:4px 10px;border-radius:999px;background:rgba(255,107,43,.1);color:var(--accent2);border:1px solid rgba(255,107,43,.2);}
 
 /* Deal banner */
 .deal-banner{border-radius:12px;padding:12px 16px;margin-bottom:16px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:10px;}
@@ -219,17 +218,15 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
 }
 
 
-/* ── Prevent horizontal overflow on mobile ── */
+/* ── Prevent horizontal overflow — safe globally ── */
 html, body { max-width: 100vw; overflow-x: hidden; }
-.wrap { max-width: 100%; overflow: hidden; }
-#urlInput {
-  max-width: 100%;
-  min-width: 0;
-  /* Prevent zoom on focus in iOS */
-  font-size: 16px !important;
-}
 #hero { overflow: hidden; }
-.input-wrap, .input-row { max-width: 100%; }
+/* ── Mobile-only overflow fixes ── */
+@media (max-width: 768px) {
+  .wrap { max-width: 100%; overflow: hidden; }
+  #urlInput { max-width: 100%; min-width: 0; font-size: 16px !important; }
+  .input-wrap, .input-row { max-width: 100%; }
+}
 </style>
 </head>
 <body>
@@ -254,7 +251,6 @@ html, body { max-width: 100vw; overflow-x: hidden; }
       ⚡ For 15+ stores —
       <a href="https://flash.co/home" target="_blank">Log in to flash.co</a>
       in this browser first.
-      <small>Without login we use Google Shopping</small>
     </div>
   </div>
 </section>
@@ -302,7 +298,6 @@ html, body { max-width: 100vw; overflow-x: hidden; }
       <div class="prod-details">
         <div class="prod-title" id="prodTitle">Product</div>
         <div class="prod-meta" id="prodMeta"></div>
-        <div class="source-badge" id="sourceBadge">🔍 Google Shopping</div>
       </div>
     </div>
 
@@ -539,8 +534,7 @@ async function getAffiliateLink(url,store){
 
 async function getCompareData(url){
   try{await fetch(BACKEND+'/ping',{signal:AbortSignal.timeout(5000)});}catch(e){}
-
-  // Strategy 1: flash.co from browser if logged in
+  // Try flash.co from browser if logged in
   var tok=getCookie('flash_auth_token');
   if(tok){
     try{
@@ -548,101 +542,9 @@ async function getCompareData(url){
       if(fr&&fr.stores&&fr.stores.length>0){fr.source='flash';return fr;}
     }catch(e){console.log('[Flash] failed:',e.message);}
   }
-
-  // Strategy 2: Buyhatke browser-direct fetch
-  // Buyhatke blocks server-side requests (403) but accepts browser requests freely.
-  // We fetch the __data.json from Buyhatke's product page directly from the user's
-  // browser, then POST the raw data to our backend for affiliate link processing.
-  try{
-    var bhData=await fetchBuyhatkeFromBrowser(url);
-    if(bhData&&bhData.stores&&bhData.stores.length>1){
-      // Post raw store data to backend to get affiliate links
-      var ar=await fetch(BACKEND+'/compare/affiliate',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({stores:bhData.stores,productName:bhData.productName,productImage:bhData.productImage}),
-        signal:AbortSignal.timeout(45000)
-      });
-      if(ar.ok){
-        var ad=await ar.json();
-        if(ad.stores&&ad.stores.length>0){ad.source='buyhatke';return ad;}
-      }
-      // If affiliate conversion fails, return raw data anyway
-      bhData.source='buyhatke';
-      return bhData;
-    }
-  }catch(e){console.log('[Buyhatke browser] failed:',e.message);}
-
-  // Strategy 3: Backend comparison (Buyhatke server-side + fallback)
   var r=await fetch(BACKEND+'/compare/search?url='+encodeURIComponent(url),{signal:AbortSignal.timeout(45000)});
   if(!r.ok)throw new Error('HTTP '+r.status);
   var d=await r.json();return d;
-}
-
-// Fetch Buyhatke product page data directly from the browser.
-// The browser can access Buyhatke freely — no 403 like server-side calls get.
-async function fetchBuyhatkeFromBrowser(productUrl){
-  // Step 1: Get internalPid + pos from our backend (it has productData working)
-  var infoR=await fetch(BACKEND+'/buyhatke/productinfo?url='+encodeURIComponent(productUrl),{signal:AbortSignal.timeout(15000)});
-  if(!infoR.ok) throw new Error('productinfo HTTP '+infoR.status);
-  var info=await infoR.json();
-  if(!info.internalPid) throw new Error('No internalPid: '+JSON.stringify(info).substring(0,80));
-
-  var internalPid=info.internalPid;
-  var pos=info.pos;
-  var productName=info.name;
-
-  // Step 2: Build Buyhatke page URL and fetch /__data.json directly from browser
-  var storeName=(info.site_name||'amazon').toLowerCase().replace(/[^a-z]/g,'');
-  var slug=(productName||'product').toLowerCase()
-    .replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,'-').replace(/-+/g,'-')
-    .split('-').slice(0,12).join('-');
-  var bhkPage='https://buyhatke.com/'+storeName+'-'+slug+'-price-in-india-'+pos+'-'+internalPid;
-  var dataUrl=bhkPage+'/__data.json?x-sveltekit-invalidated=001';
-
-  console.log('[Buyhatke] browser fetch:',dataUrl.substring(0,100));
-  var dr=await fetch(dataUrl,{
-    headers:{'Accept':'application/json','Referer':bhkPage},
-    signal:AbortSignal.timeout(15000)
-  });
-  if(!dr.ok) throw new Error('__data.json HTTP '+dr.status);
-  var d=await dr.json();
-
-  // Step 3: Parse SvelteKit deduplication pool for store prices
-  var pool=null;
-  if(d&&d.nodes&&Array.isArray(d.nodes)){
-    for(var i=0;i<d.nodes.length;i++){
-      var n=d.nodes[i];
-      if(n&&n.type==='data'&&Array.isArray(n.data)){pool=n.data;break;}
-    }
-  }
-  if(!pool&&Array.isArray(d)) pool=d;
-  if(!pool&&d&&Array.isArray(d.data)) pool=d.data;
-  if(!pool) throw new Error('No data pool in __data.json');
-
-  console.log('[Buyhatke] pool length:',pool.length);
-
-  // Scan pool for store price objects
-  var storeMap={};
-  pool.forEach(function(item){
-    if(!item||typeof item!=='object'||Array.isArray(item)) return;
-    var rawPrice=item.cur_price||item.price||item.offerPrice||0;
-    var price=parseFloat(String(rawPrice).replace(/[^0-9.]/g,''))||0;
-    if(price<=0) return;
-    var rawName=item.site_name||item.storeName||item.store_name||item.name||'';
-    var name=normStore(rawName);
-    if(!name) return;
-    var link=item.link||item.url||item.productURL||'';
-    if(!link||!link.startsWith('http')) return;
-    if(item.inStock===0||item.inStock===false) return;
-    if(!storeMap[name]||price<storeMap[name].price){
-      storeMap[name]={name:name,normalizedName:name,price:price,url:link};
-    }
-  });
-
-  var stores=Object.values(storeMap).sort(function(a,b){return a.price-b.price;});
-  console.log('[Buyhatke] found',stores.length,'stores:',stores.map(function(s){return s.name+':₹'+s.price;}).join(' | '));
-  return{stores:stores,productName:productName,productImage:info.image||null};
 }
 
 async function callFlash(productUrl,token){
@@ -678,7 +580,7 @@ function showResults(storeName,url,affiliateLink,data){
   var stores=(data&&data.stores)?data.stores:[];
   var productName=(data&&data.productName)?data.productName:('Product from '+storeName);
   var productImage=(data&&data.productImage)?data.productImage:null;
-  var source=(data&&data.source)?data.source:'serpapi';
+  var source=(data&&data.dataSource)?data.dataSource:(data&&data.source?data.source:'buyhatke');
 
   // Product card
   if(productImage){
@@ -688,8 +590,7 @@ function showResults(storeName,url,affiliateLink,data){
   }
   document.getElementById('prodTitle').textContent=productName;
   document.getElementById('prodMeta').textContent=stores.length>0?'Found '+stores.length+' stores · Sorted lowest to highest':'Your affiliate link is ready';
-  var srcBadge=document.getElementById('sourceBadge');
-  srcBadge.textContent=source==='flash'?'⚡ flash.co':'🔍 Google Shopping';
+
 
   // Deal banner
   var banner=document.getElementById('dealBanner');
