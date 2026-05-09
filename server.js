@@ -868,104 +868,83 @@ async function bhkGetMultiStorePrices(internalPid, srcPid, srcPos, productName) 
 }
 
 // Parse Buyhatke HTML — finds the kit.start() SvelteKit call and extracts embedded page data.
-// From Script 7 (62KB), the structure confirmed in May 2026:
-//   kit.start(app, element, {
-//     node_ids: [0, 3, 25],
-//     data: [
-//       {type:"data", data:{countryCode:"IN",...}},   // node 0 — global
-//       null,                                           // node 3 — layout
-//       {type:"data", data:{                           // node 25 — product page
-//         siteName:"Flipkart", currencySymbol:"₹",
-//         dealsData:{dealsList:[...]},
-//         ... cross-store price data ...
-//       }}
-//     ]
-//   })
+// Confirmed structure (May 2026): kit.start(app, element, { node_ids:[0,3,25], data:[...] })
+// The product data is in the third node (index 2) of the data array.
 function extractAllSvelteKitPools(html) {
   const pools = [];
 
-  // Find the kit.start() call — look in all script tags
-  const scriptRe = new RegExp("<script[^>]*>([\s\S]*?)<\/script>", "g");
-  let m;
-  while ((m = scriptRe.exec(html)) !== null) {
-    const src = m[1];
-    if (!src.includes('kit.start') && !src.includes('__sveltekit')) continue;
+  // Find kit.start directly in the full HTML string — no regex needed for location
+  const kitIdx = html.indexOf('kit.start(');
+  if (kitIdx === -1) {
+    console.log('[BHK] kit.start not found in HTML');
+    return pools;
+  }
 
-    // Extract everything inside kit.start(app, element, { ... })
-    const startIdx = src.indexOf('kit.start(');
-    if (startIdx === -1) continue;
+  // Find the data: [ array after kit.start
+  const dataKey = html.indexOf('data:', kitIdx);
+  if (dataKey === -1) { console.log('[BHK] data: key not found'); return pools; }
 
-    // Find the data: [...] array inside the kit.start call
-    const dataIdx = src.indexOf('data:', startIdx);
-    if (dataIdx === -1) continue;
+  const arrOpen = html.indexOf('[', dataKey);
+  if (arrOpen === -1) { console.log('[BHK] [ not found after data:'); return pools; }
 
-    // Find the opening [ of the data array
-    const arrStart = src.indexOf('[', dataIdx);
-    if (arrStart === -1) continue;
-
-    // Walk to find the matching closing ] — balanced bracket counting
-    let depth = 0, inStr = false, strChar = '', i = arrStart;
-    for (; i < src.length; i++) {
-      const c = src[i];
-      if (inStr) {
-        if (c === strChar && src[i-1] !== '\\') inStr = false;
-      } else if (c === '"' || c === "'") {
-        inStr = true; strChar = c;
-      } else if (c === '[' || c === '{') {
-        depth++;
-      } else if (c === ']' || c === '}') {
-        depth--;
-        if (depth === 0) break;
-      }
-    }
-
-    const rawDataArr = src.slice(arrStart, i + 1);
-    console.log('[BHK] kit.start data array length:', rawDataArr.length);
-
-    // The data array uses JS object syntax (unquoted keys) — convert to JSON
-    // by quoting all unquoted identifier keys before : (e.g. type: -> "type":)
-    try {
-      // Replace unquoted keys: word characters followed by colon (but not URLs)
-      const jsonStr = rawDataArr
-        .replace(/([{,\[]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1"$2":')
-        .replace(/:\s*undefined/g, ':null')
-        .replace(/\/\*[\s\S]*?\*\//g, '');  // strip comments
-      const parsed = JSON.parse(jsonStr);
-      if (Array.isArray(parsed)) {
-        parsed.forEach(node => {
-          if (node && node.data && typeof node.data === 'object') {
-            pools.push(node.data);
-          }
-        });
-        console.log('[BHK] Parsed', pools.length, 'data nodes from kit.start');
-        if (pools.length > 0) return pools;
-      }
-    } catch(e) {
-      console.log('[BHK] JSON parse of kit.start data failed:', e.message.substring(0, 80));
-      // Fall back: scan the raw string for price-looking objects
-      pools.push({ _raw: rawDataArr });
+  // Walk forward counting brackets to find the matching ]
+  let depth = 0, inStr = false, strChar = '';
+  let i = arrOpen;
+  for (; i < Math.min(html.length, arrOpen + 200000); i++) {
+    const c = html[i];
+    if (inStr) {
+      if (c === strChar && html[i-1] !== '\\') inStr = false;
+    } else if (c === '"' || c === "'") {
+      inStr = true; strChar = c;
+    } else if (c === '[' || c === '{') {
+      depth++;
+    } else if (c === ']' || c === '}') {
+      depth--;
+      if (depth === 0) break;
     }
   }
 
-  // Fallback: scan all script tags for cur_price / site_name patterns
-  const scripts2 = [...html.matchAll(new RegExp("<script[^>]*>([\s\S]*?)<\/script>", "g"))];
-  scripts2.forEach(sm => {
-    const src = sm[1];
-    if (!src.includes('cur_price') && !src.includes('site_name')) return;
-    // Try extracting JSON-like objects with price data
-    const objRe = /\{[^{}]*"?cur_price"?\s*:\s*\d+[^{}]*\}/g;
-    let om;
-    while ((om = objRe.exec(src)) !== null) {
-      try {
-        const o = JSON.parse(om[0].replace(/([{,])\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1"$2":'));
-        if (o.cur_price) pools.push(o);
-      } catch(e) {}
+  const rawArr = html.slice(arrOpen, i + 1);
+  console.log('[BHK] kit.start data array extracted, length:', rawArr.length);
+
+  // Convert JS object literal (unquoted keys) to valid JSON
+  // Only quote keys that are bare identifiers (not already quoted)
+  try {
+    const jsonStr = rawArr
+      // Quote unquoted object keys: handles {key: and ,key: and { key:
+      .replace(/([{,\[]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, (m, pre, key) => pre + '"' + key + '":')
+      .replace(/:\s*undefined/g, ':null')
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+
+    const parsed = JSON.parse(jsonStr);
+    if (Array.isArray(parsed)) {
+      console.log('[BHK] Parsed data array, length:', parsed.length);
+      parsed.forEach((node, idx) => {
+        if (node && node.data && typeof node.data === 'object') {
+          console.log('[BHK] Node', idx, 'data keys:', Object.keys(node.data).slice(0, 8).join(','));
+          pools.push(node.data);
+        }
+      });
     }
-  });
+  } catch(e) {
+    console.log('[BHK] JSON parse failed:', e.message.substring(0, 100));
+    // JSON parse failed — try a targeted regex extraction of price objects instead
+    // Look for objects with cur_price field directly in the raw array string
+    const priceRe = /\{[^{}]{0,500}cur_price["']?\s*:\s*(\d+)[^{}]{0,500}\}/g;
+    let pm;
+    while ((pm = priceRe.exec(rawArr)) !== null) {
+      try {
+        const o = JSON.parse(pm[0].replace(/([{,])\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1"$2":'));
+        if (o.cur_price) pools.push(o);
+      } catch(e2) {}
+    }
+    console.log('[BHK] Regex fallback found', pools.length, 'price objects');
+  }
 
   console.log('[BHK] Total pools found:', pools.length);
   return pools;
 }
+
 
 // Recursively scan any object/array for store price entries
 function parsePricePool(pool) {
