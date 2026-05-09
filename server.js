@@ -12,6 +12,7 @@ app.use(cors());
 const EXTRAPE_ACCESS_TOKEN   = process.env.EXTRAPE_ACCESS_TOKEN   || '';
 const EXTRAPE_REMEMBER_TOKEN = process.env.EXTRAPE_REMEMBER_TOKEN || '';
 const FRONTEND_URL            = process.env.FRONTEND_URL           || 'https://smartpickdeals.live';
+const SERP_API_KEY            = process.env.SERP_API_KEY           || '';
 
 // ── Encode affiliate URL as base64url (no memory needed for redirect) ──
 function makeGoLink(affiliateUrl) {
@@ -760,7 +761,7 @@ async function bhkGetProductData(pos, pid) {
   if (!r.ok) throw new Error(`productData HTTP ${r.status}`);
   const d = await r.json();
   if (!d.data || !d.data.internalPid) {
-    // Product not in Buyhatke index — log full response for diagnosis
+    // Product not in Buyhatke index — log full response for diagnosis, throw for SerpAPI fallback
     console.log('[BHK] productData missing internalPid. Full response:', JSON.stringify(d).substring(0, 400));
     const err = new Error('productData: no internalPid — product not in Buyhatke index');
     err.rawResponse = d;
@@ -1357,6 +1358,1096 @@ function parseBuyhatkeResponse(data, inputUrl, srcStore) {
   return { stores, productName, productImage };
 }
 
+// ── SerpAPI comparison (fallback when Buyhatke returns < 2 stores) ──
+async function searchViaSerpAPI(url, srcStore, knownProductName = '') {
+  if (!SERP_API_KEY) throw new Error('SERP_API_KEY not configured');
+
+  // Use pre-known product name from Buyhatke if available — avoids fetching
+  // Flipkart/store page titles which contain SEO noise like "Buy online at best price"
+  const title = knownProductName || await fetchTitle(url);
+  let shortQ = '';
+  if (title && title.length > 5) {
+    const core = title
+      // Remove parenthetical content: (Mist Blue, 256 GB), [features] etc.
+      .replace(/s*([^)]*)/g, '').replace(/s*[[^]]*]/g, '')
+      // Stop at noise words
+      .replace(/(with|for|up to|upto|comes|buy|online|india|featuring|at best).*/i, '')
+      .replace(/[^a-zA-Z0-9 ]/g, ' ').replace(/s+/g, ' ').trim();
+    shortQ = core.split(' ').filter(w => w.length > 0).slice(0, 6).join(' ');
+  }
+  if (!shortQ) {
+    try {
+      const segs = new URL(url).pathname.split('/')
+        .filter(s=>s.length>3&&!/^[A-Z0-9]{6,}$/.test(s)&&!/^(dp|p|product|item|buy|s|ip|d)$/i.test(s));
+      shortQ = (segs[0]||'').replace(/-/g,' ').trim().split(' ').slice(0,6).join(' ');
+    } catch(e) {}
+  }
+  // If shortQ still empty but we have an ASIN — search by ASIN directly (always works)
+  if (!shortQ || shortQ.length < 3) {
+    const asinM = url.match(/[/=]([A-Z0-9]{10})(?:[/?&]|$)/i);
+    if (asinM) shortQ = asinM[1];
+  }
+  if (!shortQ || shortQ.length < 3) throw new Error('Could not identify product from URL');
+
+  const fullTitle = title || shortQ;
+  let asin = null;
+  try {
+    const m = new URL(url).pathname.match(/\/dp\/([A-Z0-9]{10})/i) ||
+              new URL(url).pathname.match(/\/([A-Z0-9]{10})(?:\/|$)/i);
+    if (m) asin = m[1];
+  } catch(e) {}
+
+  const brandModel = shortQ.split(' ').slice(0,4).join(' ');
+  const q1 = asin ? (asin + ' ' + brandModel) : shortQ;
+  const q2 = shortQ + ' price India';
+  const q3 = brandModel;
+  console.log('[SerpAPI] shortQ:', shortQ, '| Queries:', q1, '|', q2, '|', q3);
+
+  const serpSearch = (q) => fetch(
+    'https://serpapi.com/search.json?engine=google_shopping'
+    + '&q=' + encodeURIComponent(q)
+    + '&gl=in&hl=en&currency=INR&num=40&api_key=' + SERP_API_KEY,
+    { signal: AbortSignal.timeout(15000) }
+  ).then(r => r.json()).catch(() => null);
+
+  const [r1, r2, r3] = await Promise.all([serpSearch(q1), serpSearch(q2), serpSearch(q3)]);
+  const allResults = [
+    ...(r1?.shopping_results||[]),
+    ...(r2?.shopping_results||[]),
+    ...(r3?.shopping_results||[]),
+  ];
+  const productImage = r1?.shopping_results?.[0]?.thumbnail || r2?.shopping_results?.[0]?.thumbnail || '';
+  console.log('[SerpAPI] Total results:', allResults.length);
+
+  // Include 2-char words (model numbers: "17", "5G", "M2" etc.) — critical for matching
+  // e.g. "Apple iPhone 17" without "17" means ANY Apple iPhone matches at 100%
+  const qWords = shortQ.toLowerCase().split(' ').filter(w=>w.length>1);
+  function sim(t) {
+    if (!t) return 0;
+    const tl = t.toLowerCase();
+    if (asin && tl.includes(asin.toLowerCase())) return 1.0;
+    if (!qWords.length) return 0;
+    return qWords.filter(w=>tl.includes(w)).length / qWords.length;
+  }
+
+  const TARGET = ['Amazon','Flipkart','Myntra','Ajio','Nykaa','TataCliq','Croma','Snapdeal',
+                  'Meesho','Reliance Digital','Vijay Sales'];
+  const storeMap = {};
+  allResults.forEach(item => {
+    const store = normalizeStore(item.source||'');
+    if (!TARGET.includes(store)) return;
+    const price = item.extracted_price || 0;
+    if (!price) return;
+    const s = sim(item.title);
+    console.log('[SerpAPI]', store, '₹'+price, 'sim:'+Math.round(s*100)+'%', (item.title||'').substring(0,50));
+
+    // 0.6 threshold — needs to match 60% of query words (model number included now)
+    if (s < 0.6) { console.log('  → SKIP (sim ' + Math.round(s*100) + '%)'); return; }
+
+    // Prefer direct store URL; accept Google Shopping page as fallback
+    const storeDomains = ['amazon.in','flipkart.com','myntra.com','ajio.com','nykaa.com',
+      'tatacliq.com','croma.com','snapdeal.com','meesho.com','reliancedigital.in','vijaysales.com'];
+    let link = null;
+    if (item.product_link) {
+      try {
+        const h = new URL(item.product_link).hostname.replace('www.','');
+        if (storeDomains.some(d => h.includes(d))) link = item.product_link;
+      } catch(e) {}
+    }
+    if (!link && item.link) {
+      // Google Shopping product page (not a /search? page) is an acceptable fallback
+      if (!item.link.includes('/search?') && item.link.includes('google.com')) {
+        link = item.link;
+      }
+    }
+    if (!link) { console.log('  → SKIP (no store link)'); return; }
+
+    if (!storeMap[store] || price < storeMap[store].price) {
+      storeMap[store] = { name:store, normalizedName:store, price, url:link };
+    }
+  });
+
+  const stores = Object.values(storeMap)
+    .sort((a,b)=>a.price-b.price)
+    .map((s,i)=>({ ...s, isBest:i===0, isSource:s.name===srcStore }));
+
+  console.log('[SerpAPI] FINAL:', stores.map(s=>s.name+':₹'+s.price).join(' | '));
+  return { stores, productName: fullTitle, productImage };
+}
+
+// ── Routes ──
+app.get('/', (req, res) => res.send('Smart Pick Deals ✅'));
+app.get('/ping', (req, res) => res.json({ status:'ok', time:new Date().toISOString() }));
+
+// Battery status endpoint — reads from Linux battery sys files
+app.get('/battery', async (req, res) => {
+  try {
+    const fs = require('fs');
+    const path = '/sys/class/power_supply';
+    if (!fs.existsSync(path)) {
+      return res.json({ available: false, reason: 'No power supply info' });
+    }
+    const supplies = fs.readdirSync(path);
+    const bat = supplies.find(s => s.startsWith('BAT'));
+    if (!bat) {
+      return res.json({ available: false, reason: 'No battery found (desktop or server)' });
+    }
+    const batPath = `${path}/${bat}`;
+    const readFile = f => { try { return fs.readFileSync(`${batPath}/${f}`, 'utf8').trim(); } catch(e) { return null; } };
+    const capacity = parseInt(readFile('capacity') || '0');
+    const status   = readFile('status') || 'Unknown'; // Charging / Discharging / Full
+    return res.json({ available: true, battery: capacity, status, battery_name: bat });
+  } catch(e) {
+    return res.json({ available: false, reason: e.message });
+  }
+});
+
+// ── Flash.co Backend Proxy ──
+// Routes flash.co API calls through Render using the user's session token
+// Requires FLASH_AUTH_TOKEN and FLASH_DEVICE_ID env vars on Render
+// Note: Only works if Render's IP is not blocked by flash.co
+// For better success rate, optionally configure PROXY_URL (residential proxy)
+
+const FLASH_AUTH_TOKEN = process.env.FLASH_AUTH_TOKEN || '';
+const FLASH_DEVICE_ID  = process.env.FLASH_DEVICE_ID  || 'web-spd-backend';
+const PROXY_URL        = process.env.PROXY_URL         || ''; // optional: residential proxy
+
+// Proxy: POST stream to flash.co to get pageHash
+// GET test endpoint — open in browser to test flash.co proxy
+// Usage: https://extrape-affiliate.onrender.com/flash/test?url=https://amzn.in/d/01zArQtK
+app.get('/flash/test', async (req, res) => {
+  const productUrl = req.query.url;
+  if (!productUrl) {
+    return res.json({
+      usage: 'Add ?url=YOUR_PRODUCT_URL to test',
+      example: '/flash/test?url=https://amzn.in/d/01zArQtK',
+      token_set: !!FLASH_AUTH_TOKEN,
+      device_set: !!FLASH_DEVICE_ID,
+      token_preview: FLASH_AUTH_TOKEN ? FLASH_AUTH_TOKEN.substring(0,20)+'...' : 'NOT SET — add FLASH_AUTH_TOKEN to Render env',
+      device_id: FLASH_DEVICE_ID || 'NOT SET — add FLASH_DEVICE_ID to Render env',
+    });
+  }
+  if (!FLASH_AUTH_TOKEN) {
+    return res.json({ error: 'FLASH_AUTH_TOKEN not set in Render environment variables' });
+  }
+
+  try {
+    // Step 1: Get pageHash via stream
+    const params = new URLSearchParams({
+      source: 'APPEND', context: 'HOME_URL_PASTE',
+      user_agent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36',
+      device_type: 'DESKTOP', country_code: 'IN',
+    });
+    const headers = {
+      'Authorization': 'Bearer ' + FLASH_AUTH_TOKEN,
+      'Channel-Type': 'web',
+      'Content-Type': 'application/json',
+      'Origin': 'https://flash.co',
+      'Referer': 'https://flash.co/',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36',
+      'X-Country-Code': 'IN',
+      'X-Device-Id': FLASH_DEVICE_ID || 'web-spd',
+      'X-Timezone': 'Asia/Calcutta',
+      'Accept': 'application/json, text/event-stream, */*',
+    };
+
+    console.log('[Flash Test] Searching:', productUrl);
+    const sr = await fetch('https://apiv3.flash.tech/agents/chat/stream?' + params, {
+      method: 'POST', headers,
+      body: JSON.stringify({ query: productUrl, context: 'HOME_URL_PASTE' }),
+      signal: AbortSignal.timeout(35000),
+    });
+
+    const streamStatus = sr.status;
+    const streamText = sr.ok ? await sr.text() : await sr.text();
+    console.log('[Flash Test] Stream status:', streamStatus, 'length:', streamText.length);
+
+    if (!sr.ok) {
+      return res.json({
+        step: 'stream',
+        status: streamStatus,
+        error: streamText.substring(0, 200),
+        diagnosis: streamStatus === 401 ? 'Token is invalid or IP-bound. Try refreshing FLASH_AUTH_TOKEN in Render.' : 'Unexpected error',
+      });
+    }
+
+    // Extract pageHash — flash uses /product-search/:hash in INT_NAVIGATION event
+    let pageHash = null;
+    const navPatterns = [
+      /product-search\/([A-Za-z0-9_-]{4,})/,
+      /price-compare\/([A-Za-z0-9_-]{4,})/,
+      /\/h\/([A-Za-z0-9_-]{4,})/,
+    ];
+    for (const pat of navPatterns) {
+      const m = streamText.match(pat);
+      if (m) { pageHash = m[1]; console.log('[Flash Test] pageHash:', pageHash, 'via', pat); break; }
+    }
+    if (!pageHash) {
+      for (const line of streamText.split('\n')) {
+        if (!line.startsWith('data:')) continue;
+        try {
+          const d = JSON.parse(line.slice(5).trim());
+          pageHash = d.pageHash || d.referenceId || d.hash ||
+            (d.data && (d.data.pageHash || d.data.referenceId)) || null;
+          if (pageHash) break;
+        } catch(e) {}
+      }
+    }
+
+    if (!pageHash) {
+      return res.json({
+        step: 'stream_parse',
+        status: streamStatus,
+        pageHash: null,
+        streamSample: streamText.substring(0, 600),
+        error: 'Could not extract pageHash from flash stream response',
+      });
+    }
+
+    // Step 2: Get prices
+    const priceHeaders = { ...headers };
+    delete priceHeaders['Content-Type'];
+
+    // Step 2: Extract threadId and messageId from stream — this is the real key
+    // Flash stores results by threadId, not referenceId
+    let threadId = null;
+    let messageId = null;
+    for (const line of streamText.split('\n')) {
+      if (!line.startsWith('data:')) continue;
+      try {
+        const d = JSON.parse(line.slice(5).trim());
+        if (d.threadId) threadId = d.threadId;
+        if (d.messageId) messageId = d.messageId;
+      } catch(e) {}
+    }
+    console.log('[Flash Test] threadId:', threadId, 'messageId:', messageId);
+
+    const delay = ms => new Promise(r => setTimeout(r, ms));
+    let pollData = null;
+    let pollScope = null;
+    let pollAttempts = 0;
+
+    // Try threadId-based endpoints first (most likely to work)
+    const threadEndpoints = threadId ? [
+      `https://apiv3.flash.tech/api/v1/agents/chat/thread/${threadId}/messages`,
+      `https://apiv3.flash.tech/api/v2/agents/chat/thread/${threadId}/messages`,
+      `https://apiv3.flash.tech/api/v1/chat/thread/${threadId}/messages`,
+      `https://apiv3.flash.tech/api/v1/threads/${threadId}/messages`,
+      `https://apiv3.flash.tech/api/v1/threads/${threadId}`,
+    ] : [];
+
+    // Also try messageId endpoints
+    const messageEndpoints = messageId ? [
+      `https://apiv3.flash.tech/api/v1/agents/chat/message/${messageId}`,
+      `https://apiv3.flash.tech/api/v1/messages/${messageId}/products`,
+      `https://apiv3.flash.tech/api/v1/messages/${messageId}/price-compare`,
+    ] : [];
+
+    // Feedback endpoints with referenceId
+    const feedbackEndpoints = [
+      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=${pageHash}`,
+      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=${pageHash}`,
+      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_SEARCH&referenceId=${pageHash}`,
+    ];
+
+    const allEndpoints = [...threadEndpoints, ...messageEndpoints, ...feedbackEndpoints];
+    const probeResults = [];
+
+    // Probe all endpoints immediately
+    for (const ep of allEndpoints) {
+      try {
+        const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(5000) });
+        const txt = await r.text();
+        probeResults.push({ ep: ep.replace('https://apiv3.flash.tech',''), status: r.status, body: txt.substring(0, 200) });
+        if (r.ok && r.status === 200) {
+          try {
+            const d = JSON.parse(txt);
+            const str = JSON.stringify(d);
+            // Check for product data in various shapes
+            const hasProducts = d?.messages?.length > 0 || d?.data?.length > 0 ||
+              (d?.response?.feedbacks?.length > 0) || d?.products?.length > 0 ||
+              str.includes('"price"') || str.includes('"storeName"') || str.includes('"stores"');
+            if (hasProducts) {
+              pollData = d; pollScope = ep; pollAttempts = 1;
+              console.log('[Flash Test] ✅ Found data at:', ep);
+              break;
+            }
+          } catch(e) {}
+        }
+      } catch(e) {
+        probeResults.push({ ep: ep.replace('https://apiv3.flash.tech',''), error: e.message });
+      }
+    }
+
+    // If nothing found yet, poll feedback endpoints with delay
+    if (!pollData) {
+      for (let attempt = 0; attempt < 8; attempt++) {
+        await delay(3000);
+        pollAttempts = attempt + 2;
+        for (const ep of feedbackEndpoints) {
+          try {
+            const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(6000) });
+            if (!r.ok) continue;
+            const d = await r.json();
+            const feedbacks = d?.response?.feedbacks || d?.feedbacks || [];
+            if (feedbacks.length > 0) {
+              pollData = d; pollScope = ep;
+              console.log('[Flash Test] ✅ Got feedbacks at attempt:', attempt + 1);
+              break;
+            }
+          } catch(e) {}
+        }
+        if (pollData) break;
+      }
+    }
+
+    const pr = { ok: !!pollData, status: pollData ? 200 : 504 };
+    const priceData = pollData;
+    const priceStatus = pr.status;
+    return res.json({
+      success: pr.ok,
+      searchHash: pageHash,
+      pollAttempts,
+      pollScope: pollScope || null,
+      streamStatus,
+      priceStatus: pr.status,
+      feedbackCount: (pollData?.response?.feedbacks || pollData?.feedbacks || []).length,
+      priceKeys: pollData ? Object.keys(pollData) : [],
+      priceSample: JSON.stringify(pollData).substring(0, 1500),
+      probeResults: probeResults || [],
+      streamSample: streamText.substring(0, 400),
+    });
+
+  } catch(e) {
+    return res.json({ error: e.message, step: 'exception' });
+  }
+});
+
+app.post('/flash/search', async (req, res) => {
+  const { url: productUrl } = req.body;
+  if (!productUrl) return res.status(400).json({ error: 'Pass url in body' });
+  if (!FLASH_AUTH_TOKEN) return res.status(503).json({ error: 'FLASH_AUTH_TOKEN not set in Render env' });
+
+  try {
+    const params = new URLSearchParams({
+      source: 'APPEND', context: 'HOME_URL_PASTE',
+      user_agent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+      device_type: 'DESKTOP', country_code: 'IN',
+    });
+
+    const headers = {
+      'Authorization': 'Bearer ' + FLASH_AUTH_TOKEN,
+      'Channel-Type': 'web',
+      'Content-Type': 'application/json',
+      'Origin': 'https://flash.co',
+      'Referer': 'https://flash.co/',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+      'X-Country-Code': 'IN',
+      'X-Device-Id': FLASH_DEVICE_ID,
+      'X-Timezone': 'Asia/Calcutta',
+      'Accept': 'application/json, text/event-stream, */*',
+      'Accept-Language': 'en-GB,en;q=0.9',
+    };
+
+    console.log('[Flash Proxy] Searching:', productUrl);
+    const sr = await fetch(
+      'https://apiv3.flash.tech/agents/chat/stream?' + params.toString(),
+      { method: 'POST', headers, body: JSON.stringify({ query: productUrl, context: 'HOME_URL_PASTE' }), signal: AbortSignal.timeout(35000) }
+    );
+
+    console.log('[Flash Proxy] Stream status:', sr.status);
+    if (!sr.ok) {
+      const errText = await sr.text().catch(() => '');
+      console.log('[Flash Proxy] Stream error body:', errText.substring(0, 200));
+      return res.status(sr.status).json({ error: 'Flash stream ' + sr.status, detail: errText.substring(0, 100) });
+    }
+
+    const text = await sr.text();
+    console.log('[Flash Proxy] Stream length:', text.length, 'sample:', text.substring(0, 300));
+
+    // Extract pageHash from flash SSE stream
+    let pageHash = null;
+    const navPats = [
+      /product-search\/([A-Za-z0-9_-]{4,})/,
+      /price-compare\/([A-Za-z0-9_-]{4,})/,
+      /\/h\/([A-Za-z0-9_-]{4,})/,
+    ];
+    for (const pat of navPats) {
+      const m = text.match(pat);
+      if (m) { pageHash = m[1]; break; }
+    }
+    if (!pageHash) {
+      for (const line of text.split("\n")) {
+        if (!line.startsWith('data:')) continue;
+        try {
+          const d = JSON.parse(line.slice(5).trim());
+          pageHash = d.pageHash || d.referenceId || (d.data && (d.data.pageHash || d.data.referenceId)) || null;
+          if (pageHash) break;
+        } catch(e) {}
+      }
+    }
+
+    console.log('[Flash Proxy] pageHash:', pageHash);
+    if (!pageHash) return res.status(422).json({ error: 'No pageHash found in flash response', streamSample: text.substring(0, 500) });
+
+    return res.json({ ok: true, pageHash });
+  } catch(e) {
+    console.error('[Flash Proxy] search error:', e.message);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// Proxy: GET prices from flash.co for a given pageHash
+app.get('/flash/prices/:pageHash', async (req, res) => {
+  const { pageHash } = req.params;
+  if (!FLASH_AUTH_TOKEN) return res.status(503).json({ error: 'FLASH_AUTH_TOKEN not set' });
+
+  const headers = {
+    'Authorization': 'Bearer ' + FLASH_AUTH_TOKEN,
+    'Channel-Type': 'web',
+    'Origin': 'https://flash.co',
+    'Referer': 'https://flash.co/',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+    'X-Country-Code': 'IN',
+    'X-Device-Id': FLASH_DEVICE_ID,
+    'X-Timezone': 'Asia/Calcutta',
+    'Accept': 'application/json',
+  };
+
+  const endpoints = [
+    'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
+    'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash,
+  ];
+
+  for (const ep of endpoints) {
+    try {
+      console.log('[Flash Proxy] Fetching prices from:', ep);
+      const r = await fetch(ep, { headers, signal: AbortSignal.timeout(15000) });
+      console.log('[Flash Proxy] Prices status:', r.status);
+      if (r.ok) {
+        const data = await r.json();
+        const feedbacks = data?.response?.feedbacks || data?.feedbacks || [];
+        if (feedbacks.length > 0) {
+          console.log('[Flash Proxy] ✅ Got', feedbacks.length, 'feedbacks immediately');
+          return res.json({ ok: true, data });
+        }
+        // Empty — will poll below
+      }
+    } catch(e) {}
+  }
+
+  // Poll with delay — flash processes async
+  for (let attempt = 0; attempt < 12; attempt++) {
+    await new Promise(r => setTimeout(r, 2500));
+    for (const ep of endpoints) {
+      try {
+        const r2 = await fetch(ep, { headers, signal: AbortSignal.timeout(8000) });
+        if (!r2.ok) continue;
+        const data = await r2.json();
+        const feedbacks = data?.response?.feedbacks || data?.feedbacks || [];
+        if (feedbacks.length > 0) {
+          console.log('[Flash Proxy] ✅ Got', feedbacks.length, 'feedbacks at poll attempt:', attempt + 1);
+          return res.json({ ok: true, data, attempt: attempt + 1 });
+        }
+      } catch(e) {}
+    }
+    console.log('[Flash Proxy] Poll attempt', attempt + 1, '— still empty');
+  }
+  return res.status(504).json({ error: 'Flash timed out after 30s', pageHash: req.params.pageHash });
+});
+
+// Proxy: One-shot — search + get prices in one call
+app.post('/flash/compare', async (req, res) => {
+  const { url: productUrl } = req.body;
+  if (!productUrl) return res.status(400).json({ error: 'Pass url in body' });
+  if (!FLASH_AUTH_TOKEN) return res.status(503).json({ error: 'FLASH_AUTH_TOKEN not set in Render env', setup: 'Add FLASH_AUTH_TOKEN and FLASH_DEVICE_ID to Render environment variables' });
+
+  try {
+    // Step 1: Get pageHash
+    const searchResp = await fetch('http://localhost:' + (process.env.PORT || 3000) + '/flash/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: productUrl }),
+      signal: AbortSignal.timeout(40000),
+    });
+    const searchData = await searchResp.json();
+    if (!searchResp.ok || !searchData.pageHash) {
+      return res.status(searchResp.status).json({ error: searchData.error || 'Flash search failed', detail: searchData });
+    }
+
+    // Step 2: Get prices
+    const pricesResp = await fetch('http://localhost:' + (process.env.PORT || 3000) + '/flash/prices/' + searchData.pageHash, {
+      signal: AbortSignal.timeout(20000),
+    });
+    const pricesData = await pricesResp.json();
+    if (!pricesResp.ok) return res.status(pricesResp.status).json({ error: pricesData.error });
+
+    return res.json({ ok: true, pageHash: searchData.pageHash, priceData: pricesData.data });
+  } catch(e) {
+    console.error('[Flash Proxy] compare error:', e.message);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// Backfill store names for existing clicks missing store field
+app.post('/admin/backfill-stores', async (req, res) => {
+  if (!dbConnected) return res.json({ ok: false, reason: 'DB not connected' });
+  const force = req.query.force === 'true';
+  try {
+    const clicks = await Event.find({ type: 'click' }).lean();
+    let updated = 0;
+    const details = [];
+    for (const c of clicks) {
+      const store = detectStoreFromUrl(c.dest || '');
+      // Update if: force mode, OR store is empty/blank, OR store improved
+      if (store && (force || !c.store || c.store !== store)) {
+        await Event.updateOne({ _id: c._id }, { $set: { store } });
+        if (store !== c.store) {
+          details.push({ dest: (c.dest||'').substring(0,50), old: c.store||'', new: store });
+          updated++;
+        }
+      }
+    }
+    res.json({ ok: true, total: clicks.length, updated, details: details.slice(0,20), message: updated + ' records updated' });
+  } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Sync endpoint: merge another server's in-memory analytics into MongoDB ──
+// Called by laptop startup script to pull Render's data after being offline
+app.post('/admin/sync-from', async (req, res) => {
+  if (!dbConnected) return res.json({ ok: false, reason: 'DB not connected' });
+  const { sourceUrl } = req.body;
+  if (!sourceUrl) return res.status(400).json({ ok: false, reason: 'Pass sourceUrl in body' });
+
+  try {
+    // Fetch stats from the other server (all-time)
+    const r = await fetch(sourceUrl + '/dashboard/stats?from=2024-01-01T00:00:00.000Z&to=' + new Date().toISOString(),
+      { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) throw new Error('Source returned ' + r.status);
+    const d = await r.json();
+
+    // If source uses DB too, skip sync (same data)
+    if (d.dbConnected) return res.json({ ok: true, skipped: true, reason: 'Source already uses MongoDB' });
+
+    // Merge in-memory counters into MongoDB
+    const inc = {
+      pageVisits:  d.pageVisits  || 0,
+      conversions: d.conversions || 0,
+      clicks:      d.clicks      || 0,
+      compares:    d.compares    || 0,
+    };
+    await Counter.updateOne({ _id: 'main' }, { $inc: inc });
+    console.log('[Sync] Merged from', sourceUrl, ':', inc);
+
+    // Save recent events to MongoDB
+    const events = [
+      ...(d.recentVisits       || []).map(e => ({ type:'visit',      url:e.url,   ts:new Date(e.ts) })),
+      ...(d.recentConversions  || []).map(e => ({ type:'conversion', url:e.url,   store:e.store, state:e.state, ts:new Date(e.ts) })),
+      ...(d.recentClicks       || []).map(e => ({ type:'click',      dest:e.dest, store:e.store || detectStoreFromUrl(e.dest||''), ts:new Date(e.ts) })),
+    ].filter(e => e.ts && !isNaN(e.ts));
+
+    if (events.length > 0) {
+      await Event.insertMany(events, { ordered: false }).catch(() => {});
+    }
+
+    res.json({ ok: true, merged: inc, events: events.length });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Track page visits
+app.post('/track/visit', async (req, res) => {
+  const page = req.body?.page || req.headers?.referer || '/';
+  await trackVisit(page).catch(() => {});
+  res.json({ ok: true });
+});
+
+// Track compare searches
+app.post('/track/compare', async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  const url   = req.body?.url   || '';
+  const store = req.body?.store || detectStoreFromUrl(url) || '';
+  await trackCompareEvent(url, store).catch(() => {});
+  res.json({ ok: true });
+});
+app.options('/track/compare', (req, res) => { res.set('Access-Control-Allow-Origin','*').set('Access-Control-Allow-Methods','POST,OPTIONS').set('Access-Control-Allow-Headers','Content-Type').sendStatus(204); });
+
+// Track link clicks — called from frontend before opening affiliate link
+// Accepts POST (from Cloudflare function) and GET (from index.html img-beacon)
+const clickCors = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+app.options('/track/click', (req, res) => res.set(clickCors).sendStatus(204));
+
+app.post('/track/click', async (req, res) => {
+  res.set(clickCors);
+  const dest  = (req.body?.dest || req.body?.url || req.query?.dest || 'unknown').substring(0, 300);
+  const store = req.body?.store || req.query?.store || detectStoreFromUrl(dest) || '';
+  await trackClick(dest, store).catch(e => console.error('[DB] /track/click POST:', e.message));
+  res.json({ ok: true });
+});
+
+// GET version — called as a fire-and-forget beacon from frontend
+app.get('/track/click', async (req, res) => {
+  res.set(clickCors);
+  const dest = (req.query?.dest || req.query?.url || 'unknown').substring(0, 300);
+  const store = req.query?.store || '';
+  await trackClick(dest, store).catch(e => console.error('[DB] /track/click GET:', e.message));
+  res.json({ ok: true });
+});
+
+// ── Real-time dashboard via Server-Sent Events (SSE) ──
+// Browser connects once → server pushes updates instantly when data changes
+app.get('/dashboard/live', (req, res) => {
+  res.set({
+    'Content-Type':  'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection':    'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+  res.flushHeaders();
+
+  // Send initial ping
+  res.write("data: {\"type\":\"connected\"}\n\n");
+
+  sseClients.add(res);
+  console.log('[SSE] Client connected. Total:', sseClients.size);
+
+  // Send full stats every 5s (for date-range accuracy)
+  const interval = setInterval(async () => {
+    try {
+      const now = new Date();
+      const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+      const nowUTC = Date.now();
+      const midnightIST = new Date(nowUTC + IST_OFFSET);
+      midnightIST.setUTCHours(0,0,0,0);
+      const from = new Date(midnightIST.getTime() - IST_OFFSET);
+
+      if (dbConnected) {
+        const dateFilter = { ts: { $gte: from, $lte: now } };
+        const [v,c,k,q] = await Promise.all([
+          Event.countDocuments({ type: 'visit',      ...dateFilter }),
+          Event.countDocuments({ type: 'conversion', state:'done', ...dateFilter }),
+          Event.countDocuments({ type: 'click',      ...dateFilter }),
+          Event.countDocuments({ type: 'compare',    ...dateFilter }),
+        ]);
+        const payload = JSON.stringify({ type:'stats', pageVisits:v, conversions:c, clicks:k, compares:q, ts:Date.now() });
+        res.write(`data: ${payload}
+
+`);
+      }
+    } catch(e) {}
+  }, 5000);
+
+  req.on('close', () => {
+    sseClients.delete(res);
+    clearInterval(interval);
+    console.log('[SSE] Client disconnected. Total:', sseClients.size);
+  });
+});
+
+// Dashboard stats — supports ?from=ISO&to=ISO date range
+app.get('/dashboard/stats', async (req, res) => {
+  // Default: today from midnight to now (IST = UTC+5:30)
+  const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+  const nowUTC = Date.now();
+  const nowIST = nowUTC + IST_OFFSET;
+  const midnightIST = nowIST - (nowIST % (24*60*60*1000));
+  const defaultFrom = new Date(midnightIST - IST_OFFSET); // back to UTC
+  const defaultTo   = new Date(nowUTC);
+
+  const from = req.query.from ? new Date(req.query.from) : defaultFrom;
+  const to   = req.query.to   ? new Date(req.query.to)   : defaultTo;
+  const dateFilter = { ts: { $gte: from, $lte: to } };
+
+  try {
+    if (dbConnected) {
+      // Count events in date range
+      const [visitsCount, conversionsCount, clicksCount, comparesCount] = await Promise.all([
+        Event.countDocuments({ type: 'visit',      ...dateFilter }),
+        Event.countDocuments({ type: 'conversion', state: 'done', ...dateFilter }),
+        Event.countDocuments({ type: 'click',      ...dateFilter }),
+        Event.countDocuments({ type: 'compare',    ...dateFilter }),
+      ]);
+
+      // Store breakdown in date range
+      const storeAgg = await Event.aggregate([
+        { $match: { type: 'conversion', state: 'done', ...dateFilter } },
+        { $group: { _id: '$store', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]);
+      const storeBreakdown = {};
+      storeAgg.forEach(s => { if (s._id) storeBreakdown[s._id] = s.count; });
+
+      // Recent events in date range
+      const [recentConversions, recentClicks, recentVisits] = await Promise.all([
+        Event.find({ type: 'conversion', ...dateFilter }).sort({ ts: -1 }).limit(50).lean(),
+        Event.find({ type: 'click',      ...dateFilter }).sort({ ts: -1 }).limit(50).lean(),
+        Event.find({ type: 'visit',      ...dateFilter }).sort({ ts: -1 }).limit(50).lean(),
+      ]);
+
+      return res.json({
+        pageVisits:   visitsCount,
+        conversions:  conversionsCount,
+        clicks:       clicksCount,
+        compares:     comparesCount,
+        storeBreakdown,
+        recentConversions: recentConversions.map(e => ({ url: e.url, store: e.store, state: e.state, ts: e.ts?.getTime() })),
+        recentClicks:      recentClicks.map(e => ({ dest: e.dest, store: e.store || detectStoreFromUrl(e.dest||'') || '', ts: e.ts?.getTime() })),
+        recentVisits:      recentVisits.map(e => ({ url: e.url, ts: e.ts?.getTime() })),
+        dbConnected:  true,
+        dateRange:    { from: from.toISOString(), to: to.toISOString() },
+        serverUptime: Math.round(process.uptime() / 60) + ' min',
+        generatedAt:  new Date().toISOString(),
+      });
+    }
+  } catch(e) {
+    console.error('[DB] dashboard/stats error:', e.message);
+  }
+
+  // Fallback in-memory
+  res.json({
+    pageVisits:        memAnalytics.pageVisits,
+    conversions:       memAnalytics.conversions,
+    clicks:            memAnalytics.clicks,
+    compares:          memAnalytics.compares,
+    storeBreakdown:    memAnalytics.storeBreakdown,
+    recentConversions: memAnalytics.recentConversions,
+    recentClicks:      memAnalytics.recentClicks.map(c => ({
+      dest: c.dest, ts: c.ts,
+      store: c.store || detectStoreFromUrl(c.dest||'') || ''
+    })),
+    recentVisits:      [],
+    dbConnected:       false,
+    serverUptime:      Math.round(process.uptime() / 60) + ' min',
+    generatedAt:       new Date().toISOString(),
+  });
+});
+
+app.post('/generate', (req, res) => {
+  const { url, store } = req.body;
+  if (!url) return res.status(400).json({ error:'No URL.' });
+  try { new URL(url); } catch { return res.status(400).json({ error:'Invalid URL.' }); }
+  if (!isSupported(url)) return res.status(400).json({ error:'Store not supported by ExtraPe.' });
+  if (!EXTRAPE_ACCESS_TOKEN) return res.status(500).json({ error:'EXTRAPE_ACCESS_TOKEN not set.' });
+  const id = enqueue(url, store||'Unknown');
+  processQueue();
+  return res.json({ requestId:id, ...getStatus(id) });
+});
+
+app.get('/status/:id', (req, res) => {
+  const s = getStatus(req.params.id);
+  if (!s) return res.status(404).json({ error:'Not found.' });
+  return res.json(s);
+});
+
+// Legacy in-memory short code redirect (kept for backwards compat)
+const shortLinks = {};
+app.get('/go/:code', (req, res) => {
+  // First try base64 decode (new format)
+  try {
+    const decoded = Buffer.from(
+      req.params.code.replace(/-/g,'+').replace(/_/g,'/'), 'base64'
+    ).toString();
+    if (decoded.startsWith('http')) {
+      trackClick(decoded); // full URL
+      return res.redirect(302, decoded);
+    }
+  } catch(e) {}
+  // Fall back to in-memory short code (old format)
+  const url = shortLinks[req.params.code];
+  if (url) {
+    trackClick(url.substring(0, 80));
+    return res.redirect(301, url);
+  }
+  return res.status(404).send('Link not found.');
+});
+
+app.get('/resolve/:code', (req, res) => {
+  try {
+    const decoded = Buffer.from(req.params.code.replace(/-/g,'+').replace(/_/g,'/'),'base64').toString();
+    if (decoded.startsWith('http')) return res.json({ url: decoded });
+  } catch(e) {}
+  const url = shortLinks[req.params.code];
+  if (url) return res.json({ url });
+  return res.status(404).json({ error:'Not found' });
+});
+
+app.get('/test-link', async (req, res) => {
+  const url = req.query.url;
+  if (!url) return res.json({ error:'Pass ?url=...' });
+  try { const r = await convertExtraPe(url); res.json({ input:url, result:r }); }
+  catch(e) { res.status(500).json({ error:e.message }); }
+});
+
+// ── Price comparison — Buyhatke ──
+app.get('/compare/search', async (req, res) => {
+  const { url: rawUrl } = req.query;
+  if (!rawUrl) return res.status(400).json({ error: 'Pass ?url=' });
+
+  try {
+    // Resolve short URLs before any further processing
+    let url = rawUrl;
+    if (isShortUrl(rawUrl)) {
+      try {
+        url = await resolveRedirect(rawUrl);
+        console.log('[Compare] Resolved', rawUrl.substring(0,50), '→', url.substring(0,70));
+      } catch(e) {
+        console.log('[Compare] Short URL resolution failed:', e.message);
+        // Keep original — fetchBuyhatke will also attempt resolution
+      }
+    }
+    console.log('[Compare] URL:', url);
+
+    // ── Source store detection ──
+    const srcHost = (() => { try { return new URL(url).hostname.replace('www.',''); } catch(e) { return ''; } })();
+    const srcStore = (() => {
+      if (srcHost.includes('amazon') || srcHost.includes('amzn')) return 'Amazon';
+      if (srcHost.includes('flipkart'))        return 'Flipkart';
+      if (srcHost.includes('myntra'))          return 'Myntra';
+      if (srcHost.includes('ajio'))            return 'Ajio';
+      if (srcHost.includes('nykaa'))           return 'Nykaa';
+      if (srcHost.includes('tatacliq'))        return 'TataCliq';
+      if (srcHost.includes('croma'))           return 'Croma';
+      if (srcHost.includes('snapdeal'))        return 'Snapdeal';
+      if (srcHost.includes('meesho'))          return 'Meesho';
+      if (srcHost.includes('jiomart'))         return 'JioMart';
+      if (srcHost.includes('reliancedigital')) return 'Reliance Digital';
+      if (srcHost.includes('vijaysales'))      return 'Vijay Sales';
+      return '';
+    })();
+
+    let stores       = [];
+    let productName  = '';
+    let productImage = '';
+    const errors     = [];
+
+    // ── Strategy 1: Buyhatke (primary) ──
+    try {
+      const bhRaw    = await fetchBuyhatke(url);
+      const bhParsed = parseBuyhatkeResponse(bhRaw, url, srcStore);
+      stores       = bhParsed.stores;
+      productName  = bhParsed.productName;
+      productImage = bhParsed.productImage;
+      console.log('[Compare] Buyhatke returned', stores.length, 'stores');
+    } catch(e) {
+      errors.push('Buyhatke: ' + e.message);
+      console.log('[Compare] Buyhatke failed:', e.message);
+    }
+
+
+
+    if (stores.length === 0) {
+      return res.status(404).json({
+        error: 'No price comparison results found. ' + errors.join(' | '),
+        tried: errors,
+      });
+    }
+
+    const srcEntry = stores.find(s => s.isSource);
+    const savings  = srcEntry && !srcEntry.isBest ? srcEntry.price - stores[0].price : 0;
+
+    console.log('[Compare] FINAL:',
+      stores.map(s => s.name + ':₹' + s.price + (s.isSource?'[src]':'') + (s.isBest?'[best]':'')).join(' | '));
+
+    return res.json({
+      stores,
+      productName:  productName || url,
+      productImage,
+      totalStores:  stores.length,
+      savings:      savings > 0 ? savings : 0,
+      dataSource: 'buyhatke',
+    });
+
+  } catch(e) {
+    console.error('[Compare] Unhandled error:', e.message);
+    return res.status(500).json({ error: e.message });
+  }
+});
+// Buyhatke debug — shows full two-step diagnostic for any product URL
+// ── Buyhatke product info — step 1 only, for browser-side fetching ──
+// Returns internalPid + pos so the browser can construct the Buyhatke page URL
+// and fetch /__data.json directly (bypassing the 403 we get server-side).
+app.get('/buyhatke/productinfo', async (req, res) => {
+  const { url: rawUrl } = req.query;
+  if (!rawUrl) return res.status(400).json({ error: 'Pass ?url=' });
+  try {
+    let url = rawUrl;
+    if (isShortUrl(rawUrl)) {
+      try { url = await resolveRedirect(rawUrl); } catch(e) {}
+    }
+    const params = extractBhkParams(url);
+    if (!params) return res.status(400).json({ error: 'URL not from a supported store', url });
+    const { pos, pid } = params;
+    const product = await bhkGetProductData(pos, pid);
+    return res.json({
+      internalPid: product.internalPid,
+      pos,
+      pid,
+      name:      product.name,
+      site_name: product.site_name,
+      image:     product.image,
+      cur_price: product.cur_price,
+      inStock:   product.inStock,
+    });
+  } catch(e) {
+    return res.status(404).json({ error: e.message });
+  }
+});
+
+// ── Compare affiliate — browser POSTs raw Buyhatke store data, we return affiliate links ──
+// The browser fetches prices from Buyhatke directly, then sends the store list here.
+// We convert each store URL to an affiliate link using ExtraPe and return the enriched list.
+app.post('/compare/affiliate', async (req, res) => {
+  const { stores, productName, productImage } = req.body;
+  if (!stores || !Array.isArray(stores) || stores.length === 0) {
+    return res.status(400).json({ error: 'Pass { stores: [{name, price, url}] }' });
+  }
+
+  // Convert each store URL to affiliate link via ExtraPe (same as existing compare flow)
+  const enriched = await Promise.all(stores.map(async (store) => {
+    if (!store.url || !store.url.startsWith('http')) return store;
+    try {
+      const affResult = await getAffiliateLink(store.url);
+      const displayLink = getDisplayLink(store.url, affResult);
+      return {
+        ...store,
+        affiliateLink: affResult || store.url,
+        displayLink:   displayLink || store.url,
+      };
+    } catch(e) {
+      return { ...store, affiliateLink: store.url, displayLink: store.url };
+    }
+  }));
+
+  const sorted = enriched.sort((a, b) => a.price - b.price)
+    .map((s, i) => ({ ...s, isBest: i === 0 }));
+
+  return res.json({
+    stores:      sorted,
+    productName:  productName || '',
+    productImage: productImage || '',
+    totalStores:  sorted.length,
+    savings:      0,
+    dataSource:  'buyhatke',
+  });
+});
+
+// Usage: https://api.smartpickdeals.live/buyhatke/debug?url=https://www.amazon.in/dp/B0FVS8V372
+app.get('/buyhatke/debug', async (req, res) => {
+  const { url: rawUrl } = req.query;
+  if (!rawUrl) return res.json({
+    usage:   'Add ?url=YOUR_PRODUCT_URL',
+    example: '/buyhatke/debug?url=https://www.amazon.in/dp/B0FVS8V372',
+    supportedStores: 'Amazon, Flipkart, Myntra, Ajio, Nykaa',
+  });
+
+  // Resolve short URLs first
+  let url = rawUrl;
+  if (isShortUrl(rawUrl)) {
+    try {
+      url = await resolveRedirect(rawUrl);
+      console.log('[BHK debug] Resolved:', rawUrl, '→', url);
+    } catch(e) {
+      return res.json({ error: 'Could not resolve short URL: ' + e.message, url: rawUrl });
+    }
+  }
+
+  // Step 1: param extraction
+  const params = extractBhkParams(url);
+  if (!params) return res.json({
+    error: 'URL not from a supported store (Amazon/Flipkart/Myntra/Ajio/Nykaa)',
+    originalUrl: rawUrl,
+    resolvedUrl: url,
+  });
+  const { pos, pid } = params;
+
+  // Step 2: productData call
+  let srcProduct = null;
+  try {
+    srcProduct = await bhkGetProductData(pos, pid);
+  } catch(e) {
+    return res.json({
+      step:            'productData',
+      error:           e.message,
+      pos, pid,
+      rawResponse:     e.rawResponse || null,
+      diagnosis:       'Product not in Buyhatke index — compare will fall back to SerpAPI for this URL',
+    });
+  }
+
+  // Step 3: multi-store call — collect raw responses for diagnosis
+  const { items, endpoint: multiEndpoint, rawResponses } =
+    await bhkGetMultiStorePrices(srcProduct.internalPid, pid, pos, srcProduct.name);
+
+  // Step 4: parse what we have (source store always present from step 1)
+  const srcStoreName = normalizeStore(srcProduct.site_name || '');
+  const storeMap = {};
+  // Use input URL as source link — Buyhatke's link field is sometimes wrong
+  const bestDebugLink = (!isShortUrl(url) && url.startsWith('http')) ? url : srcProduct.link;
+  if (srcStoreName && srcProduct.cur_price > 0) {
+    storeMap[srcStoreName] = { name: srcStoreName, normalizedName: srcStoreName,
+                               price: srcProduct.cur_price, url: bestDebugLink,
+                               isBest: true, isSource: true };
+  }
+  items.forEach(item => {
+    const p = parseStoreItem(item);
+    if (!p) return;
+    if (!storeMap[p.name] || p.price < storeMap[p.name].price) {
+      storeMap[p.name] = { ...p, isBest: false, isSource: p.name === srcStoreName };
+    }
+  });
+  const parsedStores = Object.values(storeMap).sort((a,b) => a.price - b.price)
+    .map((s,i) => ({ ...s, isBest: i === 0 }));
+
+  return res.json({
+    step1_params:     { pos, pid },
+    step1_productData: {
+      name:        srcProduct.name,
+      site_name:   srcProduct.site_name,
+      cur_price:   srcProduct.cur_price,
+      internalPid: srcProduct.internalPid,
+      inStock:     srcProduct.inStock,
+      link:        srcProduct.link,
+    },
+    step2_workingEndpoint: multiEndpoint || null,
+    step2_rawItemCount:    items.length,
+    step2_sampleItems:     items.slice(0, 2),
+    // Raw response from EACH candidate — key for diagnosing step 2 failures:
+    step2_allAttempts:     rawResponses,
+    parsedStores,
+    parsedCount:           parsedStores.length,
+    productName:           srcProduct.name,
+    productImage:          srcProduct.image,
+    status: items.length > 0 ? '✅ Full multi-store data' :
+            parsedStores.length > 0 ? '⚠️ Source store only — step 2 failed, check step2_allAttempts' :
+            '❌ No data',
+  });
+});
+
+// Debug endpoint
+app.get('/serp/debug', async (req, res) => {
+  if (!SERP_API_KEY) return res.json({ error:'No SERP_API_KEY' });
+  const { url, q } = req.query;
+  let query = q || '';
+  if (url && !q) {
+    const t = await fetchTitle(url).catch(()=>null);
+    if (t) query = t.replace(/\|.*/g,'').replace(/[\(\[].*?[\)\]]/g,'').replace(/,.*$/,'').replace(/[^a-zA-Z0-9 ]/g,' ').trim().split(' ').slice(0,5).join(' ');
+    // Also check ASIN
+    try {
+      const m = new URL(url).pathname.match(/\/dp\/([A-Z0-9]{10})/i);
+      if (m) query = m[1] + ' ' + query.split(' ').slice(0,3).join(' ');
+    } catch(e) {}
+  }
+  const r = await fetch('https://serpapi.com/search.json?engine=google_shopping&q='+encodeURIComponent(query)+'&gl=in&hl=en&currency=INR&num=40&api_key='+SERP_API_KEY);
+  const d = await r.json();
+  res.json({ query, count:(d.shopping_results||[]).length,
+    results:(d.shopping_results||[]).slice(0,15).map(x=>({ source:x.source, price:x.price, extracted:x.extracted_price, title:(x.title||'').substring(0,70), link:(x.product_link||'').substring(0,80) })) });
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('Server running on port ' + PORT));
