@@ -867,74 +867,135 @@ async function bhkGetMultiStorePrices(internalPid, srcPid, srcPos, productName) 
   return { items: [], endpoint: null, rawResponses };
 }
 
-// Extract all candidate data pools from SvelteKit HTML
-// SvelteKit embeds data in different ways across versions
+// Parse Buyhatke HTML — finds the kit.start() SvelteKit call and extracts embedded page data.
+// From Script 7 (62KB), the structure confirmed in May 2026:
+//   kit.start(app, element, {
+//     node_ids: [0, 3, 25],
+//     data: [
+//       {type:"data", data:{countryCode:"IN",...}},   // node 0 — global
+//       null,                                           // node 3 — layout
+//       {type:"data", data:{                           // node 25 — product page
+//         siteName:"Flipkart", currencySymbol:"₹",
+//         dealsData:{dealsList:[...]},
+//         ... cross-store price data ...
+//       }}
+//     ]
+//   })
 function extractAllSvelteKitPools(html) {
   const pools = [];
 
-  // Pattern 1: __sveltekit_data = [...] or window.__sveltekit_data = [...]
-  const p1 = html.match(/__sveltekit(?:_data|_[a-z]+)\s*=\s*(\[.*?\]|\{.*?\})(?=;|\s)/gs);
-  if (p1) {
-    p1.forEach(m => {
-      const json = m.replace(/^[^=]+=\s*/, '');
-      try { pools.push(JSON.parse(json)); } catch(e) {}
-    });
-  }
-
-  // Pattern 2: preloadData([...]) calls
-  const p2 = html.match(/preloadData\(\[([\s\S]*?)\]\s*\)/g);
-  if (p2) {
-    p2.forEach(m => {
-      const json = m.replace(/^preloadData\(/, '').replace(/\)$/, '');
-      try { pools.push(JSON.parse(json)); } catch(e) {}
-    });
-  }
-
-  // Pattern 3: Large JSON arrays in <script> tags (>500 chars, likely data)
-  const scripts = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)];
-  scripts.forEach(m => {
+  // Find the kit.start() call — look in all script tags
+  const scriptRe = new RegExp("<script[^>]*>([\s\S]*?)<\/script>", "g");
+  let m;
+  while ((m = scriptRe.exec(html)) !== null) {
     const src = m[1];
-    if (src.length < 200) return;
-    // Look for arrays containing objects with cur_price, site_name, price keys
-    if (!src.includes('cur_price') && !src.includes('site_name') && !src.includes('"price"')) return;
-    // Try to extract JSON arrays from it
-    const jsonMatches = src.match(/\[\s*\{[\s\S]{50,}\}\s*\]/g) || [];
-    jsonMatches.forEach(jm => {
+    if (!src.includes('kit.start') && !src.includes('__sveltekit')) continue;
+
+    // Extract everything inside kit.start(app, element, { ... })
+    const startIdx = src.indexOf('kit.start(');
+    if (startIdx === -1) continue;
+
+    // Find the data: [...] array inside the kit.start call
+    const dataIdx = src.indexOf('data:', startIdx);
+    if (dataIdx === -1) continue;
+
+    // Find the opening [ of the data array
+    const arrStart = src.indexOf('[', dataIdx);
+    if (arrStart === -1) continue;
+
+    // Walk to find the matching closing ] — balanced bracket counting
+    let depth = 0, inStr = false, strChar = '', i = arrStart;
+    for (; i < src.length; i++) {
+      const c = src[i];
+      if (inStr) {
+        if (c === strChar && src[i-1] !== '\\') inStr = false;
+      } else if (c === '"' || c === "'") {
+        inStr = true; strChar = c;
+      } else if (c === '[' || c === '{') {
+        depth++;
+      } else if (c === ']' || c === '}') {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+
+    const rawDataArr = src.slice(arrStart, i + 1);
+    console.log('[BHK] kit.start data array length:', rawDataArr.length);
+
+    // The data array uses JS object syntax (unquoted keys) — convert to JSON
+    // by quoting all unquoted identifier keys before : (e.g. type: -> "type":)
+    try {
+      // Replace unquoted keys: word characters followed by colon (but not URLs)
+      const jsonStr = rawDataArr
+        .replace(/([{,\[]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1"$2":')
+        .replace(/:\s*undefined/g, ':null')
+        .replace(/\/\*[\s\S]*?\*\//g, '');  // strip comments
+      const parsed = JSON.parse(jsonStr);
+      if (Array.isArray(parsed)) {
+        parsed.forEach(node => {
+          if (node && node.data && typeof node.data === 'object') {
+            pools.push(node.data);
+          }
+        });
+        console.log('[BHK] Parsed', pools.length, 'data nodes from kit.start');
+        if (pools.length > 0) return pools;
+      }
+    } catch(e) {
+      console.log('[BHK] JSON parse of kit.start data failed:', e.message.substring(0, 80));
+      // Fall back: scan the raw string for price-looking objects
+      pools.push({ _raw: rawDataArr });
+    }
+  }
+
+  // Fallback: scan all script tags for cur_price / site_name patterns
+  const scripts2 = [...html.matchAll(new RegExp("<script[^>]*>([\s\S]*?)<\/script>", "g"))];
+  scripts2.forEach(sm => {
+    const src = sm[1];
+    if (!src.includes('cur_price') && !src.includes('site_name')) return;
+    // Try extracting JSON-like objects with price data
+    const objRe = /\{[^{}]*"?cur_price"?\s*:\s*\d+[^{}]*\}/g;
+    let om;
+    while ((om = objRe.exec(src)) !== null) {
       try {
-        const parsed = JSON.parse(jm);
-        if (Array.isArray(parsed) && parsed.length > 0) pools.push(parsed);
+        const o = JSON.parse(om[0].replace(/([{,])\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1"$2":'));
+        if (o.cur_price) pools.push(o);
       } catch(e) {}
-    });
+    }
   });
 
-  // Pattern 4: window.__data or similar
-  const p4 = html.match(/window\.__(?:data|pageData|storeData)\s*=\s*([\s\S]{50,?});\s*<\/script>/);
-  if (p4) {
-    try { pools.push(JSON.parse(p4[1])); } catch(e) {}
-  }
-
-  console.log('[BHK] extractAllSvelteKitPools: found', pools.length, 'pools');
+  console.log('[BHK] Total pools found:', pools.length);
   return pools;
 }
 
-// Scan a data pool (flat array or nested object) for store price entries
+// Recursively scan any object/array for store price entries
 function parsePricePool(pool) {
   const storeMap = {};
-  const scan = (obj) => {
-    if (!obj || typeof obj !== 'object') return;
-    if (Array.isArray(obj)) { obj.forEach(scan); return; }
-    const price = parseFloat(String(obj.cur_price || obj.price || obj.offerPrice || 0).replace(/[^0-9.]/g,'')) || 0;
-    const name  = normalizeStore(obj.site_name || obj.storeName || obj.store_name || obj.name || '');
-    const link  = obj.link || obj.url || obj.productURL || '';
+  const scan = (obj, depth) => {
+    if (!obj || typeof obj !== 'object' || depth > 8) return;
+    if (Array.isArray(obj)) { obj.forEach(v => scan(v, depth+1)); return; }
+    // Special: _raw string — scan for cur_price patterns inline
+    if (obj._raw) {
+      const re = /cur_price["']?:\s*(\d+)/g;
+      let mm; while ((mm = re.exec(obj._raw)) !== null) {
+        console.log('[BHK] raw cur_price hit:', mm[1]);
+      }
+      return;
+    }
+    const rawPrice = obj.cur_price || obj.price || obj.offerPrice || obj.storePrice || 0;
+    const price = parseFloat(String(rawPrice).replace(/[^0-9.]/g, '')) || 0;
+    const rawName = obj.site_name || obj.siteName || obj.storeName || obj.store_name || obj.name || '';
+    const name = normalizeStore(rawName);
+    const link = obj.link || obj.url || obj.productURL || obj.product_url || '';
     if (price > 0 && name && link && link.startsWith('http')) {
       if (obj.inStock === 0 || obj.oos === 1) return;
       if (!storeMap[name] || price < storeMap[name].price) {
         storeMap[name] = { name, normalizedName: name, price, url: link };
+        console.log('[BHK] Found store in pool:', name, '₹'+price);
       }
     }
-    Object.values(obj).forEach(v => { if (v && typeof v === 'object') scan(v); });
+    Object.values(obj).forEach(v => { if (v && typeof v === 'object') scan(v, depth+1); });
   };
-  scan(pool);
+  scan(pool, 0);
   return Object.values(storeMap);
 }
 
