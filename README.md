@@ -155,3 +155,4 @@ EXTRAPE_API_KEY=your_permanent_key   # instead of ACCESS_TOKEN + REMEMBER_TOKEN
 FLASH_API_KEY=your_permanent_key     # instead of AUTH_TOKEN + DEVICE_ID
 Then one pm2 restart smartpickdeals --update-env — done. No more 14-day expiry. Let me know when you have the API details and I'll update the integration.
 
+SERP_API_KEY=325cee81875760a71814be841493064a1b5bb79920f32f5f5fa20382d2d7f0f6
