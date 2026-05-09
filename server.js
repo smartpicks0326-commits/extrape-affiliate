@@ -12,7 +12,6 @@ app.use(cors());
 const EXTRAPE_ACCESS_TOKEN   = process.env.EXTRAPE_ACCESS_TOKEN   || '';
 const EXTRAPE_REMEMBER_TOKEN = process.env.EXTRAPE_REMEMBER_TOKEN || '';
 const FRONTEND_URL            = process.env.FRONTEND_URL           || 'https://smartpickdeals.live';
-const SERP_API_KEY            = process.env.SERP_API_KEY           || '';
 
 // ── Encode affiliate URL as base64url (no memory needed for redirect) ──
 function makeGoLink(affiliateUrl) {
@@ -761,7 +760,7 @@ async function bhkGetProductData(pos, pid) {
   if (!r.ok) throw new Error(`productData HTTP ${r.status}`);
   const d = await r.json();
   if (!d.data || !d.data.internalPid) {
-    // Product not in Buyhatke index — log full response for diagnosis, throw for SerpAPI fallback
+    // Product not in Buyhatke index — log full response for diagnosis, throw for fallback
     console.log('[BHK] productData missing internalPid. Full response:', JSON.stringify(d).substring(0, 400));
     const err = new Error('productData: no internalPid — product not in Buyhatke index');
     err.rawResponse = d;
@@ -1359,121 +1358,6 @@ function parseBuyhatkeResponse(data, inputUrl, srcStore) {
 }
 
 // ── SerpAPI comparison (fallback when Buyhatke returns < 2 stores) ──
-async function searchViaSerpAPI(url, srcStore, knownProductName = '') {
-  if (!SERP_API_KEY) throw new Error('SERP_API_KEY not configured');
-
-  // Use pre-known product name from Buyhatke if available — avoids fetching
-  // Flipkart/store page titles which contain SEO noise like "Buy online at best price"
-  const title = knownProductName || await fetchTitle(url);
-  let shortQ = '';
-  if (title && title.length > 5) {
-    const core = title
-      // Remove parenthetical content: (Mist Blue, 256 GB), [features] etc.
-      .replace(/s*([^)]*)/g, '').replace(/s*[[^]]*]/g, '')
-      // Stop at noise words
-      .replace(/(with|for|up to|upto|comes|buy|online|india|featuring|at best).*/i, '')
-      .replace(/[^a-zA-Z0-9 ]/g, ' ').replace(/s+/g, ' ').trim();
-    shortQ = core.split(' ').filter(w => w.length > 0).slice(0, 6).join(' ');
-  }
-  if (!shortQ) {
-    try {
-      const segs = new URL(url).pathname.split('/')
-        .filter(s=>s.length>3&&!/^[A-Z0-9]{6,}$/.test(s)&&!/^(dp|p|product|item|buy|s|ip|d)$/i.test(s));
-      shortQ = (segs[0]||'').replace(/-/g,' ').trim().split(' ').slice(0,6).join(' ');
-    } catch(e) {}
-  }
-  // If shortQ still empty but we have an ASIN — search by ASIN directly (always works)
-  if (!shortQ || shortQ.length < 3) {
-    const asinM = url.match(/[/=]([A-Z0-9]{10})(?:[/?&]|$)/i);
-    if (asinM) shortQ = asinM[1];
-  }
-  if (!shortQ || shortQ.length < 3) throw new Error('Could not identify product from URL');
-
-  const fullTitle = title || shortQ;
-  let asin = null;
-  try {
-    const m = new URL(url).pathname.match(/\/dp\/([A-Z0-9]{10})/i) ||
-              new URL(url).pathname.match(/\/([A-Z0-9]{10})(?:\/|$)/i);
-    if (m) asin = m[1];
-  } catch(e) {}
-
-  const brandModel = shortQ.split(' ').slice(0,4).join(' ');
-  const q1 = asin ? (asin + ' ' + brandModel) : shortQ;
-  const q2 = shortQ + ' price India';
-  const q3 = brandModel;
-  console.log('[SerpAPI] shortQ:', shortQ, '| Queries:', q1, '|', q2, '|', q3);
-
-  const serpSearch = (q) => fetch(
-    'https://serpapi.com/search.json?engine=google_shopping'
-    + '&q=' + encodeURIComponent(q)
-    + '&gl=in&hl=en&currency=INR&num=40&api_key=' + SERP_API_KEY,
-    { signal: AbortSignal.timeout(15000) }
-  ).then(r => r.json()).catch(() => null);
-
-  const [r1, r2, r3] = await Promise.all([serpSearch(q1), serpSearch(q2), serpSearch(q3)]);
-  const allResults = [
-    ...(r1?.shopping_results||[]),
-    ...(r2?.shopping_results||[]),
-    ...(r3?.shopping_results||[]),
-  ];
-  const productImage = r1?.shopping_results?.[0]?.thumbnail || r2?.shopping_results?.[0]?.thumbnail || '';
-  console.log('[SerpAPI] Total results:', allResults.length);
-
-  // Include 2-char words (model numbers: "17", "5G", "M2" etc.) — critical for matching
-  // e.g. "Apple iPhone 17" without "17" means ANY Apple iPhone matches at 100%
-  const qWords = shortQ.toLowerCase().split(' ').filter(w=>w.length>1);
-  function sim(t) {
-    if (!t) return 0;
-    const tl = t.toLowerCase();
-    if (asin && tl.includes(asin.toLowerCase())) return 1.0;
-    if (!qWords.length) return 0;
-    return qWords.filter(w=>tl.includes(w)).length / qWords.length;
-  }
-
-  const TARGET = ['Amazon','Flipkart','Myntra','Ajio','Nykaa','TataCliq','Croma','Snapdeal',
-                  'Meesho','Reliance Digital','Vijay Sales'];
-  const storeMap = {};
-  allResults.forEach(item => {
-    const store = normalizeStore(item.source||'');
-    if (!TARGET.includes(store)) return;
-    const price = item.extracted_price || 0;
-    if (!price) return;
-    const s = sim(item.title);
-    console.log('[SerpAPI]', store, '₹'+price, 'sim:'+Math.round(s*100)+'%', (item.title||'').substring(0,50));
-
-    // 0.6 threshold — needs to match 60% of query words (model number included now)
-    if (s < 0.6) { console.log('  → SKIP (sim ' + Math.round(s*100) + '%)'); return; }
-
-    // Prefer direct store URL; accept Google Shopping page as fallback
-    const storeDomains = ['amazon.in','flipkart.com','myntra.com','ajio.com','nykaa.com',
-      'tatacliq.com','croma.com','snapdeal.com','meesho.com','reliancedigital.in','vijaysales.com'];
-    let link = null;
-    if (item.product_link) {
-      try {
-        const h = new URL(item.product_link).hostname.replace('www.','');
-        if (storeDomains.some(d => h.includes(d))) link = item.product_link;
-      } catch(e) {}
-    }
-    if (!link && item.link) {
-      // Google Shopping product page (not a /search? page) is an acceptable fallback
-      if (!item.link.includes('/search?') && item.link.includes('google.com')) {
-        link = item.link;
-      }
-    }
-    if (!link) { console.log('  → SKIP (no store link)'); return; }
-
-    if (!storeMap[store] || price < storeMap[store].price) {
-      storeMap[store] = { name:store, normalizedName:store, price, url:link };
-    }
-  });
-
-  const stores = Object.values(storeMap)
-    .sort((a,b)=>a.price-b.price)
-    .map((s,i)=>({ ...s, isBest:i===0, isSource:s.name===srcStore }));
-
-  console.log('[SerpAPI] FINAL:', stores.map(s=>s.name+':₹'+s.price).join(' | '));
-  return { stores, productName: fullTitle, productImage };
-}
 
 // ── Routes ──
 app.get('/', (req, res) => res.send('Smart Pick Deals ✅'));
@@ -2429,25 +2313,7 @@ app.get('/buyhatke/debug', async (req, res) => {
   });
 });
 
-// Debug endpoint
-app.get('/serp/debug', async (req, res) => {
-  if (!SERP_API_KEY) return res.json({ error:'No SERP_API_KEY' });
-  const { url, q } = req.query;
-  let query = q || '';
-  if (url && !q) {
-    const t = await fetchTitle(url).catch(()=>null);
-    if (t) query = t.replace(/\|.*/g,'').replace(/[\(\[].*?[\)\]]/g,'').replace(/,.*$/,'').replace(/[^a-zA-Z0-9 ]/g,' ').trim().split(' ').slice(0,5).join(' ');
-    // Also check ASIN
-    try {
-      const m = new URL(url).pathname.match(/\/dp\/([A-Z0-9]{10})/i);
-      if (m) query = m[1] + ' ' + query.split(' ').slice(0,3).join(' ');
-    } catch(e) {}
-  }
-  const r = await fetch('https://serpapi.com/search.json?engine=google_shopping&q='+encodeURIComponent(query)+'&gl=in&hl=en&currency=INR&num=40&api_key='+SERP_API_KEY);
-  const d = await r.json();
-  res.json({ query, count:(d.shopping_results||[]).length,
-    results:(d.shopping_results||[]).slice(0,15).map(x=>({ source:x.source, price:x.price, extracted:x.extracted_price, title:(x.title||'').substring(0,70), link:(x.product_link||'').substring(0,80) })) });
-});
+// Debug endpoint;
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('Server running on port ' + PORT));
