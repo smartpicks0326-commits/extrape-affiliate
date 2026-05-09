@@ -775,122 +775,167 @@ async function bhkGetProductData(pos, pid) {
 // Primary: getRawProdSpecs (seen in DevTools).
 // Fallback candidates probed silently if primary returns no store list.
 async function bhkGetMultiStorePrices(internalPid, srcPid, srcPos, productName) {
-  // ══════════════════════════════════════════════════════════════
-  // SvelteKit /__data.json approach (May 2026)
-  //
-  // buyhatke.com is a SvelteKit app. SvelteKit bakes all server-loaded
-  // data (including cross-store prices) into the page and also exposes
-  // it at /{page-path}/__data.json — no auth required, same data the
-  // browser renders.
-  //
-  // Product page URL format:
-  //   https://buyhatke.com/{store}-{name-slug}-price-in-india-{pos}-{internalPid}
-  // ══════════════════════════════════════════════════════════════
+  // Strategy: fetch the Buyhatke product page HTML and parse the SvelteKit
+  // deduplication pool embedded in the <script> tag. SvelteKit SSR bakes
+  // all page data — including cross-store prices — into the HTML as:
+  //   <script>__sveltekit_data = [...]</script>  or
+  //   preloadData([...]) / window.__data = [...]
+  // This works from our server even when /__data.json returns 403.
 
   const rawResponses = [];
 
-  // Build the Buyhatke product page URL from known data
-  const storeName = normalizeStore(
-    srcPos === 63 ? 'amazon' :
-    srcPos === 2  ? 'flipkart' :
-    srcPos === 111? 'myntra' :
-    srcPos === 2191?'ajio' :
-    srcPos === 1830?'nykaa' :
-    srcPos === 71 ? 'croma' :
-    srcPos === 129 ? 'snapdeal' :
-    srcPos === 2190?'tatacliq' :
-    srcPos === 7376?'meesho' :
-    srcPos === 6660?'jiomart' :
-    srcPos === 6607?'reliancedigital' :
-    srcPos === 6645?'vijaysales' : 'amazon'
-  ).toLowerCase();
+  // Build Buyhatke product page URL
+  const srcStoreSlug = {
+    63:'amazon', 2:'flipkart', 111:'myntra', 2191:'ajio', 1830:'nykaa',
+    71:'croma', 129:'snapdeal', 2190:'tatacliq', 7376:'meesho',
+    6660:'jiomart', 6607:'reliance-digital', 6645:'vijay-sales',
+  }[srcPos] || 'amazon';
 
-  // Slug: lowercase product name, strip special chars, replace spaces with hyphens
-  // Truncate to ~60 chars to match Buyhatke's URL format
   const slug = (productName || srcPid)
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, ' ')
+    .trim()
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
     .split('-').slice(0, 12).join('-');
 
-  const bhkPageUrl = `https://buyhatke.com/${storeName}-${slug}-price-in-india-${srcPos}-${internalPid}`;
-  const dataUrl    = `${bhkPageUrl}/__data.json?x-sveltekit-invalidated=001`;
-
-  console.log('[BHK] SvelteKit data URL:', dataUrl.substring(0, 120));
+  const bhkPageUrl = `https://buyhatke.com/${srcStoreSlug}-${slug}-price-in-india-${srcPos}-${internalPid}`;
+  console.log('[BHK] Fetching page HTML:', bhkPageUrl.substring(0, 100));
 
   try {
-    const r = await fetch(dataUrl, {
+    const r = await fetch(bhkPageUrl, {
       headers: {
-        ...BHK_XHR_HEADERS,
-        'Accept': 'application/json, */*',
-        'Referer': bhkPageUrl,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,*/*;q=0.9',
+        'Accept-Language': 'en-IN,en;q=0.9',
+        'Referer': 'https://buyhatke.com/',
       },
       signal: AbortSignal.timeout(15000),
+      redirect: 'follow',
     });
 
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const text = await r.text();
-    let d;
-    try { d = JSON.parse(text); } catch(e) {
-      throw new Error('Non-JSON response: ' + text.substring(0, 100));
+    const html = await r.text();
+    console.log('[BHK] HTML length:', html.length, '| status:', r.status, '| final URL:', r.url.substring(0,80));
+    rawResponses.push({ step: 'html-fetch', status: r.status, htmlLength: html.length });
+
+    // SvelteKit bakes page data into HTML in several patterns — try all of them
+    const pools = extractAllSvelteKitPools(html);
+    console.log('[BHK] Found', pools.length, 'candidate data pools in HTML');
+
+    for (const pool of pools) {
+      const items = parsePricePool(pool);
+      if (items && items.length > 0) {
+        console.log('[BHK] ✅ HTML page data → ' + items.length + ' stores:', items.map(s=>s.name+':₹'+s.price).join(' | '));
+        rawResponses.push({ step: 'html-parse', storesFound: items.length, poolSize: pool.length });
+        return { items, endpoint: bhkPageUrl, rawResponses };
+      }
     }
 
-    console.log('[BHK] __data.json type:', typeof d, Array.isArray(d) ? 'array['+d.length+']' : '');
-    rawResponses.push({
-      step: 'svelte-data',
-      status: r.status,
-      type: typeof d,
-      isArray: Array.isArray(d),
-      preview: JSON.stringify(d).substring(0, 500),
-    });
+    // Log first 2KB of HTML for diagnosis if no data found
+    rawResponses.push({ step: 'html-parse', note: 'no price data found in any pool', htmlPreview: html.substring(0, 300) });
+    console.log('[BHK] HTML sample:', html.substring(0, 500));
 
-    // SvelteKit __data.json structure:
-    // { type: 'data', nodes: [ null, { type: 'data', data: [...], uses: {} } ] }
-    // data array is a deduplication pool — values are referenced by index
-    const items = extractSvelteKitPrices(d);
-    if (items && items.length > 0) {
-      console.log('[BHK] ✅ SvelteKit data → ' + items.length + ' stores');
-      rawResponses[rawResponses.length-1].storesFound = items.length;
-      return { items, endpoint: dataUrl, rawResponses };
-    }
-
-    console.log('[BHK] __data.json parsed but no price items found');
   } catch(e) {
-    console.log('[BHK] __data.json failed:', e.message.substring(0, 80));
-    rawResponses.push({ step: 'svelte-data', error: e.message });
+    console.log('[BHK] HTML fetch failed:', e.message);
+    rawResponses.push({ step: 'html-fetch', error: e.message });
   }
 
-  // ── Fallback: posList + thunder with source pair ──
-  // If SvelteKit data fails, fall back to what we know works partially.
+  // Fallback: thunder with source pair
   try {
-    const r  = await fetch(`https://buyhatke.com/api/posList?internalPid=${internalPid}`,
+    const plR = await fetch(`https://buyhatke.com/api/posList?internalPid=${internalPid}`,
       { headers: BHK_HEADERS, signal: AbortSignal.timeout(8000) });
-    const d  = await r.json();
-    if (d.status === 1 && d.data) {
-      const thunderUrl  = 'https://search-new.bitbns.com/buyhatke/thunder/priceData';
-      const thunderHdrs = { ...BHK_XHR_HEADERS, 'Content-Type': 'application/json', 'Referer': 'https://buyhatke.com/' };
-      // Send source pair — sometimes returns cross-store data
-      const tr = await fetch(thunderUrl, {
-        method: 'POST', headers: thunderHdrs,
+    const plD = await plR.json();
+    if (plD.status === 1 && plD.data) {
+      const tR = await fetch('https://search-new.bitbns.com/buyhatke/thunder/priceData', {
+        method: 'POST',
+        headers: { ...BHK_XHR_HEADERS, 'Content-Type': 'application/json', 'Referer': 'https://buyhatke.com/' },
         body: JSON.stringify({ param: [[srcPos, srcPid]] }),
         signal: AbortSignal.timeout(10000),
       });
-      const td = await tr.json();
-      if (td.status === 1 && td.data) {
-        const items = parseThunderResponse(td, d.data);
+      const tD = await tR.json();
+      if (tD.status === 1 && tD.data) {
+        const items = parseThunderResponse(tD, plD.data);
         if (items.length > 1) {
           rawResponses.push({ step: 'thunder-fallback', storesFound: items.length });
-          return { items, endpoint: thunderUrl, rawResponses };
+          return { items, endpoint: 'thunder', rawResponses };
         }
       }
     }
-  } catch(e) {
-    rawResponses.push({ step: 'thunder-fallback', error: e.message });
-  }
+  } catch(e) { rawResponses.push({ step: 'thunder-fallback', error: e.message }); }
 
   return { items: [], endpoint: null, rawResponses };
+}
+
+// Extract all candidate data pools from SvelteKit HTML
+// SvelteKit embeds data in different ways across versions
+function extractAllSvelteKitPools(html) {
+  const pools = [];
+
+  // Pattern 1: __sveltekit_data = [...] or window.__sveltekit_data = [...]
+  const p1 = html.match(/__sveltekit(?:_data|_[a-z]+)\s*=\s*(\[.*?\]|\{.*?\})(?=;|\s)/gs);
+  if (p1) {
+    p1.forEach(m => {
+      const json = m.replace(/^[^=]+=\s*/, '');
+      try { pools.push(JSON.parse(json)); } catch(e) {}
+    });
+  }
+
+  // Pattern 2: preloadData([...]) calls
+  const p2 = html.match(/preloadData\(\[([\s\S]*?)\]\s*\)/g);
+  if (p2) {
+    p2.forEach(m => {
+      const json = m.replace(/^preloadData\(/, '').replace(/\)$/, '');
+      try { pools.push(JSON.parse(json)); } catch(e) {}
+    });
+  }
+
+  // Pattern 3: Large JSON arrays in <script> tags (>500 chars, likely data)
+  const scripts = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)];
+  scripts.forEach(m => {
+    const src = m[1];
+    if (src.length < 200) return;
+    // Look for arrays containing objects with cur_price, site_name, price keys
+    if (!src.includes('cur_price') && !src.includes('site_name') && !src.includes('"price"')) return;
+    // Try to extract JSON arrays from it
+    const jsonMatches = src.match(/\[\s*\{[\s\S]{50,}\}\s*\]/g) || [];
+    jsonMatches.forEach(jm => {
+      try {
+        const parsed = JSON.parse(jm);
+        if (Array.isArray(parsed) && parsed.length > 0) pools.push(parsed);
+      } catch(e) {}
+    });
+  });
+
+  // Pattern 4: window.__data or similar
+  const p4 = html.match(/window\.__(?:data|pageData|storeData)\s*=\s*([\s\S]{50,?});\s*<\/script>/);
+  if (p4) {
+    try { pools.push(JSON.parse(p4[1])); } catch(e) {}
+  }
+
+  console.log('[BHK] extractAllSvelteKitPools: found', pools.length, 'pools');
+  return pools;
+}
+
+// Scan a data pool (flat array or nested object) for store price entries
+function parsePricePool(pool) {
+  const storeMap = {};
+  const scan = (obj) => {
+    if (!obj || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) { obj.forEach(scan); return; }
+    const price = parseFloat(String(obj.cur_price || obj.price || obj.offerPrice || 0).replace(/[^0-9.]/g,'')) || 0;
+    const name  = normalizeStore(obj.site_name || obj.storeName || obj.store_name || obj.name || '');
+    const link  = obj.link || obj.url || obj.productURL || '';
+    if (price > 0 && name && link && link.startsWith('http')) {
+      if (obj.inStock === 0 || obj.oos === 1) return;
+      if (!storeMap[name] || price < storeMap[name].price) {
+        storeMap[name] = { name, normalizedName: name, price, url: link };
+      }
+    }
+    Object.values(obj).forEach(v => { if (v && typeof v === 'object') scan(v); });
+  };
+  scan(pool);
+  return Object.values(storeMap);
 }
 
 // Parse SvelteKit __data.json deduplication pool to extract store prices.
