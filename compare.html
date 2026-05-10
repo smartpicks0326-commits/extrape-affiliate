@@ -221,6 +221,23 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
 }
 
 
+/* ── Badge (matches Convert page) ── */
+.badge{display:inline-flex;align-items:center;gap:6px;background:rgba(255,107,43,0.1);border:1px solid rgba(255,107,43,0.25);color:var(--accent2);font-size:11px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;padding:5px 12px;border-radius:999px;margin-bottom:24px;}
+.badge::before{content:'●';font-size:8px;color:var(--accent);animation:bhpulse 2s infinite;}
+@keyframes bhpulse{0%,100%{opacity:1;}50%{opacity:0.3;}}
+
+/* ── Store ticker (matches Convert page) ── */
+.ticker-wrap{position:relative;z-index:1;width:100%;overflow:hidden;padding:12px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:rgba(255,255,255,.015);margin-bottom:0;}
+.ticker{display:inline-flex;gap:0;animation:ticker-scroll 30s linear infinite;white-space:nowrap;}
+.ticker span{font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.12em;text-transform:uppercase;padding:0 20px;border-right:1px solid var(--border);}
+@keyframes ticker-scroll{0%{transform:translateX(0);}100%{transform:translateX(-50%);}}
+
+/* ── How it works steps (matches Convert page) ── */
+.how-it-works{display:flex;flex-direction:column;gap:12px;margin-top:24px;padding-top:20px;border-top:1px solid var(--border);}
+.step{display:flex;align-items:flex-start;gap:12px;}
+.step-num{width:24px;height:24px;border-radius:50%;background:rgba(255,107,43,0.12);border:1px solid rgba(255,107,43,0.25);color:var(--accent2);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;}
+.step p{font-size:13px;color:var(--muted);line-height:1.5;}
+
 /* ── Prevent horizontal overflow — safe globally ── */
 html, body { max-width: 100vw; overflow-x: hidden; }
 #hero { overflow: hidden; }
@@ -241,13 +258,28 @@ html, body { max-width: 100vw; overflow-x: hidden; }
   </div>
 </nav>
 
+<!-- Store ticker (matches Convert page) -->
+<div class="ticker-wrap">
+  <div class="ticker">
+    <span>Amazon</span><span>Flipkart</span><span>Myntra</span><span>Ajio</span>
+    <span>TataCliq</span><span>Croma</span><span>Nykaa</span><span>Snapdeal</span>
+    <span>MakeMyTrip</span><span>ClearTrip</span><span>Netflix</span><span>SonyLiv</span>
+    <span>Netmeds</span><span>Mamaearth</span><span>Boat</span><span>WOW</span>
+    <span>Amazon</span><span>Flipkart</span><span>Myntra</span><span>Ajio</span>
+    <span>TataCliq</span><span>Croma</span><span>Nykaa</span><span>Snapdeal</span>
+    <span>MakeMyTrip</span><span>ClearTrip</span><span>Netflix</span><span>SonyLiv</span>
+    <span>Netmeds</span><span>Mamaearth</span><span>Boat</span><span>WOW</span>
+  </div>
+</div>
+
 <!-- HERO -->
 <section id="hero">
+  <div class="badge">200+ Stores · Best Deals Handpicked</div>
   <h1>Compare Prices.<br/><em>Save More.</em></h1>
   <p>Paste any product link. We compare prices across Amazon, Flipkart, Myntra, Croma and 200+ stores — with links ready to use.</p>
   <div class="input-wrap">
     <div class="input-row">
-      <input id="urlInput" type="text" placeholder="Paste Amazon, Flipkart, Croma link..." autocomplete="off"/>
+      <input id="urlInput" type="text" placeholder="https://www.flipkart.com/… or amazon.in/… or myntra.com/…" autocomplete="off"/>
       <button class="btn-go" id="compareBtn">Compare →</button>
     </div>
     <div class="flash-tip" id="flashTip">
@@ -255,6 +287,12 @@ html, body { max-width: 100vw; overflow-x: hidden; }
       <a href="https://flash.co/home" target="_blank">Log in to flash.co</a>
       in this browser first.
     </div>
+  </div>
+  <!-- Steps (matches Convert page) -->
+  <div class="how-it-works" style="max-width:580px;margin:24px auto 0;text-align:left;">
+    <div class="step"><div class="step-num">1</div><p>Paste any product URL from your favourite store</p></div>
+    <div class="step"><div class="step-num">2</div><p>Select your best deal from 200+ stores</p></div>
+    <div class="step"><div class="step-num">3</div><p>Copy and share to help your friends save money</p></div>
   </div>
 </section>
 
@@ -329,7 +367,7 @@ html, body { max-width: 100vw; overflow-x: hidden; }
   </div>
 </section>
 
-<footer>Smart Pick Deals — Real prices from 200+ stores</footer>
+<footer>Exciting deals from 200+ stores, find &amp; generate instantly &nbsp;·&nbsp; &copy; Smart Pick Deals<br/><a href="mailto:support@smartpickdeals.live" style="color:var(--muted);font-size:12px;text-decoration:none;display:inline-block;margin-top:5px;letter-spacing:.01em;transition:color .2s;" onmouseover="this.style.color='var(--accent2)'" onmouseout="this.style.color='var(--muted)'">✉ support@smartpickdeals.live</a></footer>
 
 <script>
 var BACKEND_PRIMARY  = 'https://api.smartpickdeals.live';
