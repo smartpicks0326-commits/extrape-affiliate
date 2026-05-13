@@ -382,29 +382,57 @@ var BACKEND = BACKEND_PRIMARY;
 var EXTRAPE_OK = ['Amazon','Flipkart','Myntra','Ajio','Nykaa','TataCliq','Croma','Snapdeal','Netmeds','Lenskart'];
 
 var LOGOS = {
-  Amazon:'https://www.amazon.in/favicon.ico',
-  Flipkart:'https://static-assets-web.flixcart.com/fk-p-linchpin-web/fk-icons/v2/favicon-32x32.png',
-  Myntra:'https://constant.myntassets.com/web/assets/img/favicon.ico',
-  Ajio:'https://assets.ajio.com/static/img/Ajio-Favicon.png',
-  Nykaa:'https://adn-static1.nykaa.com/nykdesignstudio-images/pub/media/favicon/stores/2/fav_nykaa_new.png',
-  TataCliq:'https://www.tatacliq.com/favicon.ico',
-  Croma:'https://media.croma.com/image/upload/v1637759004/Croma%20Assets/CMS/Category%20Banners/favicon_b7jkfc.png',
-  Snapdeal:'https://www.snapdeal.com/favicon.ico',
-  Meesho:'https://images.meesho.com/images/logo/1x/logo_hd.webp',
-  JioMart:'https://www.jiomart.com/images/favicon/32X32/apple-touch-icon.png',
+  Amazon:             'https://www.amazon.in/favicon.ico',
+  Flipkart:           'https://static-assets-web.flixcart.com/fk-p-linchpin-web/fk-icons/v2/favicon-32x32.png',
+  Myntra:             'https://constant.myntassets.com/web/assets/img/favicon.ico',
+  Ajio:               'https://assets.ajio.com/static/img/Ajio-Favicon.png',
+  Nykaa:              'https://adn-static1.nykaa.com/nykdesignstudio-images/pub/media/favicon/stores/2/fav_nykaa_new.png',
+  TataCliq:           'https://www.tatacliq.com/favicon.ico',
+  Croma:              'https://media.croma.com/image/upload/v1637759004/Croma%20Assets/CMS/Category%20Banners/favicon_b7jkfc.png',
+  Snapdeal:           'https://www.snapdeal.com/favicon.ico',
+  Meesho:             'https://images.meesho.com/images/logo/1x/logo_hd.webp',
+  JioMart:            'https://www.jiomart.com/images/favicon/32X32/apple-touch-icon.png',
+  'Reliance Digital': 'https://www.reliancedigital.in/medias/RD-favicon.ico',
+  'Vijay Sales':      'https://www.vijaysales.com/favicon.ico',
+  BigBasket:          'https://www.bigbasket.com/favicon.ico',
+  Netmeds:            'https://www.netmeds.com/favicon.ico',
+  Lenskart:           'https://static1.lenskart.com/media/favicon/apple-touch-icon.png',
+  Pepperfry:          'https://ii1.pepperfry.com/images/favicon.ico',
+  FirstCry:           'https://www.firstcry.com/favicon.ico',
+  Zepto:              'https://cdn.zeptonow.com/production/static/app-icons/apple-touch-icon.png',
+  Blinkit:            'https://blinkit.com/apple-touch-icon.png',
+  'PAI International':'https://www.google.com/s2/favicons?domain=paiinternational.com&sz=64',
+  Poorvika:           'https://www.poorvika.com/favicon.ico',
+  'Apple Store':      'https://www.apple.com/favicon.ico',
+  Sangeetha:          'https://www.google.com/s2/favicons?domain=sangeetha.com&sz=64',
+  'Swiggy Instamart': 'https://www.swiggy.com/favicon.ico',
 };
 
 var STORE_DOMAINS = [
-  {n:'Amazon',   d:['amazon.in','amazon.com','amzn.in','amzn.to']},
-  {n:'Flipkart', d:['flipkart.com','dl.flipkart.com','fkrt.co']},
-  {n:'Myntra',   d:['myntra.com']},
-  {n:'Ajio',     d:['ajio.com']},
-  {n:'Nykaa',    d:['nykaa.com']},
-  {n:'TataCliq', d:['tatacliq.com']},
-  {n:'Croma',    d:['croma.com','bilty.co']},
-  {n:'Snapdeal', d:['snapdeal.com']},
-  {n:'Meesho',   d:['meesho.com']},
-  {n:'JioMart',  d:['jiomart.com']},
+  {n:'Amazon',            d:['amazon.in','amazon.com','amzn.in','amzn.to']},
+  {n:'Flipkart',          d:['flipkart.com','dl.flipkart.com','fkrt.co']},
+  {n:'Myntra',            d:['myntra.com']},
+  {n:'Ajio',              d:['ajio.com','ajiio.co','luxe.ajio.com']},
+  {n:'Nykaa',             d:['nykaa.com','nykaafashion.com','nykaaman.com']},
+  {n:'TataCliq',          d:['tatacliq.com','luxury.tatacliq.com']},
+  {n:'Croma',             d:['croma.com','bilty.co']},
+  {n:'Snapdeal',          d:['snapdeal.com']},
+  {n:'Meesho',            d:['meesho.com']},
+  {n:'JioMart',           d:['jiomart.com']},
+  {n:'Reliance Digital',  d:['reliancedigital.in']},
+  {n:'Vijay Sales',       d:['vijaysales.com']},
+  {n:'BigBasket',         d:['bigbasket.com']},
+  {n:'Netmeds',           d:['netmeds.com']},
+  {n:'Lenskart',          d:['lenskart.com']},
+  {n:'Pepperfry',         d:['pepperfry.com']},
+  {n:'FirstCry',          d:['firstcry.com']},
+  {n:'Zepto',             d:['zeptonow.com','zepto.com']},
+  {n:'Blinkit',           d:['blinkit.com','grofers.com']},
+  {n:'PAI International', d:['paiinternational.com','maplestore.in']},
+  {n:'Poorvika',          d:['poorvika.com']},
+  {n:'Apple Store',       d:['apple.com']},
+  {n:'Sangeetha',         d:['sangeetha.com']},
+  {n:'Swiggy Instamart',  d:['swiggy.com']},
 ];
 
 var allStores = [];
@@ -425,12 +453,20 @@ function detectStore(url){
   }catch(e){return 'Unknown';}
 }
 
-function logoHTML(name,size){
+function logoHTML(name,size,productUrl){
   size=size||26;
-  var url=LOGOS[name];
   var init=(name||'?')[0].toUpperCase();
-  if(url)return '<img src="'+url+'" width="'+size+'" height="'+size+'" style="object-fit:contain;border-radius:3px;" onerror="this.parentElement.innerHTML=\''+init+'\'">';
-  return init;
+  var url=LOGOS[name];
+  if(!url&&productUrl){
+    try{var d=new URL(productUrl).hostname.replace('www.','');url='https://www.google.com/s2/favicons?domain='+d+'&sz=64';}catch(e){}
+  }
+  if(!url){
+    var dg=(name||'').toLowerCase().replace(/\s+/g,'').replace(/[^a-z]/g,'')+'.com';
+    url='https://www.google.com/s2/favicons?domain='+dg+'&sz=64';
+  }
+  var as='width:'+size+'px;height:'+size+'px;border-radius:6px;background:rgba(255,107,43,0.15);border:1px solid rgba(255,107,43,0.25);display:inline-flex;align-items:center;justify-content:center;font-size:'+(Math.round(size*0.55))+'px;font-weight:800;color:#ff6b2b;vertical-align:middle;';
+  var fb='this.style.display=\'none\';this.insertAdjacentHTML(\'afterend\',\'<span style=\"'+as+'\">'+init+'</span>\')';
+  return '<img src="'+url+'" width="'+size+'" height="'+size+'" style="object-fit:contain;border-radius:4px;display:inline-block;vertical-align:middle;" onerror="'+fb+'">';
 }
 
 // ── Button wiring ──
@@ -478,7 +514,7 @@ async function runSearch(url){
   window.scrollTo(0,0);
 
   document.getElementById('srcName').textContent=storeName;
-  document.getElementById('srcLogo').innerHTML=logoHTML(storeName,26);
+  document.getElementById('srcLogo').innerHTML=logoHTML(storeName,26,url);
 
   var stepIds=['s1','s2','s3','s4','s5','s6'];
   var stepData=[
@@ -694,7 +730,7 @@ function renderList(id,stores){
     div.id='card-'+id+'-'+idx;
     div.innerHTML=
       '<div class="store-main">'+
-        '<div class="store-logo-wrap">'+logoHTML(name,26)+'</div>'+
+        '<div class="store-logo-wrap">'+logoHTML(name,26,link)+'</div>'+'
         '<div class="store-body"><div class="store-name">'+name+'</div><div class="store-tags">'+tags+'</div></div>'+
         '<div class="store-price">'+priceStr+(s.affiliateLoading?'<small>Getting link...</small>':'')+'</div>'+
       '</div>'+
