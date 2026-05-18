@@ -36,15 +36,16 @@ section{position:relative;z-index:1;}
 #hero h1{font-size:clamp(1.8rem,5vw,3rem);font-weight:800;line-height:1.1;letter-spacing:-.03em;margin-bottom:12px;}
 #hero h1 em{font-style:normal;color:var(--accent);}
 #hero p{color:var(--muted);font-size:.9rem;max-width:420px;margin:0 auto 24px;line-height:1.6;}
-.input-label{font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;display:block;}
-.input-wrap{width:100%;max-width:580px;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:32px;box-shadow:0 24px 64px rgba(0,0,0,.4),0 0 0 1px rgba(255,255,255,.03);}
+.input-wrap{width:100%;max-width:580px;box-sizing:border-box;}
 .input-row{display:flex;gap:10px;width:100%;min-width:0;}
-#urlInput{flex:1;min-width:0;width:100%;max-width:100%;background:var(--bg);border:1.5px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:16px;padding:13px 18px;border-radius:12px;outline:none;transition:border-color .2s;-webkit-appearance:none;box-sizing:border-box;}
+#urlInput{flex:1;min-width:0;width:100%;max-width:100%;background:var(--surface);border:1.5px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:16px;padding:13px 18px;border-radius:12px;outline:none;transition:border-color .2s;-webkit-appearance:none;box-sizing:border-box;}
 #urlInput:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(255,107,43,.1);}
 #urlInput::placeholder{color:var(--muted);}
 .btn-go{background:var(--accent);color:#fff;border:none;font-family:'Inter',sans-serif;font-weight:700;font-size:14px;padding:13px 24px;border-radius:12px;cursor:pointer;white-space:nowrap;transition:background .2s;box-shadow:0 4px 18px rgba(255,107,43,.28);}
 .btn-go:hover{background:var(--accent2);}
-
+.flash-tip{display:none;margin-top:12px;background:rgba(255,107,43,.07);border:1px solid rgba(255,107,43,.2);border-radius:10px;padding:10px 16px;font-size:12px;color:var(--accent2);text-align:center;}
+.flash-tip a{color:var(--accent);font-weight:700;text-decoration:none;}
+.flash-tip small{color:var(--muted);font-size:11px;display:block;margin-top:2px;}
 
 /* LOADING */
 #loading{display:none;padding:40px 0 60px;overflow-x:hidden;}
@@ -117,10 +118,7 @@ section{position:relative;z-index:1;}
 .store-price small{font-size:12px;font-weight:400;color:var(--muted);display:block;}
 
 /* Action buttons - flash.co style: full width bottom row */
-.store-actions{display:flex;flex-direction:column;border-top:1px solid var(--border);}
-.btn-share{width:100%;background:rgba(255,107,43,.07);color:var(--accent2);border:none;border-bottom:1px solid var(--border);font-family:'Inter',sans-serif;font-weight:600;font-size:12px;padding:9px 12px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;letter-spacing:.01em;transition:background .2s;}
-.btn-share:hover{background:rgba(255,107,43,.14);}
-.store-action-row{display:grid;grid-template-columns:1fr 1fr;}
+.store-actions{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--border);}
 .btn-copy,.btn-visit{font-family:'Inter',sans-serif;font-weight:600;font-size:12px;padding:9px 12px;cursor:pointer;border:none;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px;letter-spacing:.01em;}
 .btn-copy{background:transparent;color:var(--muted);border-right:1px solid var(--border);}
 .btn-copy:hover{background:rgba(255,255,255,.04);color:var(--text);}
@@ -204,7 +202,7 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
   .prod-img-wrap { width: 72px; height: 72px; }
   .store-main { padding: 12px 14px; gap: 10px; }
   .store-price { font-size: 17px; }
-  .store-action-row { grid-template-columns: 1fr 1fr; }
+  .store-actions { grid-template-columns: 1fr 1fr; }
   .btn-copy, .btn-visit { font-size: 13px; padding: 11px 10px; }
   .pct-num { font-size: 34px; }
   .steps-card { padding: 4px 14px; }
@@ -219,24 +217,6 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
   .tag { font-size: 9px; padding: 2px 6px; }
 }
 
-
-/* ── Badge (matches Convert page) ── */
-.badge{display:inline-flex;align-items:center;gap:6px;background:rgba(255,107,43,0.1);border:1px solid rgba(255,107,43,0.25);color:var(--accent2);font-size:11px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;padding:5px 12px;border-radius:999px;margin-bottom:24px;}
-.badge::before{content:'●';font-size:8px;color:var(--accent);animation:bhpulse 2s infinite;}
-@keyframes bhpulse{0%,100%{opacity:1;}50%{opacity:0.3;}}
-
-/* ── Store ticker (matches Convert page) ── */
-.ticker-wrap{position:relative;z-index:1;width:100%;overflow:hidden;padding:12px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:rgba(255,255,255,.015);margin-bottom:0;}
-.ticker{display:inline-flex;gap:0;animation:ticker-scroll 30s linear infinite;white-space:nowrap;}
-.ticker span{font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.12em;text-transform:uppercase;padding:0 20px;border-right:1px solid var(--border);}
-@keyframes ticker-scroll{0%{transform:translateX(0);}100%{transform:translateX(-50%);}}
-
-/* ── How it works steps (matches Convert page) ── */
-.how-it-works{margin-top:28px;padding-top:24px;border-top:1px solid var(--border);display:grid;grid-template-columns:repeat(3,1fr);gap:16px;width:100%;}
-.how-it-works .step{text-align:center !important;padding:0;border-bottom:none;display:block;}
-.step-num{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:10px;background:rgba(255,107,43,0.1);border:1px solid rgba(255,107,43,0.2);color:var(--accent);font-size:13px;font-weight:700;margin-bottom:8px;}
-.how-it-works .step p{font-size:12px;color:var(--muted);line-height:1.5;}
-@media(max-width:480px){.how-it-works{grid-template-columns:1fr;}.input-wrap{padding:24px 20px;}}
 
 /* ── Prevent horizontal overflow — safe globally ── */
 html, body { max-width: 100vw; overflow-x: hidden; }
@@ -258,37 +238,16 @@ html, body { max-width: 100vw; overflow-x: hidden; }
   </div>
 </nav>
 
-<!-- Store ticker (matches Convert page) -->
-<div class="ticker-wrap">
-  <div class="ticker">
-    <span>Amazon</span><span>Flipkart</span><span>Myntra</span><span>Ajio</span>
-    <span>TataCliq</span><span>Croma</span><span>Nykaa</span><span>Snapdeal</span>
-    <span>MakeMyTrip</span><span>ClearTrip</span><span>Netflix</span><span>SonyLiv</span>
-    <span>Netmeds</span><span>Mamaearth</span><span>Boat</span><span>WOW</span>
-    <span>Amazon</span><span>Flipkart</span><span>Myntra</span><span>Ajio</span>
-    <span>TataCliq</span><span>Croma</span><span>Nykaa</span><span>Snapdeal</span>
-    <span>MakeMyTrip</span><span>ClearTrip</span><span>Netflix</span><span>SonyLiv</span>
-    <span>Netmeds</span><span>Mamaearth</span><span>Boat</span><span>WOW</span>
-  </div>
-</div>
-
 <!-- HERO -->
 <section id="hero">
-  <div class="badge">200+ Stores · Best Deals Handpicked</div>
   <h1>Compare Prices.<br/><em>Save More.</em></h1>
   <p>Paste any product link. We compare prices across Amazon, Flipkart, Myntra, Croma and 200+ stores — with links ready to use.</p>
   <div class="input-wrap">
-    <label class="input-label" for="urlInput">Product URL (any supported store)</label>
     <div class="input-row">
-      <input id="urlInput" type="text" placeholder="https://www.flipkart.com/… or amazon.in/… or myntra.com/…" autocomplete="off"/>
+      <input id="urlInput" type="text" placeholder="Paste Amazon, Flipkart, Croma link..." autocomplete="off"/>
       <button class="btn-go" id="compareBtn">Compare →</button>
     </div>
-    <!-- Steps inside card (matches Convert page) -->
-    <div class="how-it-works">
-      <div class="step"><div class="step-num">1</div><p>Paste any product URL from your favourite store</p></div>
-      <div class="step"><div class="step-num">2</div><p>Select your best deal from 200+ stores</p></div>
-      <div class="step"><div class="step-num">3</div><p>Copy and share to help your friends save money</p></div>
-    </div>
+
   </div>
 </section>
 
@@ -363,7 +322,7 @@ html, body { max-width: 100vw; overflow-x: hidden; }
   </div>
 </section>
 
-<footer>Exciting deals from 200+ stores, find &amp; generate instantly &nbsp;·&nbsp; &copy; Smart Pick Deals<br/><a href="mailto:support@smartpickdeals.live" style="color:var(--muted);font-size:12px;text-decoration:none;display:inline-block;margin-top:5px;letter-spacing:.01em;transition:color .2s;" onmouseover="this.style.color='var(--accent2)'" onmouseout="this.style.color='var(--muted)'">✉ support@smartpickdeals.live</a></footer>
+<footer>Smart Pick Deals — Real prices from 200+ stores</footer>
 
 <script>
 var BACKEND_PRIMARY  = 'https://api.smartpickdeals.live';
@@ -382,57 +341,29 @@ var BACKEND = BACKEND_PRIMARY;
 var EXTRAPE_OK = ['Amazon','Flipkart','Myntra','Ajio','Nykaa','TataCliq','Croma','Snapdeal','Netmeds','Lenskart'];
 
 var LOGOS = {
-  Amazon:             'https://www.amazon.in/favicon.ico',
-  Flipkart:           'https://static-assets-web.flixcart.com/fk-p-linchpin-web/fk-icons/v2/favicon-32x32.png',
-  Myntra:             'https://constant.myntassets.com/web/assets/img/favicon.ico',
-  Ajio:               'https://assets.ajio.com/static/img/Ajio-Favicon.png',
-  Nykaa:              'https://adn-static1.nykaa.com/nykdesignstudio-images/pub/media/favicon/stores/2/fav_nykaa_new.png',
-  TataCliq:           'https://www.tatacliq.com/favicon.ico',
-  Croma:              'https://media.croma.com/image/upload/v1637759004/Croma%20Assets/CMS/Category%20Banners/favicon_b7jkfc.png',
-  Snapdeal:           'https://www.snapdeal.com/favicon.ico',
-  Meesho:             'https://images.meesho.com/images/logo/1x/logo_hd.webp',
-  JioMart:            'https://www.jiomart.com/images/favicon/32X32/apple-touch-icon.png',
-  'Reliance Digital': 'https://www.reliancedigital.in/medias/RD-favicon.ico',
-  'Vijay Sales':      'https://www.vijaysales.com/favicon.ico',
-  BigBasket:          'https://www.bigbasket.com/favicon.ico',
-  Netmeds:            'https://www.netmeds.com/favicon.ico',
-  Lenskart:           'https://static1.lenskart.com/media/favicon/apple-touch-icon.png',
-  Pepperfry:          'https://ii1.pepperfry.com/images/favicon.ico',
-  FirstCry:           'https://www.firstcry.com/favicon.ico',
-  Zepto:              'https://cdn.zeptonow.com/production/static/app-icons/apple-touch-icon.png',
-  Blinkit:            'https://blinkit.com/apple-touch-icon.png',
-  'PAI International':'https://www.google.com/s2/favicons?domain=paiinternational.com&sz=64',
-  Poorvika:           'https://www.poorvika.com/favicon.ico',
-  'Apple Store':      'https://www.apple.com/favicon.ico',
-  Sangeetha:          'https://www.google.com/s2/favicons?domain=sangeetha.com&sz=64',
-  'Swiggy Instamart': 'https://www.swiggy.com/favicon.ico',
+  Amazon:'https://www.amazon.in/favicon.ico',
+  Flipkart:'https://static-assets-web.flixcart.com/fk-p-linchpin-web/fk-icons/v2/favicon-32x32.png',
+  Myntra:'https://constant.myntassets.com/web/assets/img/favicon.ico',
+  Ajio:'https://assets.ajio.com/static/img/Ajio-Favicon.png',
+  Nykaa:'https://adn-static1.nykaa.com/nykdesignstudio-images/pub/media/favicon/stores/2/fav_nykaa_new.png',
+  TataCliq:'https://www.tatacliq.com/favicon.ico',
+  Croma:'https://media.croma.com/image/upload/v1637759004/Croma%20Assets/CMS/Category%20Banners/favicon_b7jkfc.png',
+  Snapdeal:'https://www.snapdeal.com/favicon.ico',
+  Meesho:'https://images.meesho.com/images/logo/1x/logo_hd.webp',
+  JioMart:'https://www.jiomart.com/images/favicon/32X32/apple-touch-icon.png',
 };
 
 var STORE_DOMAINS = [
-  {n:'Amazon',            d:['amazon.in','amazon.com','amzn.in','amzn.to']},
-  {n:'Flipkart',          d:['flipkart.com','dl.flipkart.com','fkrt.co']},
-  {n:'Myntra',            d:['myntra.com']},
-  {n:'Ajio',              d:['ajio.com','ajiio.co','luxe.ajio.com']},
-  {n:'Nykaa',             d:['nykaa.com','nykaafashion.com','nykaaman.com']},
-  {n:'TataCliq',          d:['tatacliq.com','luxury.tatacliq.com']},
-  {n:'Croma',             d:['croma.com','bilty.co']},
-  {n:'Snapdeal',          d:['snapdeal.com']},
-  {n:'Meesho',            d:['meesho.com']},
-  {n:'JioMart',           d:['jiomart.com']},
-  {n:'Reliance Digital',  d:['reliancedigital.in']},
-  {n:'Vijay Sales',       d:['vijaysales.com']},
-  {n:'BigBasket',         d:['bigbasket.com']},
-  {n:'Netmeds',           d:['netmeds.com']},
-  {n:'Lenskart',          d:['lenskart.com']},
-  {n:'Pepperfry',         d:['pepperfry.com']},
-  {n:'FirstCry',          d:['firstcry.com']},
-  {n:'Zepto',             d:['zeptonow.com','zepto.com']},
-  {n:'Blinkit',           d:['blinkit.com','grofers.com']},
-  {n:'PAI International', d:['paiinternational.com','maplestore.in']},
-  {n:'Poorvika',          d:['poorvika.com']},
-  {n:'Apple Store',       d:['apple.com']},
-  {n:'Sangeetha',         d:['sangeetha.com']},
-  {n:'Swiggy Instamart',  d:['swiggy.com']},
+  {n:'Amazon',   d:['amazon.in','amazon.com','amzn.in','amzn.to']},
+  {n:'Flipkart', d:['flipkart.com','dl.flipkart.com','fkrt.co']},
+  {n:'Myntra',   d:['myntra.com']},
+  {n:'Ajio',     d:['ajio.com']},
+  {n:'Nykaa',    d:['nykaa.com']},
+  {n:'TataCliq', d:['tatacliq.com']},
+  {n:'Croma',    d:['croma.com','bilty.co']},
+  {n:'Snapdeal', d:['snapdeal.com']},
+  {n:'Meesho',   d:['meesho.com']},
+  {n:'JioMart',  d:['jiomart.com']},
 ];
 
 var allStores = [];
@@ -453,20 +384,12 @@ function detectStore(url){
   }catch(e){return 'Unknown';}
 }
 
-function logoHTML(name,size,productUrl){
+function logoHTML(name,size){
   size=size||26;
-  var init=(name||'?')[0].toUpperCase();
   var url=LOGOS[name];
-  if(!url&&productUrl){
-    try{var d=new URL(productUrl).hostname.replace('www.','');url='https://www.google.com/s2/favicons?domain='+d+'&sz=64';}catch(e){}
-  }
-  if(!url){
-    var dg=(name||'').toLowerCase().replace(/\s+/g,'').replace(/[^a-z]/g,'')+'.com';
-    url='https://www.google.com/s2/favicons?domain='+dg+'&sz=64';
-  }
-  var as='width:'+size+'px;height:'+size+'px;border-radius:6px;background:rgba(255,107,43,0.15);border:1px solid rgba(255,107,43,0.25);display:inline-flex;align-items:center;justify-content:center;font-size:'+(Math.round(size*0.55))+'px;font-weight:800;color:#ff6b2b;vertical-align:middle;';
-  var fb='this.style.display=\'none\';this.insertAdjacentHTML(\'afterend\',\'<span style=\"'+as+'\">'+init+'</span>\')';
-  return '<img src="'+url+'" width="'+size+'" height="'+size+'" style="object-fit:contain;border-radius:4px;display:inline-block;vertical-align:middle;" onerror="'+fb+'">';
+  var init=(name||'?')[0].toUpperCase();
+  if(url)return '<img src="'+url+'" width="'+size+'" height="'+size+'" style="object-fit:contain;border-radius:3px;" onerror="this.parentElement.innerHTML=\''+init+'\'">';
+  return init;
 }
 
 // ── Button wiring ──
@@ -487,10 +410,7 @@ document.getElementById('viewMoreBtn').onclick = function(){
   if(svg)svg.style.transform=showOther?'rotate(180deg)':'';
 };
 
-// Show flash tip if not logged in
-if(document.cookie.indexOf('flash_auth_token')===-1){
-  // flash tip removed
-}
+// flash tip removed
 
 // ── Main flow ──
 function doCompare(){
@@ -514,7 +434,7 @@ async function runSearch(url){
   window.scrollTo(0,0);
 
   document.getElementById('srcName').textContent=storeName;
-  document.getElementById('srcLogo').innerHTML=logoHTML(storeName,26,url);
+  document.getElementById('srcLogo').innerHTML=logoHTML(storeName,26);
 
   var stepIds=['s1','s2','s3','s4','s5','s6'];
   var stepData=[
@@ -722,7 +642,6 @@ function renderList(id,stores){
     var cardClass='store-card'+(s.isBest?' best':'')+(s.isSource?' source':'');
     var copyId='copy-'+id+'-'+idx;
     var visitId='visit-'+id+'-'+idx;
-    var shareId='share-'+id+'-'+idx;
     var affStatusId='aff-'+id+'-'+idx;
 
     var div=document.createElement('div');
@@ -730,28 +649,24 @@ function renderList(id,stores){
     div.id='card-'+id+'-'+idx;
     div.innerHTML=
       '<div class="store-main">'+
-        '<div class="store-logo-wrap">'+logoHTML(name,26,link)+'</div>'+'
+        '<div class="store-logo-wrap">'+logoHTML(name,26)+'</div>'+
         '<div class="store-body"><div class="store-name">'+name+'</div><div class="store-tags">'+tags+'</div></div>'+
         '<div class="store-price">'+priceStr+(s.affiliateLoading?'<small>Getting link...</small>':'')+'</div>'+
       '</div>'+
       (s.affiliateLoading?'<div class="aff-status" id="'+affStatusId+'">⏳ Generating affiliate link...</div>':'')+
       '<div class="store-actions">'+
-        '<button class="btn-share" id="'+shareId+'">⬆ Share</button>'+
-        '<div class="store-action-row">'+
-          '<button class="btn-copy" id="'+copyId+'">Copy</button>'+
-          '<button class="btn-visit" id="'+visitId+'">Open ↗</button>'+
-        '</div>'+
+        '<button class="btn-copy" id="'+copyId+'">Copy</button>'+
+        '<button class="btn-visit" id="'+visitId+'">Open ↗</button>'+
       '</div>';
 
     el.appendChild(div);
-    wireButtons(copyId,visitId,shareId,link,name,s);
+    wireButtons(copyId,visitId,link,name,s);
   });
 }
 
-function wireButtons(copyId,visitId,shareId,link,name,storeObj){
+function wireButtons(copyId,visitId,link,name,storeObj){
   var cBtn=document.getElementById(copyId);
   var vBtn=document.getElementById(visitId);
-  var sBtn=document.getElementById(shareId);
   if(cBtn){
     cBtn.onclick=function(){
       var l=storeObj.affiliateLink||link;
@@ -762,32 +677,17 @@ function wireButtons(copyId,visitId,shareId,link,name,storeObj){
     };
   }
   if(vBtn){
-    // Open always opens the URL — never triggers share sheet
     vBtn.onclick=function(){
       var l=storeObj.affiliateLink||storeObj.displayLink||link;
       var trackUrl=BACKEND||BACKEND_PRIMARY;
       fetch(trackUrl+'/track/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dest:l,store:name})}).catch(function(){
         fetch(BACKEND_FALLBACK+'/track/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dest:l,store:name})}).catch(function(){});
       });
-      window.open(l,'_blank');
-    };
-  }
-  if(sBtn){
-    // Share button — uses native share sheet (or copies if share unavailable)
-    sBtn.onclick=function(){
-      var l=storeObj.affiliateLink||storeObj.displayLink||link;
-      if(navigator.share){
-        navigator.share({title:name+' — Best Price',url:l}).catch(function(){
-          navigator.clipboard.writeText(l).then(function(){
-            sBtn.textContent='✅ Copied!';
-            setTimeout(function(){sBtn.textContent='⬆ Share';},2500);
-          }).catch(function(){});
-        });
+      // Use Web Share API on mobile if available
+      if(navigator.share && /Mobi|Android/i.test(navigator.userAgent)){
+        navigator.share({title:name+' — Best Price',url:l}).catch(function(){window.open(l,'_blank');});
       } else {
-        navigator.clipboard.writeText(l).then(function(){
-          sBtn.textContent='✅ Copied!';
-          setTimeout(function(){sBtn.textContent='⬆ Share';},2500);
-        });
+        window.open(l,'_blank');
       }
     };
   }
@@ -854,18 +754,6 @@ function updateStoreCard(name,link){
           });
           window.open(link,'_blank');
         };
-        var shareBtn2=card.querySelector('.btn-share');
-        if(shareBtn2){
-          shareBtn2.onclick=function(){
-            if(navigator.share){
-              navigator.share({title:name+' — Best Price',url:link}).catch(function(){
-                navigator.clipboard.writeText(link).then(function(){shareBtn2.textContent='✅ Copied!';setTimeout(function(){shareBtn2.textContent='⬆ Share';},2500);}).catch(function(){});
-              });
-            } else {
-              navigator.clipboard.writeText(link).then(function(){shareBtn2.textContent='✅ Copied!';setTimeout(function(){shareBtn2.textContent='⬆ Share';},2500);});
-            }
-          };
-        }
       }
     }
   });
