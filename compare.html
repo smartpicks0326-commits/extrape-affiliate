@@ -4,6 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Smart Pick Deals — Compare Prices</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
@@ -15,12 +16,12 @@
 }
 html,body{max-width:100%;overflow-x:hidden;}
 body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;width:100%;max-width:100vw;}
-body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:48px 48px;opacity:.35;pointer-events:none;z-index:0;}
-body::after{content:'';position:fixed;top:-200px;left:50%;transform:translateX(-50%);width:700px;height:500px;background:radial-gradient(ellipse,rgba(255,107,43,.1) 0%,transparent 70%);pointer-events:none;z-index:0;}
+body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:48px 48px;opacity:.4;pointer-events:none;z-index:0;}
+body::after{content:'';position:fixed;top:-200px;left:50%;transform:translateX(-50%);width:700px;height:500px;background:radial-gradient(ellipse,rgba(255,107,43,.12) 0%,transparent 70%);pointer-events:none;z-index:0;}
 
-nav{position:relative;z-index:10;display:flex;align-items:center;justify-content:space-between;padding:12px 24px;border-bottom:1px solid var(--border);background:rgba(10,10,15,.95);backdrop-filter:blur(12px);}
-.logo{font-size:15px;font-weight:800;text-decoration:none;color:var(--text);}
-.logo em{font-style:normal;color:var(--accent);}
+nav{position:relative;z-index:10;display:flex;align-items:center;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--border);background:rgba(10,10,15,.95);backdrop-filter:blur(12px);}
+.logo{font-size:16px;font-weight:800;text-decoration:none;color:var(--text);}
+.logo em{font-style:normal;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
 .nav-btns{display:flex;gap:8px;}
 .nav-btn{font-family:'Inter',sans-serif;font-size:12px;font-weight:700;padding:7px 14px;border-radius:8px;text-decoration:none;transition:all .2s;}
 .nb-out{color:var(--muted);border:1px solid var(--border);background:transparent;}
@@ -32,20 +33,51 @@ section{position:relative;z-index:1;}
 .wrap{max-width:600px;margin:0 auto;padding:0 20px;box-sizing:border-box;width:100%;}
 
 /* HERO */
-#hero{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:calc(100vh - 52px);text-align:center;padding:40px 20px;overflow-x:hidden;width:100%;}
-#hero h1{font-size:clamp(1.8rem,5vw,3rem);font-weight:800;line-height:1.1;letter-spacing:-.03em;margin-bottom:12px;}
-#hero h1 em{font-style:normal;color:var(--accent);}
-#hero p{color:var(--muted);font-size:.9rem;max-width:420px;margin:0 auto 24px;line-height:1.6;}
-.input-wrap{width:100%;max-width:580px;box-sizing:border-box;}
+#hero{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:calc(100vh - 52px - 46px);text-align:center;padding:40px 20px;overflow-x:hidden;width:100%;}
+
+/* Badge — matches index.html */
+.badge{display:inline-flex;align-items:center;gap:6px;background:rgba(255,107,43,0.1);border:1px solid rgba(255,107,43,0.25);color:var(--accent2);font-size:11px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;padding:5px 12px;border-radius:999px;margin-bottom:24px;}
+.badge::before{content:'●';font-size:8px;color:var(--accent);animation:badge-pulse 2s infinite;}
+@keyframes badge-pulse{0%,100%{opacity:1;}50%{opacity:0.3;}}
+#hero h1{font-size:clamp(2.2rem,6vw,3.6rem);font-weight:800;line-height:1.05;letter-spacing:-.03em;margin-bottom:16px;}
+#hero h1 em{font-style:normal;background:linear-gradient(135deg,var(--accent) 0%,var(--accent2) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+#hero p{color:var(--muted);font-size:1rem;max-width:420px;margin:0 auto 24px;line-height:1.6;}
+/* ── Search card — mirrors index.html .card ── */
+.search-card{
+  width:100%;max-width:580px;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:20px;
+  padding:32px;
+  box-shadow:0 24px 64px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.03);
+  box-sizing:border-box;
+}
+/* ── Input label — mirrors index.html .input-label ── */
+.input-label{
+  font-size:11px;font-weight:600;
+  letter-spacing:0.1em;text-transform:uppercase;
+  color:var(--muted);
+  margin-bottom:10px;
+  display:block;
+}
+.input-wrap{width:100%;box-sizing:border-box;}
 .input-row{display:flex;gap:10px;width:100%;min-width:0;}
-#urlInput{flex:1;min-width:0;width:100%;max-width:100%;background:var(--surface);border:1.5px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:16px;padding:13px 18px;border-radius:12px;outline:none;transition:border-color .2s;-webkit-appearance:none;box-sizing:border-box;}
-#urlInput:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(255,107,43,.1);}
+#urlInput{flex:1;min-width:0;width:100%;max-width:100%;background:var(--bg);border:1.5px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:13px;padding:14px 18px;border-radius:12px;outline:none;transition:border-color .2s,box-shadow .2s;-webkit-appearance:none;box-sizing:border-box;}
+#urlInput:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(255,107,43,.12);}
 #urlInput::placeholder{color:var(--muted);}
-.btn-go{background:var(--accent);color:#fff;border:none;font-family:'Inter',sans-serif;font-weight:700;font-size:14px;padding:13px 24px;border-radius:12px;cursor:pointer;white-space:nowrap;transition:background .2s;box-shadow:0 4px 18px rgba(255,107,43,.28);}
-.btn-go:hover{background:var(--accent2);}
+.btn-go{background:var(--accent);color:#fff;border:none;font-family:'Inter',sans-serif;font-weight:700;font-size:14px;padding:13px 24px;border-radius:12px;cursor:pointer;white-space:nowrap;transition:background .2s,transform .1s,box-shadow .2s;box-shadow:0 4px 20px rgba(255,107,43,.35);}
+.btn-go:hover{background:var(--accent2);box-shadow:0 6px 28px rgba(255,107,43,.45);}
+.btn-go:active{transform:scale(.97);}
+.btn-go:disabled{opacity:.5;cursor:not-allowed;transform:none;}
 .flash-tip{display:none;margin-top:12px;background:rgba(255,107,43,.07);border:1px solid rgba(255,107,43,.2);border-radius:10px;padding:10px 16px;font-size:12px;color:var(--accent2);text-align:center;}
 .flash-tip a{color:var(--accent);font-weight:700;text-decoration:none;}
 .flash-tip small{color:var(--muted);font-size:11px;display:block;margin-top:2px;}
+
+/* ── TICKER ── */
+.ticker-wrap{position:relative;z-index:1;width:100%;overflow:hidden;padding:14px 0;mask-image:linear-gradient(90deg,transparent,black 10%,black 90%,transparent);-webkit-mask-image:linear-gradient(90deg,transparent,black 10%,black 90%,transparent);}
+.ticker{display:flex;gap:0;width:max-content;animation:ticker 30s linear infinite;}
+.ticker span{font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);padding:0 18px;border-right:1px solid var(--border);white-space:nowrap;}
+@keyframes ticker{from{transform:translateX(0);}to{transform:translateX(-50%);}}
 
 /* LOADING */
 #loading{display:none;padding:40px 0 60px;overflow-x:hidden;}
@@ -130,12 +162,36 @@ section{position:relative;z-index:1;}
 /* Affiliate generating indicator */
 .aff-status{font-size:11px;color:var(--muted);padding:6px 16px 10px;font-style:italic;}
 
+/* ── How it works — mirrors index.html .how-it-works / .step / .step-num ── */
+.hiw-grid{
+  width:100%;max-width:580px;
+  margin-top:28px;
+  padding-top:24px;
+  border-top:1px solid var(--border);
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:16px;
+  box-sizing:border-box;
+}
+.hiw-item{text-align:center;}
+.hiw-num{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:32px;height:32px;
+  border-radius:10px;
+  background:rgba(255,107,43,0.1);
+  border:1px solid rgba(255,107,43,0.2);
+  color:var(--accent);
+  font-size:13px;font-weight:700;
+  margin-bottom:8px;
+}
+.hiw-item p{font-size:12px;color:var(--muted);line-height:1.5;}
+
 /* View more */
 .view-more-btn{width:100%;background:var(--surface);border:1px solid var(--border);color:var(--muted);font-family:'Inter',sans-serif;font-weight:600;font-size:13px;padding:14px;border-radius:14px;cursor:pointer;margin-top:4px;display:flex;align-items:center;justify-content:center;gap:8px;transition:all .2s;}
 .view-more-btn:hover{border-color:rgba(255,107,43,.3);color:var(--text);}
 #otherSec{display:none;margin-top:12px;}
 
-footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px;color:var(--muted);}
+footer{position:relative;z-index:1;text-align:center;padding:24px;font-size:12px;color:var(--muted);line-height:1.8;}
 
 
 
@@ -193,10 +249,12 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
 /* ── Compare: responsive ── */
 @media (max-width: 768px) {
   #hero { padding: 28px 16px; min-height: calc(100vh - 52px - 70px); }
-  #hero h1 { font-size: clamp(1.6rem, 7vw, 2.2rem); }
+  #hero h1 { font-size: clamp(1.8rem, 8vw, 2.4rem); margin-bottom: 12px; }
+  #hero p { font-size: .9rem; }
+  .search-card { padding: 18px 16px; border-radius: 16px; }
   .input-row { flex-direction: column; gap: 8px; }
   #urlInput { font-size: 14px; border-radius: 10px; }
-  .btn-go { width: 100%; border-radius: 10px; }
+  .btn-go { width: 100%; border-radius: 10px; font-size: 15px; padding: 14px; }
   .wrap { padding: 0 14px; }
   .prod-card { flex-direction: column; gap: 12px; }
   .prod-img-wrap { width: 72px; height: 72px; }
@@ -211,10 +269,12 @@ footer{position:relative;z-index:1;text-align:center;padding:20px;font-size:12px
   .step-text span { font-size: 10px; }
 }
 @media (max-width: 480px) {
-  #hero h1 { font-size: 1.5rem; }
+  #hero h1 { font-size: 1.7rem; }
+  .search-card { padding: 14px 12px; }
   .store-name { font-size: 13px; }
   .store-price { font-size: 15px; }
   .tag { font-size: 9px; padding: 2px 6px; }
+  .hiw-grid { grid-template-columns: 1fr; }
 }
 
 
@@ -224,7 +284,7 @@ html, body { max-width: 100vw; overflow-x: hidden; }
 /* ── Mobile-only overflow fixes ── */
 @media (max-width: 768px) {
   .wrap { max-width: 100%; overflow: hidden; }
-  #urlInput { max-width: 100%; min-width: 0; font-size: 16px !important; }
+  #urlInput { max-width: 100%; min-width: 0; font-size: 16px !important; /* prevent iOS zoom */ }
   .input-wrap, .input-row { max-width: 100%; }
 }
 </style>
@@ -238,16 +298,51 @@ html, body { max-width: 100vw; overflow-x: hidden; }
   </div>
 </nav>
 
+<!-- Supported stores ticker -->
+<div class="ticker-wrap">
+  <div class="ticker">
+    <span>Amazon</span><span>Flipkart</span><span>Myntra</span><span>Ajio</span>
+    <span>TataCliq</span><span>Croma</span><span>Nykaa</span><span>Snapdeal</span>
+    <span>MakeMyTrip</span><span>ClearTrip</span><span>Netflix</span><span>SonyLiv</span>
+    <span>Netmeds</span><span>Mamaearth</span><span>Boat</span><span>WOW</span>
+    <!-- duplicate for seamless loop -->
+    <span>Amazon</span><span>Flipkart</span><span>Myntra</span><span>Ajio</span>
+    <span>TataCliq</span><span>Croma</span><span>Nykaa</span><span>Snapdeal</span>
+    <span>MakeMyTrip</span><span>ClearTrip</span><span>Netflix</span><span>SonyLiv</span>
+    <span>Netmeds</span><span>Mamaearth</span><span>Boat</span><span>WOW</span>
+  </div>
+</div>
+
 <!-- HERO -->
 <section id="hero">
+  <div class="badge">200+ Stores · Compare Prices</div>
   <h1>Compare Prices.<br/><em>Save More.</em></h1>
   <p>Paste any product link. We compare prices across Amazon, Flipkart, Myntra, Croma and 200+ stores — with links ready to use.</p>
-  <div class="input-wrap">
-    <div class="input-row">
-      <input id="urlInput" type="text" placeholder="Paste Amazon, Flipkart, Croma link..." autocomplete="off"/>
-      <button class="btn-go" id="compareBtn">Compare →</button>
+  <!-- Search card — mirrors index.html .card -->
+  <div class="search-card">
+    <label class="input-label" for="urlInput">Product URL (any supported store)</label>
+    <div class="input-wrap">
+      <div class="input-row">
+        <input id="urlInput" type="text" placeholder="Paste Amazon, Flipkart, Croma link..." autocomplete="off"/>
+        <button class="btn-go" id="compareBtn">Compare →</button>
+      </div>
     </div>
 
+    <!-- How it works — matches index.html steps exactly -->
+    <div class="hiw-grid">
+      <div class="hiw-item">
+        <div class="hiw-num">1</div>
+        <p>Paste any product URL from your favourite store</p>
+      </div>
+      <div class="hiw-item">
+        <div class="hiw-num">2</div>
+        <p>Select your best deal from 200+ stores</p>
+      </div>
+      <div class="hiw-item">
+        <div class="hiw-num">3</div>
+        <p>Copy and share to help your friends save money</p>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -322,7 +417,7 @@ html, body { max-width: 100vw; overflow-x: hidden; }
   </div>
 </section>
 
-<footer>Smart Pick Deals — Real prices from 200+ stores</footer>
+<footer>Real prices from 200+ stores, compare &amp; save instantly &nbsp;·&nbsp; &copy; Smart Pick Deals<br/><a href="mailto:support@smartpickdeals.live" style="color:var(--muted);font-size:12px;text-decoration:none;display:inline-block;margin-top:5px;letter-spacing:.01em;transition:color .2s;" onmouseover="this.style.color='var(--accent2)'" onmouseout="this.style.color='var(--muted)'">✉ support@smartpickdeals.live</a></footer>
 
 <script>
 var BACKEND_PRIMARY  = 'https://api.smartpickdeals.live';
@@ -340,17 +435,47 @@ var BACKEND = BACKEND_PRIMARY;
 
 var EXTRAPE_OK = ['Amazon','Flipkart','Myntra','Ajio','Nykaa','TataCliq','Croma','Snapdeal','Netmeds','Lenskart'];
 
-var LOGOS = {
-  Amazon:'https://www.amazon.in/favicon.ico',
-  Flipkart:'https://static-assets-web.flixcart.com/fk-p-linchpin-web/fk-icons/v2/favicon-32x32.png',
-  Myntra:'https://constant.myntassets.com/web/assets/img/favicon.ico',
-  Ajio:'https://assets.ajio.com/static/img/Ajio-Favicon.png',
-  Nykaa:'https://adn-static1.nykaa.com/nykdesignstudio-images/pub/media/favicon/stores/2/fav_nykaa_new.png',
-  TataCliq:'https://www.tatacliq.com/favicon.ico',
-  Croma:'https://media.croma.com/image/upload/v1637759004/Croma%20Assets/CMS/Category%20Banners/favicon_b7jkfc.png',
-  Snapdeal:'https://www.snapdeal.com/favicon.ico',
-  Meesho:'https://images.meesho.com/images/logo/1x/logo_hd.webp',
-  JioMart:'https://www.jiomart.com/images/favicon/32X32/apple-touch-icon.png',
+// Store name → primary domain (Google favicon service is reliable & always current)
+var STORE_DOMAIN_MAP = {
+  Amazon:     'amazon.in',
+  Flipkart:   'flipkart.com',
+  Myntra:     'myntra.com',
+  Ajio:       'ajio.com',
+  Nykaa:      'nykaa.com',
+  TataCliq:   'tatacliq.com',
+  Croma:      'croma.com',
+  Snapdeal:   'snapdeal.com',
+  Meesho:     'meesho.com',
+  JioMart:    'jiomart.com',
+  Netmeds:    'netmeds.com',
+  Lenskart:   'lenskart.com',
+  BigBasket:  'bigbasket.com',
+  FirstCry:   'firstcry.com',
+  Mamaearth:  'mamaearth.in',
+  Boat:       'boat-lifestyle.com',
+  Pepperfry:  'pepperfry.com',
+  MakeMyTrip: 'makemytrip.com',
+  ClearTrip:  'cleartrip.com',
+  Netflix:    'netflix.com',
+  SonyLiv:    'sonyliv.com',
+  Hotstar:    'hotstar.com',
+  Purplle:    'purplle.com',
+  Bewakoof:   'bewakoof.com',
+  Decathlon:  'decathlon.in',
+  Swiggy:     'swiggy.com',
+  Zomato:     'zomato.com',
+  Ixigo:      'ixigo.com',
+  EaseMyTrip: 'easemytrip.com',
+  Paytm:      'paytm.com',
+  PhonePe:    'phonepe.com',
+  Reliance:   'reliancedigital.in',
+  Vijay:      'vijaysales.com',
+  Tata:       'tata.com',
+  Wow:        'wowskinscience.com',
+  WOW:        'wowskinscience.com',
+  Mivi:       'mivi.in',
+  Noise:      'gonoise.com',
+  boAt:       'boat-lifestyle.com',
 };
 
 var STORE_DOMAINS = [
@@ -384,12 +509,16 @@ function detectStore(url){
   }catch(e){return 'Unknown';}
 }
 
-function logoHTML(name,size){
-  size=size||26;
-  var url=LOGOS[name];
-  var init=(name||'?')[0].toUpperCase();
-  if(url)return '<img src="'+url+'" width="'+size+'" height="'+size+'" style="object-fit:contain;border-radius:3px;" onerror="this.parentElement.innerHTML=\''+init+'\'">';
-  return init;
+function logoHTML(name, size){
+  size = size || 26;
+  var init = (name || '?')[0].toUpperCase();
+  // Look up known domain, otherwise guess from store name
+  var domain = STORE_DOMAIN_MAP[name] || (name.toLowerCase().replace(/\s+/g,'') + '.com');
+  var src = 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(domain) + '&sz=32';
+  // On error: hide broken img and show the initial letter instead
+  return '<img src="' + src + '" width="' + size + '" height="' + size
+    + '" style="object-fit:contain;border-radius:3px;"'
+    + ' onerror="this.replaceWith(document.createTextNode(\'' + init + '\'))">';
 }
 
 // ── Button wiring ──
