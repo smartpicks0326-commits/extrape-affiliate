@@ -153,16 +153,17 @@ section{position:relative;z-index:1;}
 .store-price{font-family:'DM Mono',monospace;font-size:20px;font-weight:800;flex-shrink:0;text-align:right;letter-spacing:-.02em;}
 .store-price small{font-size:11px;font-weight:400;color:var(--muted);display:block;margin-top:2px;}
 
-/* 3-button action row: Copy | Share | Open */
-.store-actions{display:grid;grid-template-columns:1fr 1fr 2fr;border-top:1px solid var(--border);}
-.btn-copy,.btn-share,.btn-visit{font-family:'Inter',sans-serif;font-weight:600;font-size:12px;padding:11px 12px;cursor:pointer;border:none;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px;letter-spacing:.02em;}
-.btn-copy{background:transparent;color:var(--muted);border-right:1px solid var(--border);}
+/* Action rows: [Copy | Share] on top, [Open] full-width below */
+.store-actions{display:flex;flex-direction:column;border-top:1px solid var(--border);}
+.store-actions-top{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--border);}
+.btn-copy,.btn-share,.btn-visit{font-family:'Inter',sans-serif;font-weight:600;cursor:pointer;border:none;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:6px;letter-spacing:.02em;}
+.btn-copy{background:transparent;color:var(--muted);font-size:12px;padding:11px 12px;border-right:1px solid var(--border);}
 .btn-copy:hover{background:rgba(255,255,255,.04);color:var(--text);}
 .btn-copy.ok{color:var(--success);}
-.btn-share{background:transparent;color:var(--muted);border-right:1px solid var(--border);}
+.btn-share{background:transparent;color:var(--muted);font-size:12px;padding:11px 12px;}
 .btn-share:hover{background:rgba(255,255,255,.04);color:var(--text);}
 .btn-share.ok{color:var(--success);}
-.btn-visit{background:var(--accent);color:#fff;font-size:13px;font-weight:700;}
+.btn-visit{background:var(--accent);color:#fff;font-size:14px;font-weight:700;padding:13px 12px;width:100%;}
 .btn-visit:hover{background:var(--accent2);}
 .btn-loading{opacity:.6;cursor:wait;}
 
@@ -271,8 +272,9 @@ footer{position:relative;z-index:1;text-align:center;padding:24px;font-size:12px
   .prod-title { font-size: 13px; }
   .store-main { padding: 12px 14px; gap: 10px; }
   .store-price { font-size: 17px; }
-  .store-actions { grid-template-columns: 1fr 1fr 1.5fr; }
-  .btn-copy, .btn-share, .btn-visit { font-size: 11px; padding: 11px 8px; }
+  .store-actions { border-top: 1px solid var(--border); }
+  .btn-copy, .btn-share { font-size: 12px; padding: 12px 10px; }
+  .btn-visit { font-size: 13px; padding: 13px; }
   .pct-num { font-size: 34px; }
   .steps-card { padding: 4px 14px; }
   .step { padding: 11px 0; gap: 10px; }
@@ -286,8 +288,6 @@ footer{position:relative;z-index:1;text-align:center;padding:24px;font-size:12px
   .store-name { font-size: 13px; }
   .store-price { font-size: 15px; }
   .tag { font-size: 9px; padding: 2px 6px; }
-  .store-actions { grid-template-columns: 1fr 1fr 1fr; }
-  .btn-copy, .btn-share, .btn-visit { font-size: 10px; padding: 10px 6px; }
 }
 
 /* ── Prevent horizontal overflow ── */
@@ -795,8 +795,10 @@ function renderList(id,stores){
       '</div>'+
       (s.affiliateLoading?'<div class="aff-status" id="'+affStatusId+'">⏳ Generating affiliate link...</div>':'')+
       '<div class="store-actions">'+
-        '<button class="btn-copy" id="'+copyId+'">📋 Copy</button>'+
-        '<button class="btn-share" id="'+shareId+'">↗ Share</button>'+
+        '<div class="store-actions-top">'+
+          '<button class="btn-copy" id="'+copyId+'">📋 Copy</button>'+
+          '<button class="btn-share" id="'+shareId+'">↗ Share</button>'+
+        '</div>'+
         '<button class="btn-visit" id="'+visitId+'">Open ↗</button>'+
       '</div>';
 
