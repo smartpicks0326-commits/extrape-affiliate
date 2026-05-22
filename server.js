@@ -13,6 +13,8 @@ const EXTRAPE_ACCESS_TOKEN   = process.env.EXTRAPE_ACCESS_TOKEN   || '';
 const EXTRAPE_REMEMBER_TOKEN = process.env.EXTRAPE_REMEMBER_TOKEN || '';
 const FRONTEND_URL            = process.env.FRONTEND_URL           || 'https://smartpickdeals.live';
 const SERP_API_KEY            = process.env.SERP_API_KEY           || '';
+const FLASH_AUTH_TOKEN        = process.env.FLASH_AUTH_TOKEN       || '';
+const FLASH_DEVICE_ID         = process.env.FLASH_DEVICE_ID        || 'web-spd-backend';
 
 // ── Encode affiliate URL as base64url (no memory needed for redirect) ──
 function makeGoLink(affiliateUrl) {
@@ -1527,14 +1529,9 @@ app.get('/battery', async (req, res) => {
 });
 
 // ── Flash.co Backend Proxy ──
-// Routes flash.co API calls through Render using the user's session token
-// Requires FLASH_AUTH_TOKEN and FLASH_DEVICE_ID env vars on Render
-// Note: Only works if Render's IP is not blocked by flash.co
-// For better success rate, optionally configure PROXY_URL (residential proxy)
-
-const FLASH_AUTH_TOKEN = process.env.FLASH_AUTH_TOKEN || '';
-const FLASH_DEVICE_ID  = process.env.FLASH_DEVICE_ID  || 'web-spd-backend';
-const PROXY_URL        = process.env.PROXY_URL         || ''; // optional: residential proxy
+// Routes flash.co API calls through the server using the token from env vars
+// FLASH_AUTH_TOKEN and FLASH_DEVICE_ID are declared at the top of this file
+const PROXY_URL = process.env.PROXY_URL || ''; // optional: residential proxy
 
 // Proxy: POST stream to flash.co to get pageHash
 // GET test endpoint — open in browser to test flash.co proxy
@@ -2208,87 +2205,213 @@ app.get('/test-link', async (req, res) => {
   catch(e) { res.status(500).json({ error:e.message }); }
 });
 
-// ── Price comparison — Buyhatke ──
+// ── Price comparison — Flash.co (replaces Buyhatke) ──
+// Token managed server-side in env var — frontend needs no auth at all.
+// Response shape is identical to the old Buyhatke version so the frontend needs no changes.
 app.get('/compare/search', async (req, res) => {
   const { url: rawUrl } = req.query;
   if (!rawUrl) return res.status(400).json({ error: 'Pass ?url=' });
+  if (!FLASH_AUTH_TOKEN) return res.status(503).json({
+    error: 'FLASH_AUTH_TOKEN not set. Add it to your server environment variables.',
+    setup: 'Run: echo "FLASH_AUTH_TOKEN=your_token" >> ~/.env && pm2 restart smartpickdeals --update-env',
+  });
 
   try {
-    // Resolve short URLs before any further processing
+    // Resolve short URLs (amzn.in, fkrt.co, etc.) before sending to Flash
     let url = rawUrl;
     if (isShortUrl(rawUrl)) {
-      try {
-        url = await resolveRedirect(rawUrl);
-        console.log('[Compare] Resolved', rawUrl.substring(0,50), '→', url.substring(0,70));
-      } catch(e) {
-        console.log('[Compare] Short URL resolution failed:', e.message);
-        // Keep original — fetchBuyhatke will also attempt resolution
+      try { url = await resolveRedirect(rawUrl); console.log('[Compare] Resolved', rawUrl.substring(0,50), '→', url.substring(0,70)); }
+      catch(e) { console.log('[Compare] Short URL resolution failed:', e.message); }
+    }
+    console.log('[Compare/Flash] URL:', url);
+
+    // ── Detect source store for isSource tagging ──
+    const srcHost  = (() => { try { return new URL(url).hostname.replace('www.',''); } catch { return ''; } })();
+    const srcStore = normalizeStore(srcHost.split('.')[0]) || '';
+
+    // ─────────────────────────────────────────────────────────────
+    // Step 1 — Send product URL to Flash.co stream API → get pageHash
+    // Flash returns a SSE stream; we read it all at once and extract
+    // the pageHash (a short ID like "oKNuz-eG") from the stream text.
+    // ─────────────────────────────────────────────────────────────
+    const flashHeaders = {
+      'Authorization':  'Bearer ' + FLASH_AUTH_TOKEN,
+      'Channel-Type':   'web',
+      'Content-Type':   'application/json',
+      'Origin':         'https://flash.co',
+      'Referer':        'https://flash.co/',
+      'User-Agent':     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+      'X-Country-Code': 'IN',
+      'X-Device-Id':    FLASH_DEVICE_ID,
+      'X-Timezone':     'Asia/Calcutta',
+      'Accept':         'application/json, text/event-stream, */*',
+    };
+
+    const streamParams = new URLSearchParams({
+      source: 'APPEND', context: 'HOME_URL_PASTE',
+      device_type: 'DESKTOP', country_code: 'IN',
+    });
+
+    const sr = await fetch(
+      'https://apiv3.flash.tech/agents/chat/stream?' + streamParams.toString(),
+      { method: 'POST', headers: flashHeaders, body: JSON.stringify({ query: url, context: 'HOME_URL_PASTE' }), signal: AbortSignal.timeout(35000) }
+    );
+
+    if (!sr.ok) {
+      const errText = await sr.text().catch(() => '');
+      console.log('[Compare/Flash] Stream error:', sr.status, errText.substring(0, 150));
+      // 401 = token expired — prompt owner to refresh
+      if (sr.status === 401) return res.status(503).json({
+        error: 'Flash token expired. Update FLASH_AUTH_TOKEN in your server env and restart.',
+        refresh: 'bash ~/update-tokens.sh',
+      });
+      return res.status(502).json({ error: 'Flash stream returned ' + sr.status });
+    }
+
+    const streamText = await sr.text();
+    console.log('[Compare/Flash] Stream length:', streamText.length, 'sample:', streamText.substring(0, 200));
+
+    // Extract pageHash from stream — try URL patterns first, then SSE data lines
+    let pageHash = null;
+    for (const pat of [/product-search\/([A-Za-z0-9_-]{4,})/, /price-compare\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{4,})/]) {
+      const m = streamText.match(pat);
+      if (m) { pageHash = m[1]; break; }
+    }
+    if (!pageHash) {
+      for (const line of streamText.split('\n')) {
+        if (!line.startsWith('data:')) continue;
+        try {
+          const d = JSON.parse(line.slice(5).trim());
+          pageHash = d.pageHash || d.referenceId || d.data?.pageHash || d.data?.referenceId || null;
+          if (pageHash) break;
+        } catch {}
       }
     }
-    console.log('[Compare] URL:', url);
 
-    // ── Source store detection ──
-    const srcHost = (() => { try { return new URL(url).hostname.replace('www.',''); } catch(e) { return ''; } })();
-    const srcStore = (() => {
-      if (srcHost.includes('amazon') || srcHost.includes('amzn')) return 'Amazon';
-      if (srcHost.includes('flipkart'))        return 'Flipkart';
-      if (srcHost.includes('myntra'))          return 'Myntra';
-      if (srcHost.includes('ajio'))            return 'Ajio';
-      if (srcHost.includes('nykaa'))           return 'Nykaa';
-      if (srcHost.includes('tatacliq'))        return 'TataCliq';
-      if (srcHost.includes('croma'))           return 'Croma';
-      if (srcHost.includes('snapdeal'))        return 'Snapdeal';
-      if (srcHost.includes('meesho'))          return 'Meesho';
-      if (srcHost.includes('jiomart'))         return 'JioMart';
-      if (srcHost.includes('reliancedigital')) return 'Reliance Digital';
-      if (srcHost.includes('vijaysales'))      return 'Vijay Sales';
-      return '';
-    })();
+    if (!pageHash) {
+      console.log('[Compare/Flash] No pageHash found in stream');
+      return res.status(422).json({ error: 'Flash did not return a product hash. The URL may not be supported.', streamSample: streamText.substring(0, 300) });
+    }
+    console.log('[Compare/Flash] pageHash:', pageHash);
 
-    let stores       = [];
-    let productName  = '';
-    let productImage = '';
-    const errors     = [];
+    // ─────────────────────────────────────────────────────────────
+    // Step 2 — Fetch price comparison data using the pageHash.
+    // Flash processes async so we poll up to ~30 s until feedbacks arrive.
+    // ─────────────────────────────────────────────────────────────
+    const priceHeaders = { ...flashHeaders, 'Content-Type': undefined };
+    const priceEndpoints = [
+      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
+      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash,
+    ];
 
-    // ── Strategy 1: Buyhatke (primary) ──
-    try {
-      const bhRaw    = await fetchBuyhatke(url);
-      const bhParsed = parseBuyhatkeResponse(bhRaw, url, srcStore);
-      stores       = bhParsed.stores;
-      productName  = bhParsed.productName;
-      productImage = bhParsed.productImage;
-      console.log('[Compare] Buyhatke returned', stores.length, 'stores');
-    } catch(e) {
-      errors.push('Buyhatke: ' + e.message);
-      console.log('[Compare] Buyhatke failed:', e.message);
+    let rawPriceData = null;
+    // First try — immediate
+    for (const ep of priceEndpoints) {
+      try {
+        const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(10000) });
+        if (r.ok) {
+          const d = await r.json();
+          if ((d?.response?.feedbacks || d?.feedbacks || []).length > 0) { rawPriceData = d; break; }
+        }
+      } catch {}
+    }
+    // Poll up to 12 × 2.5 s = 30 s
+    for (let attempt = 0; attempt < 12 && !rawPriceData; attempt++) {
+      await new Promise(r => setTimeout(r, 2500));
+      for (const ep of priceEndpoints) {
+        try {
+          const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(8000) });
+          if (!r.ok) continue;
+          const d = await r.json();
+          if ((d?.response?.feedbacks || d?.feedbacks || []).length > 0) {
+            rawPriceData = d;
+            console.log('[Compare/Flash] ✅ Prices at poll attempt', attempt + 1);
+            break;
+          }
+        } catch {}
+      }
     }
 
+    if (!rawPriceData) return res.status(504).json({ error: 'Flash timed out — no price data received after 30 s.', pageHash });
 
+    // ─────────────────────────────────────────────────────────────
+    // Step 3 — Parse Flash feedbacks into the standard store shape
+    // that the frontend already expects: { stores, productName,
+    // productImage, totalStores, savings, dataSource }
+    // ─────────────────────────────────────────────────────────────
+    const feedbacks = rawPriceData?.response?.feedbacks || rawPriceData?.feedbacks || [];
+    const meta      = rawPriceData?.response?.productDetails || rawPriceData?.productDetails || rawPriceData?.response || {};
+
+    const productName  = meta.name || meta.productName || meta.title || ('Product from ' + srcStore);
+    const productImage = meta.imageUrl || meta.image || meta.thumbnail || '';
+
+    // Find the price-comparison feedback block — may be nested
+    let priceList = [];
+    for (const fb of feedbacks) {
+      // Direct array of store prices
+      if (Array.isArray(fb.storePrices))  { priceList = fb.storePrices; break; }
+      if (Array.isArray(fb.prices))       { priceList = fb.prices;      break; }
+      if (Array.isArray(fb.stores))       { priceList = fb.stores;      break; }
+      if (Array.isArray(fb.data?.storePrices)) { priceList = fb.data.storePrices; break; }
+      if (Array.isArray(fb.data?.prices))      { priceList = fb.data.prices;      break; }
+      if (Array.isArray(fb.data?.stores))      { priceList = fb.data.stores;      break; }
+    }
+
+    // Also dig one level deeper if nothing found at top
+    if (priceList.length === 0) {
+      for (const fb of feedbacks) {
+        const dig = JSON.stringify(fb);
+        const m = dig.match(/"(?:storePrices|prices|stores)"\s*:\s*(\[[\s\S]{10,}?\])/);
+        if (m) { try { priceList = JSON.parse(m[1]); if (priceList.length) break; } catch {} }
+      }
+    }
+
+    console.log('[Compare/Flash] priceList length:', priceList.length);
+
+    const storeMap = {};
+    for (const item of priceList) {
+      const rawName = item.storeName || item.name || item.store || item.retailer || '';
+      const name    = normalizeStore(rawName) || rawName;
+      if (!name) continue;
+      const price = parseInt(String(item.price || item.salePrice || item.amount || 0).replace(/[^0-9]/g, '')) || 0;
+      if (price <= 0) continue;
+      const storeUrl = item.url || item.link || item.productUrl || '';
+      // Keep lowest price per store
+      if (!storeMap[name] || price < storeMap[name].price) {
+        storeMap[name] = { name, normalizedName: name, price, url: storeUrl };
+      }
+    }
+
+    let stores = Object.values(storeMap).sort((a, b) => a.price - b.price);
+
+    // Mark source store and best price
+    stores = stores.map((s, i) => {
+      const n = s.normalizedName.toLowerCase();
+      const isSrc = srcStore && (n === srcStore.toLowerCase() || n.includes(srcStore.toLowerCase()) || srcStore.toLowerCase().includes(n));
+      return { ...s, isBest: i === 0, isSource: isSrc };
+    });
 
     if (stores.length === 0) {
-      return res.status(404).json({
-        error: 'No price comparison results found. ' + errors.join(' | '),
-        tried: errors,
-      });
+      console.log('[Compare/Flash] No parseable store prices. feedbacks count:', feedbacks.length, 'sample:', JSON.stringify(feedbacks).substring(0, 400));
+      return res.status(404).json({ error: 'Flash returned data but no parseable store prices.', feedbackCount: feedbacks.length, pageHash });
     }
 
     const srcEntry = stores.find(s => s.isSource);
     const savings  = srcEntry && !srcEntry.isBest ? srcEntry.price - stores[0].price : 0;
 
-    console.log('[Compare] FINAL:',
-      stores.map(s => s.name + ':₹' + s.price + (s.isSource?'[src]':'') + (s.isBest?'[best]':'')).join(' | '));
+    console.log('[Compare/Flash] FINAL:', stores.map(s => s.name + ':₹' + s.price + (s.isSource ? '[src]' : '') + (s.isBest ? '[best]' : '')).join(' | '));
 
     return res.json({
       stores,
-      productName:  productName || url,
+      productName,
       productImage,
-      totalStores:  stores.length,
-      savings:      savings > 0 ? savings : 0,
-      dataSource: 'buyhatke',
+      totalStores: stores.length,
+      savings:     savings > 0 ? savings : 0,
+      dataSource:  'flash',
     });
 
   } catch(e) {
-    console.error('[Compare] Unhandled error:', e.message);
+    console.error('[Compare/Flash] Unhandled error:', e.message);
     return res.status(500).json({ error: e.message });
   }
 });
