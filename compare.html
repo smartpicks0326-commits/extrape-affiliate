@@ -473,9 +473,6 @@ var STORE_DOMAIN_MAP = {
   Bewakoof:   'bewakoof.com',
   Decathlon:  'decathlon.in',
   Swiggy:     'swiggy.com',
-  'Swiggy Instamart': 'swiggy.com',
-  Zepto:      'zeptonow.com',
-  Blinkit:    'blinkit.com',
   Zomato:     'zomato.com',
   Ixigo:      'ixigo.com',
   EaseMyTrip: 'easemytrip.com',
@@ -522,35 +519,16 @@ function detectStore(url){
   }catch(e){return 'Unknown';}
 }
 
-// Direct CDN favicon URLs for stores whose favicons don't resolve via Google
-var LOGO_CDN = {
-  BigBasket:          'https://www.bigbasket.com/favicon.ico',
-  'Swiggy Instamart': 'https://www.swiggy.com/favicon.ico',
-  Swiggy:             'https://www.swiggy.com/favicon.ico',
-  Zepto:              'https://cdn.zeptonow.com/web-static-assets-prod/artifacts/11.25.2/favicon.ico',
-  Blinkit:            'https://blinkit.com/favicon.ico',
-};
-
 function logoHTML(name, size){
   size = size || 26;
-  var init = (name || '?').split(' ')[0][0].toUpperCase();
+  var init = (name || '?')[0].toUpperCase();
+  // Look up known domain, otherwise guess from store name
   var domain = STORE_DOMAIN_MAP[name] || (name.toLowerCase().replace(/\s+/g,'') + '.com');
-  var googleSrc = 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(domain) + '&sz=64';
-  var cdnSrc = LOGO_CDN[name] || null;
-
-  // Avatar fallback — styled div shown if all image sources fail
-  var avatarHtml = '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-family:Inter,sans-serif;font-size:15px;font-weight:800;color:var(--accent2);background:rgba(255,107,43,.1);border-radius:8px;">' + init + '</div>';
-
-  if(cdnSrc){
-    // For stores with known CDN: try CDN first, fall back to Google favicon, then avatar
-    return '<img src="' + cdnSrc + '" width="' + size + '" height="' + size
-      + '" style="object-fit:contain;border-radius:3px;"'
-      + ' onerror="this.src=\'' + googleSrc + '\';this.onerror=function(){this.outerHTML=\'' + avatarHtml.replace(/'/g,"\\'") + '\';};">';
-  }
-  // Default: Google favicon with avatar fallback
-  return '<img src="' + googleSrc + '" width="' + size + '" height="' + size
+  var src = 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(domain) + '&sz=32';
+  // On error: hide broken img and show the initial letter instead
+  return '<img src="' + src + '" width="' + size + '" height="' + size
     + '" style="object-fit:contain;border-radius:3px;"'
-    + ' onerror="this.outerHTML=\'' + avatarHtml.replace(/'/g,"\\'") + '\'">';
+    + ' onerror="this.replaceWith(document.createTextNode(\'' + init + '\'))">';
 }
 
 // ── Button wiring ──
