@@ -2335,48 +2335,70 @@ app.get('/compare/search', async (req, res) => {
     if (!rawPriceData) return res.status(504).json({ error: 'Flash timed out — no price data received after 30 s.', pageHash });
 
     // ─────────────────────────────────────────────────────────────
-    // Step 3 — Parse Flash feedbacks into the standard store shape
-    // that the frontend already expects: { stores, productName,
-    // productImage, totalStores, savings, dataSource }
+    // Step 3 — Parse Flash feedbacks into the standard store shape.
+    // Flash nests price data differently depending on product type.
+    // We use a deep recursive digger to find it regardless of depth.
     // ─────────────────────────────────────────────────────────────
     const feedbacks = rawPriceData?.response?.feedbacks || rawPriceData?.feedbacks || [];
-    const meta      = rawPriceData?.response?.productDetails || rawPriceData?.productDetails || rawPriceData?.response || {};
+    const meta      = rawPriceData?.response?.productDetails
+                   || rawPriceData?.productDetails
+                   || rawPriceData?.response
+                   || {};
 
     const productName  = meta.name || meta.productName || meta.title || ('Product from ' + srcStore);
     const productImage = meta.imageUrl || meta.image || meta.thumbnail || '';
 
-    // Find the price-comparison feedback block — may be nested
-    let priceList = [];
-    for (const fb of feedbacks) {
-      // Direct array of store prices
-      if (Array.isArray(fb.storePrices))  { priceList = fb.storePrices; break; }
-      if (Array.isArray(fb.prices))       { priceList = fb.prices;      break; }
-      if (Array.isArray(fb.stores))       { priceList = fb.stores;      break; }
-      if (Array.isArray(fb.data?.storePrices)) { priceList = fb.data.storePrices; break; }
-      if (Array.isArray(fb.data?.prices))      { priceList = fb.data.prices;      break; }
-      if (Array.isArray(fb.data?.stores))      { priceList = fb.data.stores;      break; }
+    // ── Deep recursive price list finder ──
+    // Flash embeds prices under many different key names and nesting levels.
+    // We recursively walk the entire response and collect every array that
+    // looks like a list of store prices (has storeName/price fields).
+    function isStorePriceItem(obj) {
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
+      const hasStore = obj.storeName || obj.name || obj.store || obj.retailer || obj.source;
+      const hasPrice = obj.price !== undefined || obj.salePrice !== undefined || obj.amount !== undefined || obj.sellingPrice !== undefined;
+      return !!(hasStore && hasPrice);
     }
 
-    // Also dig one level deeper if nothing found at top
-    if (priceList.length === 0) {
-      for (const fb of feedbacks) {
-        const dig = JSON.stringify(fb);
-        const m = dig.match(/"(?:storePrices|prices|stores)"\s*:\s*(\[[\s\S]{10,}?\])/);
-        if (m) { try { priceList = JSON.parse(m[1]); if (priceList.length) break; } catch {} }
+    function deepFindPriceLists(obj, depth) {
+      if (!obj || typeof obj !== 'object' || depth > 12) return [];
+      if (Array.isArray(obj)) {
+        // If this array contains store price items, return it
+        const items = obj.filter(isStorePriceItem);
+        if (items.length > 0) return [items];
+        // Otherwise recurse into each element
+        return obj.flatMap(el => deepFindPriceLists(el, depth + 1));
       }
+      // It's a plain object — check known keys first for speed, then recurse
+      const knownKeys = ['storePrices','prices','stores','storeList','comparePrices','priceComparison','offers','listings','results','data','feedbacks','feedback','content','payload','response'];
+      const found = [];
+      for (const key of knownKeys) {
+        if (obj[key]) found.push(...deepFindPriceLists(obj[key], depth + 1));
+      }
+      // Also recurse into all other keys
+      for (const key of Object.keys(obj)) {
+        if (!knownKeys.includes(key) && obj[key] && typeof obj[key] === 'object') {
+          found.push(...deepFindPriceLists(obj[key], depth + 1));
+        }
+      }
+      return found;
     }
 
-    console.log('[Compare/Flash] priceList length:', priceList.length);
+    // Find all candidate price lists; pick the longest (most stores)
+    const allPriceLists = deepFindPriceLists(rawPriceData, 0);
+    allPriceLists.sort((a, b) => b.length - a.length);
+    const priceList = allPriceLists[0] || [];
+
+    console.log('[Compare/Flash] Found', allPriceLists.length, 'price list candidates, best has', priceList.length, 'items');
 
     const storeMap = {};
     for (const item of priceList) {
-      const rawName = item.storeName || item.name || item.store || item.retailer || '';
-      const name    = normalizeStore(rawName) || rawName;
+      const rawName = item.storeName || item.name || item.store || item.retailer || item.source || '';
+      const name    = normalizeStore(rawName) || rawName.trim();
       if (!name) continue;
-      const price = parseInt(String(item.price || item.salePrice || item.amount || 0).replace(/[^0-9]/g, '')) || 0;
+      const rawPrice = item.price ?? item.salePrice ?? item.sellingPrice ?? item.amount ?? 0;
+      const price    = parseInt(String(rawPrice).replace(/[^0-9]/g, '')) || 0;
       if (price <= 0) continue;
-      const storeUrl = item.url || item.link || item.productUrl || '';
-      // Keep lowest price per store
+      const storeUrl = item.url || item.link || item.productUrl || item.deepLink || '';
       if (!storeMap[name] || price < storeMap[name].price) {
         storeMap[name] = { name, normalizedName: name, price, url: storeUrl };
       }
@@ -2384,7 +2406,6 @@ app.get('/compare/search', async (req, res) => {
 
     let stores = Object.values(storeMap).sort((a, b) => a.price - b.price);
 
-    // Mark source store and best price
     stores = stores.map((s, i) => {
       const n = s.normalizedName.toLowerCase();
       const isSrc = srcStore && (n === srcStore.toLowerCase() || n.includes(srcStore.toLowerCase()) || srcStore.toLowerCase().includes(n));
@@ -2392,8 +2413,15 @@ app.get('/compare/search', async (req, res) => {
     });
 
     if (stores.length === 0) {
-      console.log('[Compare/Flash] No parseable store prices. feedbacks count:', feedbacks.length, 'sample:', JSON.stringify(feedbacks).substring(0, 400));
-      return res.status(404).json({ error: 'Flash returned data but no parseable store prices.', feedbackCount: feedbacks.length, pageHash });
+      console.log('[Compare/Flash] Parser found no prices. feedbacks:', feedbacks.length,
+        '| rawPriceData keys:', Object.keys(rawPriceData),
+        '| sample:', JSON.stringify(rawPriceData).substring(0, 600));
+      return res.status(404).json({
+        error: 'Flash returned data but no parseable store prices.',
+        feedbackCount: feedbacks.length,
+        pageHash,
+        debug: 'Visit /compare/debug?url=YOUR_URL to inspect the raw Flash response',
+      });
     }
 
     const srcEntry = stores.find(s => s.isSource);
@@ -2412,6 +2440,71 @@ app.get('/compare/search', async (req, res) => {
 
   } catch(e) {
     console.error('[Compare/Flash] Unhandled error:', e.message);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Compare debug — dumps raw Flash response so you can inspect the structure ──
+// Usage: https://api.smartpickdeals.live/compare/debug?url=https://amzn.in/d/00aqArIu
+app.get('/compare/debug', async (req, res) => {
+  const { url: rawUrl } = req.query;
+  if (!rawUrl) return res.json({ usage: 'Add ?url=YOUR_PRODUCT_URL', example: '/compare/debug?url=https://amzn.in/d/00aqArIu' });
+  if (!FLASH_AUTH_TOKEN) return res.status(503).json({ error: 'FLASH_AUTH_TOKEN not set' });
+
+  try {
+    let url = rawUrl;
+    if (isShortUrl(rawUrl)) { try { url = await resolveRedirect(rawUrl); } catch {} }
+
+    const flashHeaders = {
+      'Authorization': 'Bearer ' + FLASH_AUTH_TOKEN,
+      'Channel-Type': 'web', 'Content-Type': 'application/json',
+      'Origin': 'https://flash.co', 'Referer': 'https://flash.co/',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+      'X-Country-Code': 'IN', 'X-Device-Id': FLASH_DEVICE_ID, 'X-Timezone': 'Asia/Calcutta',
+    };
+
+    // Step 1: get pageHash
+    const sr = await fetch(
+      'https://apiv3.flash.tech/agents/chat/stream?source=APPEND&context=HOME_URL_PASTE&device_type=DESKTOP&country_code=IN',
+      { method: 'POST', headers: flashHeaders, body: JSON.stringify({ query: url, context: 'HOME_URL_PASTE' }), signal: AbortSignal.timeout(35000) }
+    );
+    const streamText = await sr.text();
+
+    let pageHash = null;
+    for (const pat of [/product-search\/([A-Za-z0-9_-]{4,})/, /price-compare\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{4,})/]) {
+      const m = streamText.match(pat); if (m) { pageHash = m[1]; break; }
+    }
+    if (!pageHash) {
+      for (const line of streamText.split('\n')) {
+        if (!line.startsWith('data:')) continue;
+        try { const d = JSON.parse(line.slice(5)); pageHash = d.pageHash || d.referenceId || null; if (pageHash) break; } catch {}
+      }
+    }
+    if (!pageHash) return res.json({ step: 'stream', streamStatus: sr.status, pageHash: null, streamSample: streamText.substring(0, 800) });
+
+    // Step 2: fetch prices (single attempt, no polling — debug only)
+    await new Promise(r => setTimeout(r, 3000));
+    const ep = 'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash;
+    const pr = await fetch(ep, { headers: { ...flashHeaders, 'Content-Type': undefined }, signal: AbortSignal.timeout(10000) });
+    const raw = await pr.json();
+
+    const feedbacks = raw?.response?.feedbacks || raw?.feedbacks || [];
+    return res.json({
+      resolvedUrl:   url,
+      pageHash,
+      streamStatus:  sr.status,
+      priceStatus:   pr.status,
+      feedbackCount: feedbacks.length,
+      topLevelKeys:  Object.keys(raw),
+      responseKeys:  raw?.response ? Object.keys(raw.response) : [],
+      feedbackSample: feedbacks.slice(0, 2).map(f => ({
+        keys: Object.keys(f),
+        dataKeys: f.data ? Object.keys(f.data) : [],
+        sample: JSON.stringify(f).substring(0, 500),
+      })),
+      fullRaw: raw,   // complete response — inspect this to fix the parser
+    });
+  } catch(e) {
     return res.status(500).json({ error: e.message });
   }
 });
