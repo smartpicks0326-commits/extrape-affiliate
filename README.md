@@ -157,4 +157,5 @@ Then one pm2 restart smartpickdeals --update-env — done. No more 14-day expiry
 
 SERP_API_KEY=325cee81875760a71814be841493064a1b5bb79920f32f5f5fa20382d2d7f0f6
 
+
 https://api.smartpickdeals.live/flash/token-page
