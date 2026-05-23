@@ -2341,7 +2341,7 @@ app.get('/compare/search', async (req, res) => {
       const streamText = await sr.text();
       console.log('[Compare/Flash] Stream length:', streamText.length, '| sample:', streamText.substring(0, 120));
       let pageHash = null;
-      for (const pat of [/product-search\/([A-Za-z0-9_-]{4,})/, /price-compare\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{4,})/, /"pageHash":"([A-Za-z0-9_-]{4,})"/, /"referenceId":"([A-Za-z0-9_-]{4,})"/]) {
+      for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/, /product-search\/([A-Za-z0-9_-]{4,})/, /price-compare\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{4,})/, /"pageHash":"([A-Za-z0-9_-]{4,})"/, /"referenceId":"([A-Za-z0-9_-]{4,})"/]) {
         const m = streamText.match(pat); if (m) { pageHash = m[1]; break; }
       }
       if (!pageHash) {
@@ -2536,7 +2536,7 @@ app.get('/compare/debug', async (req, res) => {
     const streamText = await sr.text();
 
     let pageHash = null;
-    for (const pat of [/product-search\/([A-Za-z0-9_-]{4,})/, /price-compare\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{4,})/]) {
+    for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/, /product-search\/([A-Za-z0-9_-]{4,})/, /price-compare\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{4,})/]) {
       const m = streamText.match(pat); if (m) { pageHash = m[1]; break; }
     }
     if (!pageHash) {
