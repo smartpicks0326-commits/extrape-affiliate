@@ -19,7 +19,11 @@ const ADMIN_SECRET            = process.env.ADMIN_SECRET           || 'spd-admin
 // ── Flash token — in-memory cache, loaded from .env at startup ──
 // Update via the bookmarklet: visit https://api.smartpickdeals.live/flash/token-page
 // No server restart or .env editing needed when refreshing the token.
-const flashTokenCache = { token: process.env.FLASH_AUTH_TOKEN || '' };
+const flashTokenCache = {
+  token:    process.env.FLASH_AUTH_TOKEN  || '',
+  deviceId: process.env.FLASH_DEVICE_ID   || '',
+  userId:   process.env.FLASH_USER_ID     || '',
+};
 
 function getFlashToken() {
   if (!flashTokenCache.token) throw new Error('Flash token not set. Visit https://api.smartpickdeals.live/flash/token-page for setup.');
@@ -31,19 +35,25 @@ app.post('/flash/update-token', async (req, res) => {
   const { token, secret } = req.body;
   if (!token) return res.status(400).json({ error: 'Missing token' });
   if (secret !== ADMIN_SECRET) return res.status(401).json({ error: 'Wrong secret' });
-  flashTokenCache.token = token;
-  console.log('[Flash] ✅ Token updated via bookmarklet. Preview:', token.substring(0, 20) + '...');
+  const { deviceId, userId } = req.body;
+  flashTokenCache.token    = token;
+  if (deviceId) flashTokenCache.deviceId = deviceId;
+  if (userId)   flashTokenCache.userId   = userId;
+  console.log('[Flash] ✅ Token updated via bookmarklet. deviceId:', deviceId, 'userId:', userId ? userId.substring(0,8)+'...' : 'n/a');
   const fs = require('fs');
   const envPath = require('path').join(process.env.HOME || '/home/smartpick', 'extrape-affiliate', '.env');
   try {
     let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
-    if (envContent.includes('FLASH_AUTH_TOKEN=')) {
-      envContent = envContent.replace(/FLASH_AUTH_TOKEN=.*/g, 'FLASH_AUTH_TOKEN=' + token);
-    } else {
-      envContent += '\nFLASH_AUTH_TOKEN=' + token + '\n';
-    }
+    const upsert = (key, val) => {
+      if (!val) return;
+      if (envContent.includes(key + '=')) envContent = envContent.replace(new RegExp(key + '=.*'), key + '=' + val);
+      else envContent += '\n' + key + '=' + val + '\n';
+    };
+    upsert('FLASH_AUTH_TOKEN', token);
+    if (deviceId) upsert('FLASH_DEVICE_ID', deviceId);
+    if (userId)   upsert('FLASH_USER_ID',   userId);
     fs.writeFileSync(envPath, envContent);
-    console.log('[Flash] Token written to .env');
+    console.log('[Flash] Token + deviceId + userId written to .env');
   } catch(e) { console.log('[Flash] Could not write .env:', e.message); }
   return res.json({ ok: true, message: 'Token updated! Good for ~14 days.' });
 });
@@ -2297,29 +2307,41 @@ app.get('/compare/search', async (req, res) => {
 
     // ── Inner function: run Flash search with a given token ──
     async function runFlashSearch(token) {
+      const ua       = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
+      const deviceId = flashTokenCache.deviceId || FLASH_DEVICE_ID || 'web-spd-backend';
+      const userId   = flashTokenCache.userId   || '';
+      // X-Idempotency-Key = base64(userId_url_WEB) — exactly what browser sends
+      const idempotencyKey = Buffer.from(userId + '_' + url + '_WEB').toString('base64');
       const flashHeaders = {
-        'Authorization':  'Bearer ' + token,
-        'Channel-Type':   'web',
-        'Content-Type':   'application/json',
-        'Origin':         'https://flash.co',
-        'Referer':        'https://flash.co/',
-        'User-Agent':     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-        'X-Country-Code': 'IN',
-        'X-Device-Id':    FLASH_DEVICE_ID,
-        'X-Timezone':     'Asia/Calcutta',
-        'Accept':         'application/json, text/event-stream, */*',
+        'Authorization':     'Bearer ' + token,
+        'Channel-Type':      'web',
+        'Content-Type':      'application/json',
+        'Accept':            'text/event-stream',
+        'Origin':            'https://flash.co',
+        'X-Country-Code':    'IN',
+        'X-Device-Id':       deviceId,
+        'X-Timezone':        'Asia/Calcutta',
+        'X-Idempotency-Key': idempotencyKey,
       };
-      const streamParams = new URLSearchParams({ source: 'APPEND', context: 'HOME_URL_PASTE', device_type: 'DESKTOP', country_code: 'IN' });
+      // Correct domain: api.flash.co (apiv3.flash.tech is IP-blocked for servers)
+      // user_agent goes as query param, not header
+      const streamParams = new URLSearchParams({
+        source: 'APPEND', context: 'HOME_URL_PASTE',
+        user_agent: ua, device_type: 'DESKTOP', country_code: 'IN',
+      });
       const sr = await fetch(
-        'https://apiv3.flash.tech/agents/chat/stream?' + streamParams.toString(),
+        'https://api.flash.co/agents/chat/stream?' + streamParams.toString(),
         { method: 'POST', headers: flashHeaders, body: JSON.stringify({ query: url, context: 'HOME_URL_PASTE' }), signal: AbortSignal.timeout(35000) }
       );
       if (sr.status === 401) throw Object.assign(new Error('Flash 401'), { is401: true });
-      if (!sr.ok) throw new Error('Flash stream returned ' + sr.status);
+      if (!sr.ok) {
+        const txt = await sr.text().catch(() => '');
+        throw new Error('Flash stream ' + sr.status + ': ' + txt.substring(0, 150));
+      }
       const streamText = await sr.text();
-      console.log('[Compare/Flash] Stream length:', streamText.length);
+      console.log('[Compare/Flash] Stream length:', streamText.length, '| sample:', streamText.substring(0, 120));
       let pageHash = null;
-      for (const pat of [/product-search\/([A-Za-z0-9_-]{4,})/, /price-compare\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{4,})/]) {
+      for (const pat of [/product-search\/([A-Za-z0-9_-]{4,})/, /price-compare\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{4,})/, /"pageHash":"([A-Za-z0-9_-]{4,})"/, /"referenceId":"([A-Za-z0-9_-]{4,})"/]) {
         const m = streamText.match(pat); if (m) { pageHash = m[1]; break; }
       }
       if (!pageHash) {
@@ -2328,12 +2350,16 @@ app.get('/compare/search', async (req, res) => {
           try { const d = JSON.parse(line.slice(5).trim()); pageHash = d.pageHash || d.referenceId || d.data?.pageHash || null; if (pageHash) break; } catch {}
         }
       }
-      if (!pageHash) throw new Error('Flash did not return a product hash. URL may not be supported.');
+      if (!pageHash) {
+        console.log('[Compare/Flash] No pageHash. Stream:', streamText.substring(0, 400));
+        throw new Error('Flash did not return a product hash. URL may not be supported.');
+      }
       console.log('[Compare/Flash] pageHash:', pageHash);
-      const priceHeaders = { ...flashHeaders, 'Content-Type': undefined };
+      // Price fetch also on api.flash.co
+      const priceHeaders = { ...flashHeaders, 'Content-Type': undefined, 'Accept': 'application/json' };
       const eps = [
-        'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
-        'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash,
+        'https://api.flash.co/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
+        'https://api.flash.co/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash,
       ];
       let rawPriceData = null;
       for (const ep of eps) {
