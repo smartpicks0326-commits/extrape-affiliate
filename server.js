@@ -2520,54 +2520,79 @@ app.get('/compare/debug', async (req, res) => {
     const token = flashTokenCache.token;
     if (!token) return res.status(503).json({ error: 'No Flash token. Visit https://api.smartpickdeals.live/flash/token-page' });
 
+    const ua       = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
+    const deviceId = flashTokenCache.deviceId || FLASH_DEVICE_ID || 'web-spd-backend';
+    const userId   = flashTokenCache.userId || '';
+    const idempotencyKey = Buffer.from(userId + '_' + url + '_WEB').toString('base64');
     const flashHeaders = {
       'Authorization': 'Bearer ' + token,
       'Channel-Type': 'web', 'Content-Type': 'application/json',
-      'Origin': 'https://flash.co', 'Referer': 'https://flash.co/',
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-      'X-Country-Code': 'IN', 'X-Device-Id': FLASH_DEVICE_ID, 'X-Timezone': 'Asia/Calcutta',
+      'Accept': 'text/event-stream',
+      'Origin': 'https://flash.co',
+      'X-Country-Code': 'IN', 'X-Device-Id': deviceId,
+      'X-Timezone': 'Asia/Calcutta', 'X-Idempotency-Key': idempotencyKey,
     };
+    const streamParams = new URLSearchParams({ source: 'APPEND', context: 'HOME_URL_PASTE', user_agent: ua, device_type: 'DESKTOP', country_code: 'IN' });
 
-    // Step 1: get pageHash
+    // Step 1: get pageHash + threadId from stream
     const sr = await fetch(
-      'https://apiv3.flash.tech/agents/chat/stream?source=APPEND&context=HOME_URL_PASTE&device_type=DESKTOP&country_code=IN',
+      'https://api.flash.co/agents/chat/stream?' + streamParams.toString(),
       { method: 'POST', headers: flashHeaders, body: JSON.stringify({ query: url, context: 'HOME_URL_PASTE' }), signal: AbortSignal.timeout(35000) }
     );
     const streamText = await sr.text();
+    if (!sr.ok) return res.json({ step: 'stream', streamStatus: sr.status, error: streamText.substring(0, 200) });
 
+    // Extract pageHash
     let pageHash = null;
     for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/, /product-search\/([A-Za-z0-9_-]{4,})/, /price-compare\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{4,})/]) {
       const m = streamText.match(pat); if (m) { pageHash = m[1]; break; }
     }
-    if (!pageHash) {
-      for (const line of streamText.split('\n')) {
-        if (!line.startsWith('data:')) continue;
-        try { const d = JSON.parse(line.slice(5)); pageHash = d.pageHash || d.referenceId || null; if (pageHash) break; } catch {}
-      }
-    }
-    if (!pageHash) return res.json({ step: 'stream', streamStatus: sr.status, pageHash: null, streamSample: streamText.substring(0, 800) });
 
-    // Step 2: fetch prices (single attempt, no polling — debug only)
-    await new Promise(r => setTimeout(r, 3000));
-    const ep = 'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash;
-    const pr = await fetch(ep, { headers: { ...flashHeaders, 'Content-Type': undefined }, signal: AbortSignal.timeout(10000) });
-    const raw = await pr.json();
+    // Extract threadId from ANALYTICS_DATA event
+    let threadId = null;
+    try { const m = streamText.match(/"threadId"\s*:\s*(\d+)/); if (m) threadId = m[1]; } catch {}
+
+    if (!pageHash) return res.json({ step: 'stream', streamStatus: sr.status, pageHash: null, threadId, streamSample: streamText.substring(0, 800) });
+
+    // Step 2: poll feedback endpoint up to 30s (same as main compare)
+    const priceHeaders = { ...flashHeaders, 'Content-Type': undefined, 'Accept': 'application/json' };
+    const eps = [
+      'https://api.flash.co/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
+      'https://api.flash.co/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash,
+    ];
+
+    let raw = null;
+    for (let attempt = 0; attempt < 12; attempt++) {
+      await new Promise(r => setTimeout(r, 2500));
+      for (const ep of eps) {
+        try {
+          const pr = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(8000) });
+          if (!pr.ok) continue;
+          const d = await pr.json();
+          const fbs = d?.response?.feedbacks || d?.feedbacks || [];
+          if (fbs.length > 0) { raw = d; console.log('[Debug] Got feedbacks at poll', attempt + 1); break; }
+        } catch {}
+      }
+      if (raw) break;
+    }
+
+    if (!raw) return res.json({ resolvedUrl: url, pageHash, threadId, streamStatus: sr.status, error: 'Feedbacks empty after 30s polling', streamSample: streamText.substring(0, 400) });
 
     const feedbacks = raw?.response?.feedbacks || raw?.feedbacks || [];
     return res.json({
-      resolvedUrl:   url,
+      resolvedUrl:    url,
       pageHash,
-      streamStatus:  sr.status,
-      priceStatus:   pr.status,
-      feedbackCount: feedbacks.length,
-      topLevelKeys:  Object.keys(raw),
-      responseKeys:  raw?.response ? Object.keys(raw.response) : [],
+      threadId,
+      streamStatus:   sr.status,
+      feedbackCount:  feedbacks.length,
+      topLevelKeys:   Object.keys(raw),
+      responseKeys:   raw?.response ? Object.keys(raw.response) : [],
       feedbackSample: feedbacks.slice(0, 2).map(f => ({
         keys: Object.keys(f),
         dataKeys: f.data ? Object.keys(f.data) : [],
-        sample: JSON.stringify(f).substring(0, 500),
+        sample: JSON.stringify(f).substring(0, 800),
       })),
-      fullRaw: raw,   // complete response — inspect this to fix the parser
+      fullRaw: raw,
     });
   } catch(e) {
     return res.status(500).json({ error: e.message });
