@@ -13,8 +13,99 @@ const EXTRAPE_ACCESS_TOKEN   = process.env.EXTRAPE_ACCESS_TOKEN   || '';
 const EXTRAPE_REMEMBER_TOKEN = process.env.EXTRAPE_REMEMBER_TOKEN || '';
 const FRONTEND_URL            = process.env.FRONTEND_URL           || 'https://smartpickdeals.live';
 const SERP_API_KEY            = process.env.SERP_API_KEY           || '';
-const FLASH_AUTH_TOKEN        = process.env.FLASH_AUTH_TOKEN       || '';
-const FLASH_DEVICE_ID         = process.env.FLASH_DEVICE_ID        || 'web-spd-backend';
+const FLASH_EMAIL             = process.env.FLASH_EMAIL            || '';
+const FLASH_PASSWORD          = process.env.FLASH_PASSWORD         || '';
+const FLASH_DEVICE_ID         = process.env.FLASH_DEVICE_ID        || 'web-spd-' + Math.random().toString(36).slice(2,10);
+
+// ── Flash.co auto-login token manager ──
+// Logs in with FLASH_EMAIL + FLASH_PASSWORD, caches the token in memory,
+// auto-refreshes whenever a 401 is received. No manual token updates needed.
+const flashTokenCache = { token: process.env.FLASH_AUTH_TOKEN || '', expiresAt: 0 };
+
+async function getFlashToken(forceRefresh = false) {
+  const now = Date.now();
+  // Return cached token if still valid (we treat tokens as valid for 13 days)
+  if (!forceRefresh && flashTokenCache.token && now < flashTokenCache.expiresAt) {
+    return flashTokenCache.token;
+  }
+
+  if (!FLASH_EMAIL || !FLASH_PASSWORD) {
+    throw new Error('Flash credentials not set. Add FLASH_EMAIL and FLASH_PASSWORD to .env');
+  }
+
+  console.log('[Flash] Logging in as', FLASH_EMAIL, '...');
+
+  // Flash.co login — try primary endpoint, fall back to alternate
+  const loginPayloads = [
+    {
+      url: 'https://apiv3.flash.tech/api/v1/customer/auth/login',
+      body: { email: FLASH_EMAIL, password: FLASH_PASSWORD, deviceId: FLASH_DEVICE_ID, countryCode: 'IN', channelType: 'WEB' },
+    },
+    {
+      url: 'https://apiv3.flash.tech/api/v1/auth/login',
+      body: { email: FLASH_EMAIL, password: FLASH_PASSWORD, device_id: FLASH_DEVICE_ID, country_code: 'IN' },
+    },
+    {
+      url: 'https://apiv3.flash.tech/api/v1/customer/login',
+      body: { email: FLASH_EMAIL, password: FLASH_PASSWORD, deviceId: FLASH_DEVICE_ID },
+    },
+  ];
+
+  let lastError = '';
+  for (const attempt of loginPayloads) {
+    try {
+      const r = await fetch(attempt.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': 'https://flash.co',
+          'Referer': 'https://flash.co/',
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+          'X-Country-Code': 'IN',
+          'X-Device-Id': FLASH_DEVICE_ID,
+          'X-Timezone': 'Asia/Calcutta',
+        },
+        body: JSON.stringify(attempt.body),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      const data = await r.json();
+      console.log('[Flash] Login response status:', r.status, '| keys:', Object.keys(data));
+
+      // Extract token — Flash may nest it differently
+      const token = data?.token
+                 || data?.authToken
+                 || data?.accessToken
+                 || data?.data?.token
+                 || data?.data?.authToken
+                 || data?.data?.accessToken
+                 || data?.response?.token
+                 || data?.response?.authToken
+                 || data?.result?.token
+                 || null;
+
+      if (token) {
+        flashTokenCache.token     = token;
+        flashTokenCache.expiresAt = Date.now() + (13 * 24 * 60 * 60 * 1000); // 13 days
+        console.log('[Flash] ✅ Token obtained, valid for 13 days. Preview:', token.substring(0, 20) + '...');
+        return token;
+      }
+
+      lastError = `${r.status} — no token field found. Keys: ${JSON.stringify(Object.keys(data))} Sample: ${JSON.stringify(data).substring(0, 200)}`;
+      console.log('[Flash] Login attempt failed at', attempt.url, ':', lastError);
+    } catch (e) {
+      lastError = e.message;
+      console.log('[Flash] Login attempt error at', attempt.url, ':', e.message);
+    }
+  }
+
+  throw new Error('Flash login failed: ' + lastError);
+}
+
+// Pre-warm: attempt login at startup so first user request is fast
+if (FLASH_EMAIL && FLASH_PASSWORD) {
+  getFlashToken().catch(e => console.log('[Flash] Startup login failed (will retry on first request):', e.message));
+}
 
 // ── Encode affiliate URL as base64url (no memory needed for redirect) ──
 function makeGoLink(affiliateUrl) {
@@ -2211,13 +2302,12 @@ app.get('/test-link', async (req, res) => {
 app.get('/compare/search', async (req, res) => {
   const { url: rawUrl } = req.query;
   if (!rawUrl) return res.status(400).json({ error: 'Pass ?url=' });
-  if (!FLASH_AUTH_TOKEN) return res.status(503).json({
-    error: 'FLASH_AUTH_TOKEN not set. Add it to your server environment variables.',
-    setup: 'Run: echo "FLASH_AUTH_TOKEN=your_token" >> ~/.env && pm2 restart smartpickdeals --update-env',
+  if (!FLASH_EMAIL && !FLASH_PASSWORD && !flashTokenCache.token) return res.status(503).json({
+    error: 'Flash credentials not set.',
+    fix: 'Add FLASH_EMAIL and FLASH_PASSWORD to your .env then: pm2 restart smartpickdeals --update-env',
   });
 
   try {
-    // Resolve short URLs (amzn.in, fkrt.co, etc.) before sending to Flash
     let url = rawUrl;
     if (isShortUrl(rawUrl)) {
       try { url = await resolveRedirect(rawUrl); console.log('[Compare] Resolved', rawUrl.substring(0,50), '→', url.substring(0,70)); }
@@ -2225,114 +2315,85 @@ app.get('/compare/search', async (req, res) => {
     }
     console.log('[Compare/Flash] URL:', url);
 
-    // ── Detect source store for isSource tagging ──
     const srcHost  = (() => { try { return new URL(url).hostname.replace('www.',''); } catch { return ''; } })();
     const srcStore = normalizeStore(srcHost.split('.')[0]) || '';
 
-    // ─────────────────────────────────────────────────────────────
-    // Step 1 — Send product URL to Flash.co stream API → get pageHash
-    // Flash returns a SSE stream; we read it all at once and extract
-    // the pageHash (a short ID like "oKNuz-eG") from the stream text.
-    // ─────────────────────────────────────────────────────────────
-    const flashHeaders = {
-      'Authorization':  'Bearer ' + FLASH_AUTH_TOKEN,
-      'Channel-Type':   'web',
-      'Content-Type':   'application/json',
-      'Origin':         'https://flash.co',
-      'Referer':        'https://flash.co/',
-      'User-Agent':     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
-      'X-Country-Code': 'IN',
-      'X-Device-Id':    FLASH_DEVICE_ID,
-      'X-Timezone':     'Asia/Calcutta',
-      'Accept':         'application/json, text/event-stream, */*',
-    };
-
-    const streamParams = new URLSearchParams({
-      source: 'APPEND', context: 'HOME_URL_PASTE',
-      device_type: 'DESKTOP', country_code: 'IN',
-    });
-
-    const sr = await fetch(
-      'https://apiv3.flash.tech/agents/chat/stream?' + streamParams.toString(),
-      { method: 'POST', headers: flashHeaders, body: JSON.stringify({ query: url, context: 'HOME_URL_PASTE' }), signal: AbortSignal.timeout(35000) }
-    );
-
-    if (!sr.ok) {
-      const errText = await sr.text().catch(() => '');
-      console.log('[Compare/Flash] Stream error:', sr.status, errText.substring(0, 150));
-      // 401 = token expired — prompt owner to refresh
-      if (sr.status === 401) return res.status(503).json({
-        error: 'Flash token expired. Update FLASH_AUTH_TOKEN in your server env and restart.',
-        refresh: 'bash ~/update-tokens.sh',
-      });
-      return res.status(502).json({ error: 'Flash stream returned ' + sr.status });
-    }
-
-    const streamText = await sr.text();
-    console.log('[Compare/Flash] Stream length:', streamText.length, 'sample:', streamText.substring(0, 200));
-
-    // Extract pageHash from stream — try URL patterns first, then SSE data lines
-    let pageHash = null;
-    for (const pat of [/product-search\/([A-Za-z0-9_-]{4,})/, /price-compare\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{4,})/]) {
-      const m = streamText.match(pat);
-      if (m) { pageHash = m[1]; break; }
-    }
-    if (!pageHash) {
-      for (const line of streamText.split('\n')) {
-        if (!line.startsWith('data:')) continue;
-        try {
-          const d = JSON.parse(line.slice(5).trim());
-          pageHash = d.pageHash || d.referenceId || d.data?.pageHash || d.data?.referenceId || null;
-          if (pageHash) break;
-        } catch {}
+    // ── Inner function: run Flash search with a given token ──
+    async function runFlashSearch(token) {
+      const flashHeaders = {
+        'Authorization':  'Bearer ' + token,
+        'Channel-Type':   'web',
+        'Content-Type':   'application/json',
+        'Origin':         'https://flash.co',
+        'Referer':        'https://flash.co/',
+        'User-Agent':     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'X-Country-Code': 'IN',
+        'X-Device-Id':    FLASH_DEVICE_ID,
+        'X-Timezone':     'Asia/Calcutta',
+        'Accept':         'application/json, text/event-stream, */*',
+      };
+      const streamParams = new URLSearchParams({ source: 'APPEND', context: 'HOME_URL_PASTE', device_type: 'DESKTOP', country_code: 'IN' });
+      const sr = await fetch(
+        'https://apiv3.flash.tech/agents/chat/stream?' + streamParams.toString(),
+        { method: 'POST', headers: flashHeaders, body: JSON.stringify({ query: url, context: 'HOME_URL_PASTE' }), signal: AbortSignal.timeout(35000) }
+      );
+      if (sr.status === 401) throw Object.assign(new Error('Flash 401'), { is401: true });
+      if (!sr.ok) throw new Error('Flash stream returned ' + sr.status);
+      const streamText = await sr.text();
+      console.log('[Compare/Flash] Stream length:', streamText.length);
+      let pageHash = null;
+      for (const pat of [/product-search\/([A-Za-z0-9_-]{4,})/, /price-compare\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{4,})/]) {
+        const m = streamText.match(pat); if (m) { pageHash = m[1]; break; }
       }
-    }
-
-    if (!pageHash) {
-      console.log('[Compare/Flash] No pageHash found in stream');
-      return res.status(422).json({ error: 'Flash did not return a product hash. The URL may not be supported.', streamSample: streamText.substring(0, 300) });
-    }
-    console.log('[Compare/Flash] pageHash:', pageHash);
-
-    // ─────────────────────────────────────────────────────────────
-    // Step 2 — Fetch price comparison data using the pageHash.
-    // Flash processes async so we poll up to ~30 s until feedbacks arrive.
-    // ─────────────────────────────────────────────────────────────
-    const priceHeaders = { ...flashHeaders, 'Content-Type': undefined };
-    const priceEndpoints = [
-      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
-      'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash,
-    ];
-
-    let rawPriceData = null;
-    // First try — immediate
-    for (const ep of priceEndpoints) {
-      try {
-        const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(10000) });
-        if (r.ok) {
-          const d = await r.json();
-          if ((d?.response?.feedbacks || d?.feedbacks || []).length > 0) { rawPriceData = d; break; }
+      if (!pageHash) {
+        for (const line of streamText.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          try { const d = JSON.parse(line.slice(5).trim()); pageHash = d.pageHash || d.referenceId || d.data?.pageHash || null; if (pageHash) break; } catch {}
         }
-      } catch {}
-    }
-    // Poll up to 12 × 2.5 s = 30 s
-    for (let attempt = 0; attempt < 12 && !rawPriceData; attempt++) {
-      await new Promise(r => setTimeout(r, 2500));
-      for (const ep of priceEndpoints) {
-        try {
-          const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(8000) });
-          if (!r.ok) continue;
-          const d = await r.json();
-          if ((d?.response?.feedbacks || d?.feedbacks || []).length > 0) {
-            rawPriceData = d;
-            console.log('[Compare/Flash] ✅ Prices at poll attempt', attempt + 1);
-            break;
-          }
-        } catch {}
       }
+      if (!pageHash) throw new Error('Flash did not return a product hash. URL may not be supported.');
+      console.log('[Compare/Flash] pageHash:', pageHash);
+      const priceHeaders = { ...flashHeaders, 'Content-Type': undefined };
+      const eps = [
+        'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
+        'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash,
+      ];
+      let rawPriceData = null;
+      for (const ep of eps) {
+        try {
+          const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(10000) });
+          if (r.status === 401) throw Object.assign(new Error('Flash 401'), { is401: true });
+          if (r.ok) { const d = await r.json(); if ((d?.response?.feedbacks || d?.feedbacks || []).length > 0) { rawPriceData = d; break; } }
+        } catch(e) { if (e.is401) throw e; }
+      }
+      for (let i = 0; i < 12 && !rawPriceData; i++) {
+        await new Promise(r => setTimeout(r, 2500));
+        for (const ep of eps) {
+          try {
+            const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(8000) });
+            if (r.status === 401) throw Object.assign(new Error('Flash 401'), { is401: true });
+            if (!r.ok) continue;
+            const d = await r.json();
+            if ((d?.response?.feedbacks || d?.feedbacks || []).length > 0) { rawPriceData = d; console.log('[Compare/Flash] ✅ Prices at poll', i+1); break; }
+          } catch(e) { if (e.is401) throw e; }
+        }
+      }
+      if (!rawPriceData) throw new Error('Flash timed out — no price data after 30 s.');
+      return { rawPriceData, pageHash };
     }
 
-    if (!rawPriceData) return res.status(504).json({ error: 'Flash timed out — no price data received after 30 s.', pageHash });
+    // ── Get token, run, auto-retry once on 401 ──
+    let token = await getFlashToken();
+    let rawPriceData, pageHash;
+    try {
+      ({ rawPriceData, pageHash } = await runFlashSearch(token));
+    } catch(e) {
+      if (e.is401) {
+        console.log('[Compare/Flash] 401 — refreshing token and retrying...');
+        token = await getFlashToken(true);
+        ({ rawPriceData, pageHash } = await runFlashSearch(token));
+      } else { throw e; }
+    }
 
     // ─────────────────────────────────────────────────────────────
     // Step 3 — Parse Flash feedbacks into the standard store shape.
@@ -2449,14 +2510,14 @@ app.get('/compare/search', async (req, res) => {
 app.get('/compare/debug', async (req, res) => {
   const { url: rawUrl } = req.query;
   if (!rawUrl) return res.json({ usage: 'Add ?url=YOUR_PRODUCT_URL', example: '/compare/debug?url=https://amzn.in/d/00aqArIu' });
-  if (!FLASH_AUTH_TOKEN) return res.status(503).json({ error: 'FLASH_AUTH_TOKEN not set' });
-
   try {
     let url = rawUrl;
     if (isShortUrl(rawUrl)) { try { url = await resolveRedirect(rawUrl); } catch {} }
+    const token = await getFlashToken().catch(() => flashTokenCache.token);
+    if (!token) return res.status(503).json({ error: 'No Flash token available. Set FLASH_EMAIL + FLASH_PASSWORD in .env' });
 
     const flashHeaders = {
-      'Authorization': 'Bearer ' + FLASH_AUTH_TOKEN,
+      'Authorization': 'Bearer ' + token,
       'Channel-Type': 'web', 'Content-Type': 'application/json',
       'Origin': 'https://flash.co', 'Referer': 'https://flash.co/',
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
