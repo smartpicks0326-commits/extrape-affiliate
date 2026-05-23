@@ -3,6 +3,7 @@ const express  = require('express');
 const cors     = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const mongoose = require('mongoose');
+const puppeteer = require('puppeteer');
 
 const app = express();
 app.use(express.json());
@@ -94,7 +95,84 @@ p{font-size:14px;color:#b0ada8;line-height:1.6;margin:0;}
 });
 
 
-// ── Encode affiliate URL as base64url (no memory needed for redirect) ──
+// ── Puppeteer Flash.co scraper ──
+// Runs all Flash API calls from WITHIN a real headless Chrome browser.
+// Chrome's TLS fingerprint passes Flash.co WAF — server IP doesn't matter.
+
+let flashBrowser     = null;
+let flashBrowserBusy = false;
+const flashWaitQueue = [];
+
+async function getFlashBrowser() {
+  if (flashBrowser && flashBrowser.isConnected()) return flashBrowser;
+  console.log('[Flash/Puppeteer] Launching Chrome...');
+  flashBrowser = await puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu','--single-process','--no-zygote','--disable-extensions','--mute-audio'],
+  });
+  flashBrowser.on('disconnected', () => {
+    console.log('[Flash/Puppeteer] Browser disconnected');
+    flashBrowser = null; flashBrowserBusy = false;
+    while (flashWaitQueue.length) flashWaitQueue.shift()();
+  });
+  try {
+    const warm = await flashBrowser.newPage();
+    await warm.goto('https://flash.co', { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await warm.close();
+    console.log('[Flash/Puppeteer] ✅ Chrome ready');
+  } catch(e) { console.log('[Flash/Puppeteer] Warm-up skipped:', e.message); }
+  return flashBrowser;
+}
+
+function withFlashBrowser(fn) {
+  return new Promise((resolve, reject) => {
+    const run = async () => {
+      flashBrowserBusy = true;
+      try { resolve(await fn()); } catch(e) { reject(e); }
+      finally { flashBrowserBusy = false; if (flashWaitQueue.length) flashWaitQueue.shift()(); }
+    };
+    if (!flashBrowserBusy) run(); else flashWaitQueue.push(run);
+  });
+}
+
+async function flashSearchPuppeteer(productUrl) {
+  return withFlashBrowser(async () => {
+    const browser = await getFlashBrowser();
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 800 });
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36');
+    try {
+      await page.goto('https://flash.co', { waitUntil: 'domcontentloaded', timeout: 20000 });
+      const snap = { url: productUrl, token: flashTokenCache.token, deviceId: flashTokenCache.deviceId || 'web-spd', userId: flashTokenCache.userId || '' };
+      const result = await page.evaluate(async ({ url, token, deviceId, userId }) => {
+        const ua = navigator.userAgent;
+        const idempotencyKey = btoa(unescape(encodeURIComponent(userId + '_' + url + '_WEB')));
+        const headers = { 'Authorization':'Bearer '+token,'Channel-Type':'web','Content-Type':'application/json','Accept':'text/event-stream','Origin':'https://flash.co','X-Country-Code':'IN','X-Device-Id':deviceId,'X-Timezone':'Asia/Calcutta','X-Idempotency-Key':idempotencyKey };
+        const streamParams = new URLSearchParams({ source:'APPEND',context:'HOME_URL_PASTE',user_agent:ua,device_type:'DESKTOP',country_code:'IN' });
+        let streamStatus, streamText;
+        try { const sr = await fetch('https://api.flash.co/agents/chat/stream?'+streamParams,{method:'POST',headers,body:JSON.stringify({query:url,context:'HOME_URL_PASTE'})}); streamStatus=sr.status; streamText=await sr.text(); } catch(e) { return {error:'Stream failed: '+e.message}; }
+        if (streamStatus===401) return {error:'TOKEN_EXPIRED'};
+        if (streamStatus!==200) return {error:'Stream '+streamStatus, sample:(streamText||'').substring(0,200)};
+        let pageHash=null;
+        for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/,/product-search\/([A-Za-z0-9_-]{4,})/,/"pageHash":"([A-Za-z0-9_-]{4,})"/]) { const m=streamText.match(pat); if(m){pageHash=m[1];break;} }
+        if (!pageHash) return {error:'No pageHash',streamSample:streamText.substring(0,400)};
+        const ph={...headers}; delete ph['Content-Type']; ph['Accept']='application/json';
+        const eps=['https://api.flash.co/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId='+pageHash,'https://api.flash.co/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId='+pageHash];
+        for (let i=0;i<14;i++) {
+          await new Promise(r=>setTimeout(r,2500));
+          for (const ep of eps) { try { const pr=await fetch(ep,{headers:ph}); if(pr.status===401)return{error:'TOKEN_EXPIRED'}; if(!pr.ok)continue; const data=await pr.json(); const fbs=data?.response?.feedbacks||data?.feedbacks||[]; if(fbs.length>0)return{ok:true,pageHash,data,pollAttempt:i+1}; } catch{} }
+        }
+        return {error:'TIMEOUT',pageHash};
+      }, snap);
+      console.log('[Flash/Puppeteer]', result?.ok ? `✅ pageHash=${result.pageHash} poll=${result.pollAttempt}` : JSON.stringify(result).substring(0,150));
+      return result;
+    } finally { await page.close().catch(()=>{}); }
+  });
+}
+
+getFlashBrowser().catch(e => console.log('[Flash/Puppeteer] Startup launch failed (will retry):', e.message));
+
+// ── Encode affiliate URL ──
 function makeGoLink(affiliateUrl) {
   // base64url-encode the full affiliate URL
   // Cloudflare Pages function decodes it and redirects directly
@@ -2305,99 +2383,20 @@ app.get('/compare/search', async (req, res) => {
     const srcHost  = (() => { try { return new URL(url).hostname.replace('www.',''); } catch { return ''; } })();
     const srcStore = normalizeStore(srcHost.split('.')[0]) || '';
 
-    // ── Inner function: run Flash search with a given token ──
-    async function runFlashSearch(token) {
-      const ua       = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
-      const deviceId = flashTokenCache.deviceId || FLASH_DEVICE_ID || 'web-spd-backend';
-      const userId   = flashTokenCache.userId   || '';
-      // X-Idempotency-Key = base64(userId_url_WEB) — exactly what browser sends
-      const idempotencyKey = Buffer.from(userId + '_' + url + '_WEB').toString('base64');
-      const flashHeaders = {
-        'Authorization':     'Bearer ' + token,
-        'Channel-Type':      'web',
-        'Content-Type':      'application/json',
-        'Accept':            'text/event-stream',
-        'Origin':            'https://flash.co',
-        'X-Country-Code':    'IN',
-        'X-Device-Id':       deviceId,
-        'X-Timezone':        'Asia/Calcutta',
-        'X-Idempotency-Key': idempotencyKey,
-      };
-      // Correct domain: api.flash.co (apiv3.flash.tech is IP-blocked for servers)
-      // user_agent goes as query param, not header
-      const streamParams = new URLSearchParams({
-        source: 'APPEND', context: 'HOME_URL_PASTE',
-        user_agent: ua, device_type: 'DESKTOP', country_code: 'IN',
-      });
-      const sr = await fetch(
-        'https://api.flash.co/agents/chat/stream?' + streamParams.toString(),
-        { method: 'POST', headers: flashHeaders, body: JSON.stringify({ query: url, context: 'HOME_URL_PASTE' }), signal: AbortSignal.timeout(35000) }
-      );
-      if (sr.status === 401) throw Object.assign(new Error('Flash 401'), { is401: true });
-      if (!sr.ok) {
-        const txt = await sr.text().catch(() => '');
-        throw new Error('Flash stream ' + sr.status + ': ' + txt.substring(0, 150));
-      }
-      const streamText = await sr.text();
-      console.log('[Compare/Flash] Stream length:', streamText.length, '| sample:', streamText.substring(0, 120));
-      let pageHash = null;
-      for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/, /product-search\/([A-Za-z0-9_-]{4,})/, /price-compare\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{4,})/, /"pageHash":"([A-Za-z0-9_-]{4,})"/, /"referenceId":"([A-Za-z0-9_-]{4,})"/]) {
-        const m = streamText.match(pat); if (m) { pageHash = m[1]; break; }
-      }
-      if (!pageHash) {
-        for (const line of streamText.split('\n')) {
-          if (!line.startsWith('data:')) continue;
-          try { const d = JSON.parse(line.slice(5).trim()); pageHash = d.pageHash || d.referenceId || d.data?.pageHash || null; if (pageHash) break; } catch {}
-        }
-      }
-      if (!pageHash) {
-        console.log('[Compare/Flash] No pageHash. Stream:', streamText.substring(0, 400));
-        throw new Error('Flash did not return a product hash. URL may not be supported.');
-      }
-      console.log('[Compare/Flash] pageHash:', pageHash);
-      // Price fetch also on api.flash.co
-      const priceHeaders = { ...flashHeaders, 'Content-Type': undefined, 'Accept': 'application/json' };
-      const eps = [
-        'https://api.flash.co/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
-        'https://api.flash.co/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash,
-      ];
-      let rawPriceData = null;
-      for (const ep of eps) {
-        try {
-          const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(10000) });
-          if (r.status === 401) throw Object.assign(new Error('Flash 401'), { is401: true });
-          if (r.ok) { const d = await r.json(); if ((d?.response?.feedbacks || d?.feedbacks || []).length > 0) { rawPriceData = d; break; } }
-        } catch(e) { if (e.is401) throw e; }
-      }
-      for (let i = 0; i < 12 && !rawPriceData; i++) {
-        await new Promise(r => setTimeout(r, 2500));
-        for (const ep of eps) {
-          try {
-            const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(8000) });
-            if (r.status === 401) throw Object.assign(new Error('Flash 401'), { is401: true });
-            if (!r.ok) continue;
-            const d = await r.json();
-            if ((d?.response?.feedbacks || d?.feedbacks || []).length > 0) { rawPriceData = d; console.log('[Compare/Flash] ✅ Prices at poll', i+1); break; }
-          } catch(e) { if (e.is401) throw e; }
-        }
-      }
-      if (!rawPriceData) throw new Error('Flash timed out — no price data after 30 s.');
-      return { rawPriceData, pageHash };
-    }
+    // ── Run Flash search via Puppeteer (real Chrome browser, bypasses TLS fingerprint block) ──
+    if (!flashTokenCache.token) return res.status(503).json({ error: 'Flash token not set.', fix: 'Visit https://api.smartpickdeals.live/flash/token-page' });
+    const flashResult = await flashSearchPuppeteer(url);
 
-    // ── Get token and run search. On 401: clear cache so user knows to refresh via bookmarklet ──
-    const token = getFlashToken();
-    let rawPriceData, pageHash;
-    try {
-      ({ rawPriceData, pageHash } = await runFlashSearch(token));
-    } catch(e) {
-      if (e.is401) {
-        flashTokenCache.token = ''; // clear so status page shows "not set"
-        console.log('[Compare/Flash] 401 — token expired. Owner should visit /flash/token-page to refresh.');
-        return res.status(503).json({ error: 'Flash token expired.', fix: 'Visit https://api.smartpickdeals.live/flash/token-page' });
-      }
-      throw e;
+    if (!flashResult) return res.status(500).json({ error: 'Puppeteer returned no result' });
+    if (flashResult.error === 'TOKEN_EXPIRED') {
+      flashTokenCache.token = '';
+      return res.status(503).json({ error: 'Flash token expired.', fix: 'Visit https://api.smartpickdeals.live/flash/token-page and click the bookmarklet on flash.co' });
     }
+    if (flashResult.error) return res.status(flashResult.error === 'TIMEOUT' ? 504 : 502).json({ error: flashResult.error, pageHash: flashResult.pageHash });
+
+    const rawPriceData = flashResult.data;
+    const pageHash     = flashResult.pageHash;
+
 
     // ─────────────────────────────────────────────────────────────
     // Step 3 — Parse Flash feedbacks into the standard store shape.
@@ -2514,89 +2513,26 @@ app.get('/compare/search', async (req, res) => {
 app.get('/compare/debug', async (req, res) => {
   const { url: rawUrl } = req.query;
   if (!rawUrl) return res.json({ usage: 'Add ?url=YOUR_PRODUCT_URL', example: '/compare/debug?url=https://amzn.in/d/00aqArIu' });
+  if (!flashTokenCache.token) return res.status(503).json({ error: 'No Flash token. Visit https://api.smartpickdeals.live/flash/token-page' });
   try {
     let url = rawUrl;
     if (isShortUrl(rawUrl)) { try { url = await resolveRedirect(rawUrl); } catch {} }
-    const token = flashTokenCache.token;
-    if (!token) return res.status(503).json({ error: 'No Flash token. Visit https://api.smartpickdeals.live/flash/token-page' });
-
-    const ua       = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
-    const deviceId = flashTokenCache.deviceId || FLASH_DEVICE_ID || 'web-spd-backend';
-    const userId   = flashTokenCache.userId || '';
-    const idempotencyKey = Buffer.from(userId + '_' + url + '_WEB').toString('base64');
-    const flashHeaders = {
-      'Authorization': 'Bearer ' + token,
-      'Channel-Type': 'web', 'Content-Type': 'application/json',
-      'Accept': 'text/event-stream',
-      'Origin': 'https://flash.co',
-      'X-Country-Code': 'IN', 'X-Device-Id': deviceId,
-      'X-Timezone': 'Asia/Calcutta', 'X-Idempotency-Key': idempotencyKey,
-    };
-    const streamParams = new URLSearchParams({ source: 'APPEND', context: 'HOME_URL_PASTE', user_agent: ua, device_type: 'DESKTOP', country_code: 'IN' });
-
-    // Step 1: get pageHash + threadId from stream
-    const sr = await fetch(
-      'https://api.flash.co/agents/chat/stream?' + streamParams.toString(),
-      { method: 'POST', headers: flashHeaders, body: JSON.stringify({ query: url, context: 'HOME_URL_PASTE' }), signal: AbortSignal.timeout(35000) }
-    );
-    const streamText = await sr.text();
-    if (!sr.ok) return res.json({ step: 'stream', streamStatus: sr.status, error: streamText.substring(0, 200) });
-
-    // Extract pageHash
-    let pageHash = null;
-    for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/, /product-search\/([A-Za-z0-9_-]{4,})/, /price-compare\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{4,})/]) {
-      const m = streamText.match(pat); if (m) { pageHash = m[1]; break; }
-    }
-
-    // Extract threadId from ANALYTICS_DATA event
-    let threadId = null;
-    try { const m = streamText.match(/"threadId"\s*:\s*(\d+)/); if (m) threadId = m[1]; } catch {}
-
-    if (!pageHash) return res.json({ step: 'stream', streamStatus: sr.status, pageHash: null, threadId, streamSample: streamText.substring(0, 800) });
-
-    // Step 2: poll feedback endpoint up to 30s (same as main compare)
-    const priceHeaders = { ...flashHeaders, 'Content-Type': undefined, 'Accept': 'application/json' };
-    const eps = [
-      'https://api.flash.co/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
-      'https://api.flash.co/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=' + pageHash,
-    ];
-
-    let raw = null;
-    for (let attempt = 0; attempt < 12; attempt++) {
-      await new Promise(r => setTimeout(r, 2500));
-      for (const ep of eps) {
-        try {
-          const pr = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(8000) });
-          if (!pr.ok) continue;
-          const d = await pr.json();
-          const fbs = d?.response?.feedbacks || d?.feedbacks || [];
-          if (fbs.length > 0) { raw = d; console.log('[Debug] Got feedbacks at poll', attempt + 1); break; }
-        } catch {}
-      }
-      if (raw) break;
-    }
-
-    if (!raw) return res.json({ resolvedUrl: url, pageHash, threadId, streamStatus: sr.status, error: 'Feedbacks empty after 30s polling', streamSample: streamText.substring(0, 400) });
-
-    const feedbacks = raw?.response?.feedbacks || raw?.feedbacks || [];
+    console.log('[Debug] Running Puppeteer search for:', url);
+    const result = await flashSearchPuppeteer(url);
+    if (!result) return res.json({ error: 'No result from Puppeteer' });
+    if (result.error) return res.json({ error: result.error, pageHash: result.pageHash, streamSample: result.streamSample, sample: result.sample });
+    const feedbacks = result.data?.response?.feedbacks || result.data?.feedbacks || [];
     return res.json({
       resolvedUrl:    url,
-      pageHash,
-      threadId,
-      streamStatus:   sr.status,
+      pageHash:       result.pageHash,
+      pollAttempt:    result.pollAttempt,
       feedbackCount:  feedbacks.length,
-      topLevelKeys:   Object.keys(raw),
-      responseKeys:   raw?.response ? Object.keys(raw.response) : [],
-      feedbackSample: feedbacks.slice(0, 2).map(f => ({
-        keys: Object.keys(f),
-        dataKeys: f.data ? Object.keys(f.data) : [],
-        sample: JSON.stringify(f).substring(0, 800),
-      })),
-      fullRaw: raw,
+      topLevelKeys:   Object.keys(result.data || {}),
+      responseKeys:   result.data?.response ? Object.keys(result.data.response) : [],
+      feedbackSample: feedbacks.slice(0, 2).map(f => ({ keys: Object.keys(f), dataKeys: f.data ? Object.keys(f.data) : [], sample: JSON.stringify(f).substring(0, 800) })),
+      fullRaw: result.data,
     });
-  } catch(e) {
-    return res.status(500).json({ error: e.message });
-  }
+  } catch(e) { return res.status(500).json({ error: e.message }); }
 });
 // Buyhatke debug — shows full two-step diagnostic for any product URL
 // ── Buyhatke product info — step 1 only, for browser-side fetching ──
