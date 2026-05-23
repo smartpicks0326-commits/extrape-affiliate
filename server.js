@@ -13,99 +13,76 @@ const EXTRAPE_ACCESS_TOKEN   = process.env.EXTRAPE_ACCESS_TOKEN   || '';
 const EXTRAPE_REMEMBER_TOKEN = process.env.EXTRAPE_REMEMBER_TOKEN || '';
 const FRONTEND_URL            = process.env.FRONTEND_URL           || 'https://smartpickdeals.live';
 const SERP_API_KEY            = process.env.SERP_API_KEY           || '';
-const FLASH_EMAIL             = process.env.FLASH_EMAIL            || '';
-const FLASH_PASSWORD          = process.env.FLASH_PASSWORD         || '';
-const FLASH_DEVICE_ID         = process.env.FLASH_DEVICE_ID        || 'web-spd-' + Math.random().toString(36).slice(2,10);
+const FLASH_DEVICE_ID         = process.env.FLASH_DEVICE_ID        || 'web-spd-backend';
+const ADMIN_SECRET            = process.env.ADMIN_SECRET           || 'spd-admin-2024';
 
-// ── Flash.co auto-login token manager ──
-// Logs in with FLASH_EMAIL + FLASH_PASSWORD, caches the token in memory,
-// auto-refreshes whenever a 401 is received. No manual token updates needed.
-const flashTokenCache = { token: process.env.FLASH_AUTH_TOKEN || '', expiresAt: 0 };
+// ── Flash token — in-memory cache, loaded from .env at startup ──
+// Update via the bookmarklet: visit https://api.smartpickdeals.live/flash/token-page
+// No server restart or .env editing needed when refreshing the token.
+const flashTokenCache = { token: process.env.FLASH_AUTH_TOKEN || '' };
 
-async function getFlashToken(forceRefresh = false) {
-  const now = Date.now();
-  // Return cached token if still valid (we treat tokens as valid for 13 days)
-  if (!forceRefresh && flashTokenCache.token && now < flashTokenCache.expiresAt) {
-    return flashTokenCache.token;
-  }
+function getFlashToken() {
+  if (!flashTokenCache.token) throw new Error('Flash token not set. Visit https://api.smartpickdeals.live/flash/token-page for setup.');
+  return flashTokenCache.token;
+}
 
-  if (!FLASH_EMAIL || !FLASH_PASSWORD) {
-    throw new Error('Flash credentials not set. Add FLASH_EMAIL and FLASH_PASSWORD to .env');
-  }
-
-  console.log('[Flash] Logging in as', FLASH_EMAIL, '...');
-
-  // Flash.co login — try primary endpoint, fall back to alternate
-  const loginPayloads = [
-    {
-      url: 'https://apiv3.flash.tech/api/v1/customer/auth/login',
-      body: { email: FLASH_EMAIL, password: FLASH_PASSWORD, deviceId: FLASH_DEVICE_ID, countryCode: 'IN', channelType: 'WEB' },
-    },
-    {
-      url: 'https://apiv3.flash.tech/api/v1/auth/login',
-      body: { email: FLASH_EMAIL, password: FLASH_PASSWORD, device_id: FLASH_DEVICE_ID, country_code: 'IN' },
-    },
-    {
-      url: 'https://apiv3.flash.tech/api/v1/customer/login',
-      body: { email: FLASH_EMAIL, password: FLASH_PASSWORD, deviceId: FLASH_DEVICE_ID },
-    },
-  ];
-
-  let lastError = '';
-  for (const attempt of loginPayloads) {
-    try {
-      const r = await fetch(attempt.url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://flash.co',
-          'Referer': 'https://flash.co/',
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-          'X-Country-Code': 'IN',
-          'X-Device-Id': FLASH_DEVICE_ID,
-          'X-Timezone': 'Asia/Calcutta',
-        },
-        body: JSON.stringify(attempt.body),
-        signal: AbortSignal.timeout(10000),
-      });
-
-      const data = await r.json();
-      console.log('[Flash] Login response status:', r.status, '| keys:', Object.keys(data));
-
-      // Extract token — Flash may nest it differently
-      const token = data?.token
-                 || data?.authToken
-                 || data?.accessToken
-                 || data?.data?.token
-                 || data?.data?.authToken
-                 || data?.data?.accessToken
-                 || data?.response?.token
-                 || data?.response?.authToken
-                 || data?.result?.token
-                 || null;
-
-      if (token) {
-        flashTokenCache.token     = token;
-        flashTokenCache.expiresAt = Date.now() + (13 * 24 * 60 * 60 * 1000); // 13 days
-        console.log('[Flash] ✅ Token obtained, valid for 13 days. Preview:', token.substring(0, 20) + '...');
-        return token;
-      }
-
-      lastError = `${r.status} — no token field found. Keys: ${JSON.stringify(Object.keys(data))} Sample: ${JSON.stringify(data).substring(0, 200)}`;
-      console.log('[Flash] Login attempt failed at', attempt.url, ':', lastError);
-    } catch (e) {
-      lastError = e.message;
-      console.log('[Flash] Login attempt error at', attempt.url, ':', e.message);
+// ── POST /flash/update-token ── (called by the bookmarklet from the owner's browser)
+app.post('/flash/update-token', async (req, res) => {
+  const { token, secret } = req.body;
+  if (!token) return res.status(400).json({ error: 'Missing token' });
+  if (secret !== ADMIN_SECRET) return res.status(401).json({ error: 'Wrong secret' });
+  flashTokenCache.token = token;
+  console.log('[Flash] ✅ Token updated via bookmarklet. Preview:', token.substring(0, 20) + '...');
+  const fs = require('fs');
+  const envPath = require('path').join(process.env.HOME || '/home/smartpick', 'extrape-affiliate', '.env');
+  try {
+    let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+    if (envContent.includes('FLASH_AUTH_TOKEN=')) {
+      envContent = envContent.replace(/FLASH_AUTH_TOKEN=.*/g, 'FLASH_AUTH_TOKEN=' + token);
+    } else {
+      envContent += '\nFLASH_AUTH_TOKEN=' + token + '\n';
     }
-  }
+    fs.writeFileSync(envPath, envContent);
+    console.log('[Flash] Token written to .env');
+  } catch(e) { console.log('[Flash] Could not write .env:', e.message); }
+  return res.json({ ok: true, message: 'Token updated! Good for ~14 days.' });
+});
 
-  throw new Error('Flash login failed: ' + lastError);
-}
+// ── GET /flash/token-status ──
+app.get('/flash/token-status', (req, res) => {
+  res.json({ set: !!flashTokenCache.token, preview: flashTokenCache.token ? flashTokenCache.token.substring(0,16)+'...' : null });
+});
 
-// Pre-warm: attempt login at startup so first user request is fast
-if (FLASH_EMAIL && FLASH_PASSWORD) {
-  getFlashToken().catch(e => console.log('[Flash] Startup login failed (will retry on first request):', e.message));
-}
+// ── GET /flash/token-page ── bookmarklet instructions page
+app.get('/flash/token-page', (req, res) => {
+  const secret = ADMIN_SECRET;
+  const backend = 'https://api.smartpickdeals.live';
+  const bm = `(function(){var t=null;try{t=localStorage.getItem('authToken')||localStorage.getItem('flash_auth_token')||localStorage.getItem('token')||localStorage.getItem('accessToken');}catch(e){}if(!t){var m=document.cookie.match(/(?:^|;\\s*)(?:authToken|flash_auth_token|token)=([^;]+)/);if(m)t=decodeURIComponent(m[1]);}if(!t){var ss=document.querySelectorAll('script');for(var i=0;i<ss.length;i++){var m2=ss[i].textContent.match(/"(?:authToken|token)":\\s*"(eyJ[^"]{20,})"/);if(m2){t=m2[1];break;}}}if(!t){alert('Token not found. Make sure you are logged into flash.co.');return;}fetch('${backend}/flash/update-token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t,secret:'${secret}'})}).then(function(r){return r.json();}).then(function(d){alert(d.ok?'✅ Smart Pick Deals token updated! Good for ~14 days.':'❌ '+d.error);}).catch(function(e){alert('❌ '+e.message);});})()`;
+  res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Flash Token Updater</title>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0f;color:#f0ede8;max-width:600px;margin:60px auto;padding:0 24px;}
+h1{font-size:22px;margin-bottom:6px;}.sub{color:#6b6878;font-size:14px;margin-bottom:32px;}
+.card{background:#13131a;border:1px solid #1e1e2e;border-radius:16px;padding:28px;margin-bottom:20px;}
+h2{font-size:14px;font-weight:700;margin-bottom:18px;color:#ff9a5c;text-transform:uppercase;letter-spacing:.06em;}
+.step{display:flex;gap:14px;margin-bottom:16px;}.num{background:rgba(255,107,43,.12);border:1px solid rgba(255,107,43,.25);color:#ff6b2b;font-weight:800;font-size:12px;width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+p{font-size:14px;color:#b0ada8;line-height:1.6;margin:0;}
+.bm{display:inline-block;background:#ff6b2b;color:#fff;font-weight:700;font-size:15px;padding:13px 28px;border-radius:12px;text-decoration:none;margin:10px 0;box-shadow:0 4px 20px rgba(255,107,43,.35);}
+.bm:hover{background:#ff9a5c;}.hint{font-size:12px;color:#6b6878;margin-top:8px;}
+.status{background:#0a0a0f;border:1px solid #1e1e2e;border-radius:10px;padding:14px 18px;font-family:monospace;font-size:13px;}
+.ok{color:#29d87a;}.badge{display:inline-block;background:rgba(41,216,122,.1);border:1px solid rgba(41,216,122,.2);color:#29d87a;font-size:11px;font-weight:700;padding:2px 10px;border-radius:999px;margin-left:8px;}</style></head>
+<body><h1>⚡ Flash Token Updater</h1><p class="sub">Refresh your Smart Pick Deals token in 5 seconds</p>
+<div class="card"><h2>Step 1 — One-time setup</h2>
+<div class="step"><div class="num">1</div><p>Drag the button below to your browser bookmarks bar</p></div>
+<a class="bm" href="javascript:${encodeURIComponent(bm)}">⚡ Update SPD Flash Token</a>
+<p class="hint">Can't drag? Right-click → Bookmark this link</p></div>
+<div class="card"><h2>Step 2 — Every ~14 days (takes 5 seconds)</h2>
+<div class="step"><div class="num">1</div><p>Go to <a href="https://flash.co" target="_blank" style="color:#ff9a5c">flash.co</a> and make sure you're logged in</p></div>
+<div class="step"><div class="num">2</div><p>Click the <strong>⚡ Update SPD Flash Token</strong> bookmark</p></div>
+<div class="step"><div class="num">3</div><p>See <strong>"✅ Token updated!"</strong> popup — done</p></div></div>
+<div class="card"><h2>Current status</h2><div class="status" id="st">Checking...</div></div>
+<script>fetch('/flash/token-status').then(r=>r.json()).then(d=>{document.getElementById('st').innerHTML=d.set?'<span class="ok">✅ Token active</span><span class="badge">Set</span><br/><small style="color:#6b6878">Preview: '+d.preview+'</small>':'⚠️ No token yet. Follow steps above.';}).catch(()=>{document.getElementById('st').textContent='Could not reach backend.';});</script>
+</body></html>`);
+});
+
 
 // ── Encode affiliate URL as base64url (no memory needed for redirect) ──
 function makeGoLink(affiliateUrl) {
@@ -2302,9 +2279,9 @@ app.get('/test-link', async (req, res) => {
 app.get('/compare/search', async (req, res) => {
   const { url: rawUrl } = req.query;
   if (!rawUrl) return res.status(400).json({ error: 'Pass ?url=' });
-  if (!FLASH_EMAIL && !FLASH_PASSWORD && !flashTokenCache.token) return res.status(503).json({
-    error: 'Flash credentials not set.',
-    fix: 'Add FLASH_EMAIL and FLASH_PASSWORD to your .env then: pm2 restart smartpickdeals --update-env',
+  if (!flashTokenCache.token) return res.status(503).json({
+    error: 'Flash token not set.',
+    fix: 'Visit https://api.smartpickdeals.live/flash/token-page and follow the bookmarklet setup.',
   });
 
   try {
@@ -2382,17 +2359,18 @@ app.get('/compare/search', async (req, res) => {
       return { rawPriceData, pageHash };
     }
 
-    // ── Get token, run, auto-retry once on 401 ──
-    let token = await getFlashToken();
+    // ── Get token and run search. On 401: clear cache so user knows to refresh via bookmarklet ──
+    const token = getFlashToken();
     let rawPriceData, pageHash;
     try {
       ({ rawPriceData, pageHash } = await runFlashSearch(token));
     } catch(e) {
       if (e.is401) {
-        console.log('[Compare/Flash] 401 — refreshing token and retrying...');
-        token = await getFlashToken(true);
-        ({ rawPriceData, pageHash } = await runFlashSearch(token));
-      } else { throw e; }
+        flashTokenCache.token = ''; // clear so status page shows "not set"
+        console.log('[Compare/Flash] 401 — token expired. Owner should visit /flash/token-page to refresh.');
+        return res.status(503).json({ error: 'Flash token expired.', fix: 'Visit https://api.smartpickdeals.live/flash/token-page' });
+      }
+      throw e;
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -2513,8 +2491,8 @@ app.get('/compare/debug', async (req, res) => {
   try {
     let url = rawUrl;
     if (isShortUrl(rawUrl)) { try { url = await resolveRedirect(rawUrl); } catch {} }
-    const token = await getFlashToken().catch(() => flashTokenCache.token);
-    if (!token) return res.status(503).json({ error: 'No Flash token available. Set FLASH_EMAIL + FLASH_PASSWORD in .env' });
+    const token = flashTokenCache.token;
+    if (!token) return res.status(503).json({ error: 'No Flash token. Visit https://api.smartpickdeals.live/flash/token-page' });
 
     const flashHeaders = {
       'Authorization': 'Bearer ' + token,
