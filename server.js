@@ -172,11 +172,19 @@ async function flashSearchPuppeteer(productUrl) {
         for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/, /product-search\/([A-Za-z0-9_-]{4,})/, /"pageHash":"([A-Za-z0-9_-]{4,})"/]) {
           const m = streamText.match(pat); if (m) { pageHash = m[1]; break; }
         }
-        return { pageHash, streamSample: streamText.substring(0, 300) };
+        return {
+          pageHash,
+          isFallback: streamText.includes('products-fallback') || streamText.includes('PRODUCTS_FALLBACK'),
+          streamSample: streamText.substring(0, 300),
+        };
       }, snap);
 
       if (streamResult.error) return streamResult;
-      if (!streamResult.pageHash) return { error: 'No pageHash', streamSample: streamResult.streamSample };
+
+      // Flash has no comparison data for this product
+      if (!streamResult.pageHash || streamResult.isFallback) {
+        return { error: 'FLASH_NO_DATA', message: 'Flash.co has no comparison data for this product. This is a Flash.co coverage limitation.' };
+      }
 
       const pageHash = streamResult.pageHash;
       console.log('[Flash/Puppeteer] pageHash:', pageHash, '— navigating to product page...');
@@ -2632,7 +2640,10 @@ app.get('/compare/search', async (req, res) => {
       flashTokenCache.token = '';
       return res.status(503).json({ error: 'Flash token expired.', fix: 'Visit https://api.smartpickdeals.live/flash/token-page and click the bookmarklet on flash.co' });
     }
-    if (flashResult.error) return res.status(flashResult.error === 'TIMEOUT' ? 504 : 502).json({ error: flashResult.error, pageHash: flashResult.pageHash });
+    if (flashResult.error === 'FLASH_NO_DATA') {
+      return res.status(404).json({ error: 'Flash.co has no comparison data for this product. Try a popular product from Amazon, Myntra, Flipkart or Zepto.' });
+    }
+    if (flashResult.error) return res.status(502).json({ error: flashResult.error, pageHash: flashResult.pageHash });
 
     const rawPriceData = flashResult.data;
     const pageHash     = flashResult.pageHash;
