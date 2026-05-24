@@ -202,50 +202,113 @@ async function flashSearchPuppeteer(productUrl) {
       // Give dynamic content a moment to finish rendering
       await new Promise(r => setTimeout(r, 2000));
 
-      // Step 3 — extract product info + store prices from DOM
+      // Step 3 — extract store prices from DOM with proper filtering
       const extracted = await page.evaluate(() => {
-        // Product name — try multiple selectors
-        const nameEl = document.querySelector('h1, [class*="product-name"], [class*="productName"], [class*="title"]');
-        const productName = nameEl ? nameEl.textContent.trim() : '';
+        // UI labels that are NOT store names — skip these
+        function isUILabel(text) {
+          const lower = text.toLowerCase().trim();
+          return (
+            lower === 'wallet' ||
+            lower === 'visit' ||
+            lower === 'open' ||
+            lower === 'buy now' ||
+            lower === 'buy' ||
+            lower === 'new' ||
+            lower === 'deal' ||
+            lower === 'sponsored' ||
+            lower === 'recommended' ||
+            lower.includes('came from here') ||
+            lower.includes('flash ai') ||
+            lower.includes('just saved') ||
+            lower.includes('ai score') ||
+            lower.includes('flash score') ||
+            lower.includes('best price') ||
+            lower.startsWith('save ₹') ||
+            lower.startsWith('save rs') ||
+            lower.startsWith('₹') ||
+            lower.startsWith('rs.') ||
+            /^[\d\s%,₹]+$/.test(lower) ||
+            lower.length < 2 ||
+            lower.length > 50
+          );
+        }
 
-        // Product image
-        const imgEl = document.querySelector('img[class*="product"], img[class*="hero"], main img');
+        // Known Indian store names — prioritise exact matches
+        const KNOWN_STORES = ['amazon','flipkart','myntra','ajio','nykaa','tatacliq','croma','snapdeal',
+          'meesho','jiomart','bigbasket','zepto','blinkit','swiggy','instamart','zomato','firstcry',
+          'netmeds','lenskart','boat','mamaearth','purplle','bewakoof','decathlon','pepperfry',
+          'vijay sales','reliance digital','hotstar','sonyliv','netflix','cleartrip','makemytrip'];
+
+        const productName = (document.querySelector('h1') || {}).textContent?.trim() || document.title || '';
+        const imgEl = document.querySelector('img[src*="flash.co"], img[src*="amazon"], img[src*="media"]');
         const productImage = imgEl ? imgEl.src : '';
 
-        // Store price cards — Flash renders them as list items
-        // We look for any element pair of (store name + price) anywhere in the page
         const stores = [];
         const seenStores = new Set();
 
-        // Strategy: find all ₹ price texts, then walk up to find the store name sibling
-        const allText = document.querySelectorAll('*');
-        for (const el of allText) {
-          if (el.children.length > 0) continue; // only leaf nodes
-          const txt = el.textContent.trim();
-          const priceMatch = txt.match(/^₹\s*([\d,]+)$/);
-          if (!priceMatch) continue;
-          const price = parseInt(priceMatch[1].replace(/,/g, ''));
-          if (price < 1 || price > 1000000) continue;
-
-          // Walk up to find a container with a store name
-          let container = el.parentElement;
-          for (let i = 0; i < 6 && container; i++) {
-            const containerText = container.innerText || '';
-            // Look for a store name (non-price, non-trivial text in the same container)
-            const lines = containerText.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('₹') && l.length > 2 && l.length < 40 && !/^[\d,]+$/.test(l));
-            if (lines.length > 0) {
-              const storeName = lines[0];
-              if (!seenStores.has(storeName)) {
-                seenStores.add(storeName);
-                stores.push({ name: storeName, price });
-              }
-              break;
-            }
-            container = container.parentElement;
+        // Use TreeWalker to find all ₹ price text nodes
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+        const priceNodes = [];
+        let node;
+        while ((node = walker.nextNode())) {
+          const t = node.textContent.trim();
+          const m = t.match(/^₹\s*([\d,]+)$/);
+          if (m) {
+            const price = parseInt(m[1].replace(/,/g, ''));
+            // Only real product prices — skip tiny amounts (savings/discounts like ₹54)
+            if (price >= 100 && price <= 500000) priceNodes.push({ node, price });
           }
         }
 
-        return { productName, productImage, stores, url: window.location.href };
+        for (const { node, price } of priceNodes) {
+          let container = node.parentElement;
+          let foundName = null;
+
+          for (let depth = 0; depth < 10 && container && !foundName; depth++) {
+            // Collect all leaf text in this container
+            const leafTexts = [];
+            container.querySelectorAll('*').forEach(el => {
+              if (el.children.length === 0) {
+                const t = (el.textContent || '').trim();
+                if (t) leafTexts.push(t);
+              }
+            });
+
+            // First pass — prefer known store names
+            for (const t of leafTexts) {
+              const lower = t.toLowerCase();
+              if (KNOWN_STORES.some(s => lower === s || lower.startsWith(s))) {
+                const canonical = t.trim();
+                if (!seenStores.has(canonical) && !isUILabel(t)) {
+                  foundName = canonical;
+                  break;
+                }
+              }
+            }
+
+            // Second pass — any non-label text
+            if (!foundName) {
+              for (const t of leafTexts) {
+                if (!isUILabel(t) && !/^₹/.test(t) && !/^[\d,]+$/.test(t)) {
+                  const canonical = t.trim();
+                  if (!seenStores.has(canonical)) {
+                    foundName = canonical;
+                    break;
+                  }
+                }
+              }
+            }
+
+            container = container.parentElement;
+          }
+
+          if (foundName) {
+            seenStores.add(foundName);
+            stores.push({ name: foundName, price });
+          }
+        }
+
+        return { productName, productImage, stores };
       });
 
       console.log('[Flash/Puppeteer] ✅ Extracted', extracted.stores.length, 'stores from DOM:', extracted.stores.map(s => s.name + ':₹' + s.price).join(' | '));
