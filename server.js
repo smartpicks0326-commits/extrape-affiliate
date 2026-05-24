@@ -143,13 +143,10 @@ async function flashSearchPuppeteer(productUrl) {
     await page.setViewport({ width: 1280, height: 800 });
     await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36');
     try {
-      // Step 1 — open flash.co home and submit the product URL via the API
-      // (establishes correct origin/cookies so subsequent requests work)
       await page.goto('https://flash.co', { waitUntil: 'domcontentloaded', timeout: 20000 });
-
       const snap = { url: productUrl, token: flashTokenCache.token, deviceId: flashTokenCache.deviceId || 'web-spd', userId: flashTokenCache.userId || '' };
 
-      // Get pageHash via stream API (runs inside browser — correct TLS fingerprint)
+      // ── Step 1: stream API inside browser to get pageHash ──
       const streamResult = await page.evaluate(async ({ url, token, deviceId, userId }) => {
         const ua = navigator.userAgent;
         const idempotencyKey = btoa(unescape(encodeURIComponent(userId + '_' + url + '_WEB')));
@@ -172,249 +169,159 @@ async function flashSearchPuppeteer(productUrl) {
         for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/, /product-search\/([A-Za-z0-9_-]{4,})/, /"pageHash":"([A-Za-z0-9_-]{4,})"/]) {
           const m = streamText.match(pat); if (m) { pageHash = m[1]; break; }
         }
-        return {
-          pageHash,
-          isFallback: streamText.includes('products-fallback') || streamText.includes('PRODUCTS_FALLBACK'),
-          streamSample: streamText.substring(0, 300),
-        };
+        const fm = streamText.match(/products-fallback[^"'\s]*/);
+        return { pageHash, fallbackUrl: fm ? 'https://flash.co/' + fm[0] : null, isFallback: !pageHash && streamText.includes('products-fallback'), streamSample: streamText.substring(0,300) };
       }, snap);
 
       if (streamResult.error) return streamResult;
 
-      // Flash has no comparison data for this product
-      if (!streamResult.pageHash || streamResult.isFallback) {
-        return { error: 'FLASH_NO_DATA', message: 'Flash.co has no comparison data for this product. This is a Flash.co coverage limitation.' };
+      let pageHash = streamResult.pageHash;
+
+      // ── Step 2: if products-fallback, navigate there and wait for product-details redirect ──
+      if (!pageHash || streamResult.isFallback) {
+        console.log('[Flash/Puppeteer] products-fallback — navigating and waiting...');
+        const fallback = streamResult.fallbackUrl || 'https://flash.co';
+        await page.goto(fallback, { waitUntil:'domcontentloaded', timeout:30000 });
+        try {
+          await page.waitForFunction(() => window.location.href.includes('product-details') || window.location.href.includes('product-search'), { timeout:60000, polling:1500 });
+          const m = page.url().match(/product-details\/([A-Za-z0-9_-]{4,})/);
+          if (m) { pageHash = m[1]; console.log('[Flash/Puppeteer] Redirected to pageHash:', pageHash); }
+          else return { error:'FLASH_NO_DATA', message:'Flash.co could not find comparison data for this product.' };
+        } catch(e) { return { error:'FLASH_NO_DATA', message:'Flash.co timed out processing this product.' }; }
       }
 
-      const pageHash = streamResult.pageHash;
-      console.log('[Flash/Puppeteer] pageHash:', pageHash, '— navigating to product page...');
+      // ── Step 3: navigate to product-details and wait for ALL prices ──
+      const targetUrl = 'https://flash.co/product-details/' + pageHash;
+      console.log('[Flash/Puppeteer] Navigating to:', targetUrl);
+      if (!page.url().includes(pageHash)) await page.goto(targetUrl, { waitUntil:'domcontentloaded', timeout:30000 });
 
-      // Step 2 — navigate to the Flash product-details page
-      // Flash renders all store prices directly in the DOM here
-      await page.goto('https://flash.co/product-details/' + pageHash, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-      // Wait for actual product name to load (not the generic "Flash AI Assistant")
+      // Wait for product name
       try {
         await page.waitForFunction(() => {
           const h1 = document.querySelector('h1');
-          const GENERIC = ['flash ai','compare prices','best price','product details','product information'];
-          return h1 && h1.textContent && h1.textContent.trim().length > 5 && !GENERIC.some(g => h1.textContent.toLowerCase().includes(g));
-        }, { timeout: 12000 });
+          const G = ['flash ai','compare prices','best price','product details','product information'];
+          return h1 && h1.textContent.trim().length > 5 && !G.some(g => h1.textContent.toLowerCase().includes(g));
+        }, { timeout:15000 });
       } catch(e) { console.log('[Flash/Puppeteer] Product name wait timed out'); }
 
-      // Scroll to bottom to trigger lazy-loaded stores, then back to top
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await new Promise(r => setTimeout(r, 2500));
-
-      // Click "View all stores" button if present (Flash shows collapsed list by default)
+      // Wait for price elements
       try {
-        await page.evaluate(() => {
-          const btns = document.querySelectorAll('button, a, [role="button"], span');
-          for (const btn of btns) {
-            const t = (btn.textContent || '').toLowerCase();
-            if (t.includes('view all') || t.includes('show all') || t.includes('all stores') || t.includes('more stores')) {
-              btn.click();
-              return true;
-            }
+        await page.waitForFunction(() => {
+          for (const el of document.querySelectorAll('*')) {
+            if (!el.children.length && /₹\s*[\d,]{3,}/.test(el.textContent)) return true;
           }
           return false;
+        }, { timeout:30000 });
+      } catch(e) { console.log('[Flash/Puppeteer] Price wait timed out, extracting anyway'); }
+
+      // Scroll 3 times to load lazy stores
+      for (let i = 0; i < 3; i++) {
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await new Promise(r => setTimeout(r, 1500));
+      }
+      // Click "View all stores" if present
+      try {
+        await page.evaluate(() => {
+          for (const btn of document.querySelectorAll('button,a,[role="button"],span')) {
+            const t = (btn.textContent||'').toLowerCase();
+            if (t.includes('view all')||t.includes('all stores')||t.includes('more stores')) { btn.click(); return; }
+          }
         });
         await new Promise(r => setTimeout(r, 2000));
       } catch(e) {}
-
       await page.evaluate(() => window.scrollTo(0, 0));
       await new Promise(r => setTimeout(r, 1000));
 
-      // Step 3 — extract store prices from DOM with proper filtering
+      // ── Step 4: extract from DOM ──
       const extracted = await page.evaluate(() => {
-        // UI labels that are NOT store names — skip these
-        function isUILabel(text) {
-          const lower = text.toLowerCase().trim();
-          return (
-            // Material Symbols/Icons font glyphs always contain underscores (arrow_forward_ios, shopping_cart)
-            // Single words like "Amazon", "Zepto" must NOT be filtered
-            /^[a-z][a-z0-9]*(_[a-z0-9]+)+$/.test(lower) ||   // snake_case with underscore = Material Icon
-            lower === 'wallet' ||
-            lower === 'visit' ||
-            lower === 'open' ||
-            lower === 'buy now' ||
-            lower === 'buy' ||
-            lower === 'new' ||
-            lower === 'deal' ||
-            lower === 'sponsored' ||
-            lower === 'recommended' ||
-            lower === 'pro' ||
-            lower === 'in' ||
-            lower === 'check' ||
-            lower.includes('updated') ||
-            lower.includes('days ago') ||
-            lower.includes('hours ago') ||
-            lower.includes('view all') ||
-            lower.includes('show all') ||
-            lower.includes('all stores') ||
-            lower.includes('more stores') ||
-            lower.includes('came from here') ||
-            lower.includes('flash ai') ||
-            lower.includes('just saved') ||
-            lower.includes('ai score') ||
-            lower.includes('flash score') ||
-            lower.includes('best price') ||
-            lower.startsWith('save ₹') ||
-            lower.startsWith('save rs') ||
-            lower.startsWith('₹') ||
-            lower.startsWith('rs.') ||
-            /^[\d\s%,₹]+$/.test(lower) ||
-            lower.length < 2 ||
-            lower.length > 50
-          );
+        function isUILabel(t) {
+          const l = t.toLowerCase().trim();
+          return /^[a-z][a-z0-9]*(_[a-z0-9]+)+$/.test(l) ||
+            ['wallet','visit','open','buy now','buy','new','deal','sponsored','recommended','pro','in','check'].includes(l) ||
+            l.includes('came from here')||l.includes('flash ai')||l.includes('just saved')||l.includes('ai score')||
+            l.includes('best price')||l.includes('updated')||l.includes('days ago')||l.includes('hours ago')||
+            l.includes('view all')||l.includes('all stores')||l.includes('more stores')||
+            l.startsWith('save ₹')||l.startsWith('₹')||l.startsWith('rs.')||
+            /^[\d\s%,₹]+$/.test(l)||l.length<2||l.length>60;
         }
-
-        // Known Indian store names — prioritise exact matches
-        const KNOWN_STORES = ['amazon','flipkart','myntra','ajio','nykaa','tatacliq','croma','snapdeal',
-          'meesho','jiomart','bigbasket','zepto','blinkit','swiggy','instamart','zomato','firstcry',
-          'netmeds','lenskart','boat','mamaearth','purplle','bewakoof','decathlon','pepperfry',
-          'vijay sales','reliance digital','hotstar','sonyliv','netflix','cleartrip','makemytrip'];
+        const KNOWN = ['amazon','flipkart','myntra','ajio','nykaa','tatacliq','croma','snapdeal','meesho',
+          'jiomart','bigbasket','zepto','blinkit','swiggy','zomato','firstcry','netmeds','lenskart',
+          'boat','mamaearth','purplle','bewakoof','decathlon','pepperfry','tata cliq','vijay sales','reliance digital'];
 
         const productName = (() => {
-          const candidates = Array.from(document.querySelectorAll('h1, h2, [class*="product-name"], [class*="productName"]'));
-          for (const el of candidates) {
+          const G = ['flash ai','compare prices','best price','product details','product information','specifications','overview'];
+          for (const el of document.querySelectorAll('h1,h2')) {
             const t = el.textContent.trim();
-            const GENERIC = ['flash ai','compare prices','best price','product details','product information','specifications','description','overview','features'];
-            if (t && t.length > 5 && !GENERIC.some(g => t.toLowerCase().includes(g))) return t;
+            if (t.length>5 && !G.some(g=>t.toLowerCase().includes(g))) return t;
           }
-          return document.title.replace(/\s*[-|]?\s*(Flash.*|Compare.*|Best Price.*)$/i, '').trim() || '';
+          return document.title.replace(/\s*[-|]?\s*(Flash.*|Compare.*|Best Price.*)$/i,'').trim()||'';
         })();
 
         const productImage = (() => {
-          const imgs = Array.from(document.querySelectorAll('img'));
-          for (const img of imgs) {
-            const src = img.src || '';
-            if (!src || src.includes('/merchants/') || src.includes('favicon') || src.includes('logo') || src.includes('icon')) continue;
-            // Product images from Flash CDN contain the actual product image URL
-            if (src.includes('img.flash.co/a/f:webp') || src.includes('media-amazon') || src.includes('_SL') || src.includes('_AC_')) return src;
+          for (const img of document.querySelectorAll('img')) {
+            const src = img.src||'';
+            if (!src||src.includes('/merchants/')||src.includes('favicon')||src.includes('/logo')) continue;
+            if (src.includes('img.flash.co')&&(src.includes('plain/')||src.includes('f:webp'))) return src;
+            if (src.includes('media-amazon')||src.includes('flixcart')||src.includes('akamaized')||src.includes('_SL')||src.includes('_AC_')||src.includes('staticimg')) return src;
           }
-          // Fallback: largest image on page
-          let best = null, bestSize = 0;
-          for (const img of imgs) {
-            const src = img.src || '';
-            if (!src || src.includes('/merchants/') || src.includes('favicon')) continue;
-            const size = (img.naturalWidth || img.width || 0) * (img.naturalHeight || img.height || 0);
-            if (size > bestSize) { bestSize = size; best = src; }
+          let best='',bestS=0;
+          for (const img of document.querySelectorAll('img')) {
+            const src=img.src||''; if(!src||src.includes('/merchants/')||src.includes('favicon'))continue;
+            const s=(img.naturalWidth||img.width||0)*(img.naturalHeight||img.height||0);
+            if(s>bestS){bestS=s;best=src;}
           }
-          return best || '';
+          return best;
         })();
 
-        // Collect store URLs from anchor tags near each store listing
-        const storeLinks = {};
-        document.querySelectorAll('a[href]').forEach(a => {
-          const href = a.href;
-          if (!href || href.includes('flash.co') || href === '#') return;
-          const text = a.closest('[class]')?.textContent || '';
-          // Try to match this link to a known store
-          const stores = ['amazon','flipkart','myntra','ajio','nykaa','tatacliq','croma','snapdeal','meesho','jiomart','bigbasket','zepto','blinkit','swiggy','zomato'];
-          for (const s of stores) {
-            if (href.toLowerCase().includes(s) || text.toLowerCase().includes(s)) {
-              if (!storeLinks[s]) storeLinks[s] = href;
-            }
-          }
+        const storeLinks={};
+        document.querySelectorAll('a[href]').forEach(a=>{
+          const href=a.href||''; if(!href||href.includes('flash.co')||href==='#')return;
+          const ctx=(a.closest('[class]')?.textContent||'')+href;
+          ['amazon','flipkart','myntra','ajio','nykaa','tatacliq','croma','snapdeal','meesho','jiomart','bigbasket','zepto','blinkit','swiggy','zomato'].forEach(s=>{
+            if((href.toLowerCase().includes(s)||ctx.toLowerCase().includes(s))&&!storeLinks[s])storeLinks[s]=href;
+          });
         });
 
-        const stores = [];
-        const seenStores = new Set();
-
-        // Use TreeWalker to find all ₹ price text nodes
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-        const priceNodes = [];
-        let node;
-        while ((node = walker.nextNode())) {
-          const t = node.textContent.trim();
-          const m = t.match(/^₹\s*([\d,]+)$/);
-          if (m) {
-            const price = parseInt(m[1].replace(/,/g, ''));
-            // Only real product prices — skip tiny amounts (savings/discounts like ₹54)
-            if (price >= 100 && price <= 500000) priceNodes.push({ node, price });
-          }
+        const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,null);
+        const priceNodes=[]; let node;
+        while((node=walker.nextNode())){
+          const m=node.textContent.trim().match(/^₹\s*([\d,]+)$/);
+          if(m){const p=parseInt(m[1].replace(/,/g,''));if(p>=100&&p<=1000000)priceNodes.push({node,price:p});}
         }
-
-        for (const { node, price } of priceNodes) {
-          let container = node.parentElement;
-          let foundName = null;
-
-          for (let depth = 0; depth < 10 && container && !foundName; depth++) {
-            // Collect all leaf text in this container
-            const leafTexts = [];
-            container.querySelectorAll('*').forEach(el => {
-              if (el.children.length === 0) {
-                const t = (el.textContent || '').trim();
-                if (t) leafTexts.push(t);
-              }
-            });
-
-            // First pass — prefer known store names
-            for (const t of leafTexts) {
-              const lower = t.toLowerCase();
-              if (KNOWN_STORES.some(s => lower === s || lower.startsWith(s))) {
-                const canonical = t.trim();
-                if (!seenStores.has(canonical) && !isUILabel(t)) {
-                  foundName = canonical;
-                  break;
-                }
-              }
-            }
-
-            // Second pass — any non-label text
-            if (!foundName) {
-              for (const t of leafTexts) {
-                if (!isUILabel(t) && !/^₹/.test(t) && !/^[\d,]+$/.test(t)) {
-                  const canonical = t.trim();
-                  if (!seenStores.has(canonical)) {
-                    foundName = canonical;
-                    break;
-                  }
-                }
-              }
-            }
-
-            container = container.parentElement;
+        const stores=[],seenStores=new Set();
+        for(const{node,price}of priceNodes){
+          let container=node.parentElement,foundName=null;
+          for(let d=0;d<10&&container&&!foundName;d++){
+            const leafTexts=[];
+            container.querySelectorAll('*').forEach(el=>{if(!el.children.length){const t=(el.textContent||'').trim();if(t)leafTexts.push(t);}});
+            for(const t of leafTexts){if(KNOWN.some(s=>t.toLowerCase()===s||t.toLowerCase()===s.replace(' ',''))&&!seenStores.has(t)&&!isUILabel(t)){foundName=t;break;}}
+            if(!foundName){for(const t of leafTexts){if(!isUILabel(t)&&!/^₹/.test(t)&&!seenStores.has(t)){foundName=t;break;}}}
+            container=container.parentElement;
           }
-
-          if (foundName) {
+          if(foundName){
             seenStores.add(foundName);
-            // Look up URL from anchor tags
-            const urlKey = foundName.toLowerCase().replace(/\s+/g, '');
-            const storeUrl = storeLinks[urlKey] || storeLinks[foundName.toLowerCase()] || '';
-            stores.push({ name: foundName, price, url: storeUrl });
+            const k=foundName.toLowerCase().replace(/\s+/g,'');
+            stores.push({name:foundName,price,url:storeLinks[k]||storeLinks[foundName.toLowerCase()]||''});
           }
         }
-
-        return { productName, productImage, stores };
+        return{productName,productImage,stores};
       });
 
-      console.log('[Flash/Puppeteer] ✅ Extracted', extracted.stores.length, 'stores from DOM:', extracted.stores.map(s => s.name + ':₹' + s.price).join(' | '));
-
-      if (extracted.stores.length === 0) {
-        // Fallback: dump page HTML for debugging
-        const html = await page.content();
-        return { error: 'No prices found in DOM', pageHash, htmlSample: html.substring(0, 1000) };
+      console.log('[Flash/Puppeteer] ✅ Extracted', extracted.stores.length, 'stores:', extracted.stores.map(s=>s.name+':₹'+s.price).join(' | '));
+      if(extracted.stores.length===0){
+        const html=await page.content();
+        return{error:'No prices found in DOM',pageHash,htmlSample:html.substring(2000,3000)};
       }
-
-      // Return in same shape as API approach
-      return {
-        ok: true,
-        pageHash,
-        data: {
-          response: {
-            feedbacks: [{
-              storePrices: extracted.stores.map(s => ({ storeName: s.name, price: s.price, url: '' }))
-            }]
-          },
-          productName:  extracted.productName,
-          productImage: extracted.productImage,
+      return{
+        ok:true, pageHash,
+        data:{
+          response:{feedbacks:[{storePrices:extracted.stores.map(s=>({storeName:s.name,price:s.price,url:s.url}))}]},
+          productName:extracted.productName,
+          productImage:extracted.productImage,
         },
-        pollAttempt: 0,
+        pollAttempt:0,
       };
-
-    } finally { await page.close().catch(() => {}); }
+    } finally { await page.close().catch(()=>{}); }
   });
 }
 
