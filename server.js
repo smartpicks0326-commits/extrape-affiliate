@@ -188,7 +188,6 @@ async function flashSearchPuppeteer(productUrl) {
       // Wait for price cards to appear (up to 30s)
       try {
         await page.waitForFunction(() => {
-          // Look for any element containing ₹ price text
           const els = document.querySelectorAll('*');
           for (const el of els) {
             if (el.children.length === 0 && el.textContent.includes('₹') && /₹\s*[\d,]+/.test(el.textContent)) return true;
@@ -196,11 +195,14 @@ async function flashSearchPuppeteer(productUrl) {
           return false;
         }, { timeout: 30000 });
       } catch(e) {
-        console.log('[Flash/Puppeteer] Timed out waiting for prices, trying to extract anyway...');
+        console.log('[Flash/Puppeteer] Timed out waiting for prices, extracting anyway...');
       }
 
-      // Give dynamic content a moment to finish rendering
-      await new Promise(r => setTimeout(r, 2000));
+      // Scroll to bottom to trigger lazy-loaded stores, then back to top
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await new Promise(r => setTimeout(r, 2500));
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await new Promise(r => setTimeout(r, 1000));
 
       // Step 3 — extract store prices from DOM with proper filtering
       const extracted = await page.evaluate(() => {
@@ -208,6 +210,8 @@ async function flashSearchPuppeteer(productUrl) {
         function isUILabel(text) {
           const lower = text.toLowerCase().trim();
           return (
+            // Material Symbols/Icons font glyphs — rendered as icon but text content is the icon name
+            /^[a-z][a-z0-9_]+$/.test(lower) ||   // snake_case = Material Icon name (e.g. arrow_forward_ios)
             lower === 'wallet' ||
             lower === 'visit' ||
             lower === 'open' ||
@@ -217,6 +221,9 @@ async function flashSearchPuppeteer(productUrl) {
             lower === 'deal' ||
             lower === 'sponsored' ||
             lower === 'recommended' ||
+            lower === 'pro' ||
+            lower === 'in' ||
+            lower === 'check' ||
             lower.includes('came from here') ||
             lower.includes('flash ai') ||
             lower.includes('just saved') ||
