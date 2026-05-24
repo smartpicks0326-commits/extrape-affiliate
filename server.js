@@ -139,35 +139,140 @@ function withFlashBrowser(fn) {
 async function flashSearchPuppeteer(productUrl) {
   return withFlashBrowser(async () => {
     const browser = await getFlashBrowser();
-    const page = await browser.newPage();
+    const page    = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
     await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36');
     try {
+      // Step 1 — open flash.co home and submit the product URL via the API
+      // (establishes correct origin/cookies so subsequent requests work)
       await page.goto('https://flash.co', { waitUntil: 'domcontentloaded', timeout: 20000 });
+
       const snap = { url: productUrl, token: flashTokenCache.token, deviceId: flashTokenCache.deviceId || 'web-spd', userId: flashTokenCache.userId || '' };
-      const result = await page.evaluate(async ({ url, token, deviceId, userId }) => {
+
+      // Get pageHash via stream API (runs inside browser — correct TLS fingerprint)
+      const streamResult = await page.evaluate(async ({ url, token, deviceId, userId }) => {
         const ua = navigator.userAgent;
         const idempotencyKey = btoa(unescape(encodeURIComponent(userId + '_' + url + '_WEB')));
-        const headers = { 'Authorization':'Bearer '+token,'Channel-Type':'web','Content-Type':'application/json','Accept':'text/event-stream','Origin':'https://flash.co','X-Country-Code':'IN','X-Device-Id':deviceId,'X-Timezone':'Asia/Calcutta','X-Idempotency-Key':idempotencyKey };
-        const streamParams = new URLSearchParams({ source:'APPEND',context:'HOME_URL_PASTE',user_agent:ua,device_type:'DESKTOP',country_code:'IN' });
-        let streamStatus, streamText;
-        try { const sr = await fetch('https://api.flash.co/agents/chat/stream?'+streamParams,{method:'POST',headers,body:JSON.stringify({query:url,context:'HOME_URL_PASTE'})}); streamStatus=sr.status; streamText=await sr.text(); } catch(e) { return {error:'Stream failed: '+e.message}; }
-        if (streamStatus===401) return {error:'TOKEN_EXPIRED'};
-        if (streamStatus!==200) return {error:'Stream '+streamStatus, sample:(streamText||'').substring(0,200)};
-        let pageHash=null;
-        for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/,/product-search\/([A-Za-z0-9_-]{4,})/,/"pageHash":"([A-Za-z0-9_-]{4,})"/]) { const m=streamText.match(pat); if(m){pageHash=m[1];break;} }
-        if (!pageHash) return {error:'No pageHash',streamSample:streamText.substring(0,400)};
-        const ph={...headers}; delete ph['Content-Type']; ph['Accept']='application/json';
-        const eps=['https://api.flash.co/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId='+pageHash,'https://api.flash.co/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId='+pageHash];
-        for (let i=0;i<14;i++) {
-          await new Promise(r=>setTimeout(r,2500));
-          for (const ep of eps) { try { const pr=await fetch(ep,{headers:ph}); if(pr.status===401)return{error:'TOKEN_EXPIRED'}; if(!pr.ok)continue; const data=await pr.json(); const fbs=data?.response?.feedbacks||data?.feedbacks||[]; if(fbs.length>0)return{ok:true,pageHash,data,pollAttempt:i+1}; } catch{} }
+        const headers = {
+          'Authorization': 'Bearer ' + token, 'Channel-Type': 'web',
+          'Content-Type': 'application/json', 'Accept': 'text/event-stream',
+          'Origin': 'https://flash.co', 'X-Country-Code': 'IN',
+          'X-Device-Id': deviceId, 'X-Timezone': 'Asia/Calcutta',
+          'X-Idempotency-Key': idempotencyKey,
+        };
+        const params = new URLSearchParams({ source:'APPEND', context:'HOME_URL_PASTE', user_agent:ua, device_type:'DESKTOP', country_code:'IN' });
+        let streamText = '';
+        try {
+          const sr = await fetch('https://api.flash.co/agents/chat/stream?' + params, { method:'POST', headers, body:JSON.stringify({ query:url, context:'HOME_URL_PASTE' }) });
+          if (sr.status === 401) return { error:'TOKEN_EXPIRED' };
+          if (!sr.ok) return { error:'Stream ' + sr.status };
+          streamText = await sr.text();
+        } catch(e) { return { error:'Stream failed: ' + e.message }; }
+        let pageHash = null;
+        for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/, /product-search\/([A-Za-z0-9_-]{4,})/, /"pageHash":"([A-Za-z0-9_-]{4,})"/]) {
+          const m = streamText.match(pat); if (m) { pageHash = m[1]; break; }
         }
-        return {error:'TIMEOUT',pageHash};
+        return { pageHash, streamSample: streamText.substring(0, 300) };
       }, snap);
-      console.log('[Flash/Puppeteer]', result?.ok ? `✅ pageHash=${result.pageHash} poll=${result.pollAttempt}` : JSON.stringify(result).substring(0,150));
-      return result;
-    } finally { await page.close().catch(()=>{}); }
+
+      if (streamResult.error) return streamResult;
+      if (!streamResult.pageHash) return { error: 'No pageHash', streamSample: streamResult.streamSample };
+
+      const pageHash = streamResult.pageHash;
+      console.log('[Flash/Puppeteer] pageHash:', pageHash, '— navigating to product page...');
+
+      // Step 2 — navigate to the Flash product-details page
+      // Flash renders all store prices directly in the DOM here
+      await page.goto('https://flash.co/product-details/' + pageHash, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+      // Wait for price cards to appear (up to 30s)
+      try {
+        await page.waitForFunction(() => {
+          // Look for any element containing ₹ price text
+          const els = document.querySelectorAll('*');
+          for (const el of els) {
+            if (el.children.length === 0 && el.textContent.includes('₹') && /₹\s*[\d,]+/.test(el.textContent)) return true;
+          }
+          return false;
+        }, { timeout: 30000 });
+      } catch(e) {
+        console.log('[Flash/Puppeteer] Timed out waiting for prices, trying to extract anyway...');
+      }
+
+      // Give dynamic content a moment to finish rendering
+      await new Promise(r => setTimeout(r, 2000));
+
+      // Step 3 — extract product info + store prices from DOM
+      const extracted = await page.evaluate(() => {
+        // Product name — try multiple selectors
+        const nameEl = document.querySelector('h1, [class*="product-name"], [class*="productName"], [class*="title"]');
+        const productName = nameEl ? nameEl.textContent.trim() : '';
+
+        // Product image
+        const imgEl = document.querySelector('img[class*="product"], img[class*="hero"], main img');
+        const productImage = imgEl ? imgEl.src : '';
+
+        // Store price cards — Flash renders them as list items
+        // We look for any element pair of (store name + price) anywhere in the page
+        const stores = [];
+        const seenStores = new Set();
+
+        // Strategy: find all ₹ price texts, then walk up to find the store name sibling
+        const allText = document.querySelectorAll('*');
+        for (const el of allText) {
+          if (el.children.length > 0) continue; // only leaf nodes
+          const txt = el.textContent.trim();
+          const priceMatch = txt.match(/^₹\s*([\d,]+)$/);
+          if (!priceMatch) continue;
+          const price = parseInt(priceMatch[1].replace(/,/g, ''));
+          if (price < 1 || price > 1000000) continue;
+
+          // Walk up to find a container with a store name
+          let container = el.parentElement;
+          for (let i = 0; i < 6 && container; i++) {
+            const containerText = container.innerText || '';
+            // Look for a store name (non-price, non-trivial text in the same container)
+            const lines = containerText.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('₹') && l.length > 2 && l.length < 40 && !/^[\d,]+$/.test(l));
+            if (lines.length > 0) {
+              const storeName = lines[0];
+              if (!seenStores.has(storeName)) {
+                seenStores.add(storeName);
+                stores.push({ name: storeName, price });
+              }
+              break;
+            }
+            container = container.parentElement;
+          }
+        }
+
+        return { productName, productImage, stores, url: window.location.href };
+      });
+
+      console.log('[Flash/Puppeteer] ✅ Extracted', extracted.stores.length, 'stores from DOM:', extracted.stores.map(s => s.name + ':₹' + s.price).join(' | '));
+
+      if (extracted.stores.length === 0) {
+        // Fallback: dump page HTML for debugging
+        const html = await page.content();
+        return { error: 'No prices found in DOM', pageHash, htmlSample: html.substring(0, 1000) };
+      }
+
+      // Return in same shape as API approach
+      return {
+        ok: true,
+        pageHash,
+        data: {
+          response: {
+            feedbacks: [{
+              storePrices: extracted.stores.map(s => ({ storeName: s.name, price: s.price, url: '' }))
+            }]
+          },
+          productName:  extracted.productName,
+          productImage: extracted.productImage,
+        },
+        pollAttempt: 0,
+      };
+
+    } finally { await page.close().catch(() => {}); }
   });
 }
 
