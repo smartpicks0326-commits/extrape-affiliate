@@ -185,18 +185,14 @@ async function flashSearchPuppeteer(productUrl) {
       // Flash renders all store prices directly in the DOM here
       await page.goto('https://flash.co/product-details/' + pageHash, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-      // Wait for price cards to appear (up to 30s)
+      // Wait for actual product name to load (not the generic "Flash AI Assistant")
       try {
         await page.waitForFunction(() => {
-          const els = document.querySelectorAll('*');
-          for (const el of els) {
-            if (el.children.length === 0 && el.textContent.includes('₹') && /₹\s*[\d,]+/.test(el.textContent)) return true;
-          }
-          return false;
-        }, { timeout: 30000 });
-      } catch(e) {
-        console.log('[Flash/Puppeteer] Timed out waiting for prices, extracting anyway...');
-      }
+          const h1 = document.querySelector('h1');
+          const GENERIC = ['flash ai','compare prices','best price','product details','product information'];
+          return h1 && h1.textContent && h1.textContent.trim().length > 5 && !GENERIC.some(g => h1.textContent.toLowerCase().includes(g));
+        }, { timeout: 12000 });
+      } catch(e) { console.log('[Flash/Puppeteer] Product name wait timed out'); }
 
       // Scroll to bottom to trigger lazy-loaded stores, then back to top
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
@@ -272,35 +268,48 @@ async function flashSearchPuppeteer(productUrl) {
           'vijay sales','reliance digital','hotstar','sonyliv','netflix','cleartrip','makemytrip'];
 
         const productName = (() => {
-          // Flash shows product name in h1 or specific heading — skip generic app titles
-          const candidates = Array.from(document.querySelectorAll('h1, h2, [class*="product-name"], [class*="productName"], [class*="item-name"]'));
+          const candidates = Array.from(document.querySelectorAll('h1, h2, [class*="product-name"], [class*="productName"]'));
           for (const el of candidates) {
             const t = el.textContent.trim();
-            if (t && t.length > 5 && !t.toLowerCase().includes('flash ai') && !t.toLowerCase().includes('compare prices') && !t.toLowerCase().includes('best price')) return t;
+            const GENERIC = ['flash ai','compare prices','best price','product details','product information','specifications','description','overview','features'];
+            if (t && t.length > 5 && !GENERIC.some(g => t.toLowerCase().includes(g))) return t;
           }
-          // Fallback: page title minus " - Flash" suffix
           return document.title.replace(/\s*[-|]?\s*(Flash.*|Compare.*|Best Price.*)$/i, '').trim() || '';
         })();
 
         const productImage = (() => {
-          // Look for actual product image (not store logo, not icon)
           const imgs = Array.from(document.querySelectorAll('img'));
           for (const img of imgs) {
             const src = img.src || '';
-            const w = img.naturalWidth || img.width;
-            const h = img.naturalHeight || img.height;
-            // Skip tiny icons, store logos, and Flash CDN merchant logos
-            if (src.includes('/merchants/')) continue;
-            if (src.includes('favicon')) continue;
-            if (w < 60 || h < 60) continue;
-            if (src.includes('media-amazon') || src.includes('img.flash.co/a/f:webp') || src.includes('cloudfront') || src.includes('cdn')) return src;
+            if (!src || src.includes('/merchants/') || src.includes('favicon') || src.includes('logo') || src.includes('icon')) continue;
+            // Product images from Flash CDN contain the actual product image URL
+            if (src.includes('img.flash.co/a/f:webp') || src.includes('media-amazon') || src.includes('_SL') || src.includes('_AC_')) return src;
           }
-          // Fallback: first img with reasonable size
+          // Fallback: largest image on page
+          let best = null, bestSize = 0;
           for (const img of imgs) {
-            if ((img.naturalWidth || img.width) >= 80 && !img.src.includes('/merchants/')) return img.src;
+            const src = img.src || '';
+            if (!src || src.includes('/merchants/') || src.includes('favicon')) continue;
+            const size = (img.naturalWidth || img.width || 0) * (img.naturalHeight || img.height || 0);
+            if (size > bestSize) { bestSize = size; best = src; }
           }
-          return '';
+          return best || '';
         })();
+
+        // Collect store URLs from anchor tags near each store listing
+        const storeLinks = {};
+        document.querySelectorAll('a[href]').forEach(a => {
+          const href = a.href;
+          if (!href || href.includes('flash.co') || href === '#') return;
+          const text = a.closest('[class]')?.textContent || '';
+          // Try to match this link to a known store
+          const stores = ['amazon','flipkart','myntra','ajio','nykaa','tatacliq','croma','snapdeal','meesho','jiomart','bigbasket','zepto','blinkit','swiggy','zomato'];
+          for (const s of stores) {
+            if (href.toLowerCase().includes(s) || text.toLowerCase().includes(s)) {
+              if (!storeLinks[s]) storeLinks[s] = href;
+            }
+          }
+        });
 
         const stores = [];
         const seenStores = new Set();
@@ -363,7 +372,10 @@ async function flashSearchPuppeteer(productUrl) {
 
           if (foundName) {
             seenStores.add(foundName);
-            stores.push({ name: foundName, price });
+            // Look up URL from anchor tags
+            const urlKey = foundName.toLowerCase().replace(/\s+/g, '');
+            const storeUrl = storeLinks[urlKey] || storeLinks[foundName.toLowerCase()] || '';
+            stores.push({ name: foundName, price, url: storeUrl });
           }
         }
 
