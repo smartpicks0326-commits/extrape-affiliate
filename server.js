@@ -201,6 +201,23 @@ async function flashSearchPuppeteer(productUrl) {
       // Scroll to bottom to trigger lazy-loaded stores, then back to top
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
       await new Promise(r => setTimeout(r, 2500));
+
+      // Click "View all stores" button if present (Flash shows collapsed list by default)
+      try {
+        await page.evaluate(() => {
+          const btns = document.querySelectorAll('button, a, [role="button"], span');
+          for (const btn of btns) {
+            const t = (btn.textContent || '').toLowerCase();
+            if (t.includes('view all') || t.includes('show all') || t.includes('all stores') || t.includes('more stores')) {
+              btn.click();
+              return true;
+            }
+          }
+          return false;
+        });
+        await new Promise(r => setTimeout(r, 2000));
+      } catch(e) {}
+
       await page.evaluate(() => window.scrollTo(0, 0));
       await new Promise(r => setTimeout(r, 1000));
 
@@ -210,8 +227,9 @@ async function flashSearchPuppeteer(productUrl) {
         function isUILabel(text) {
           const lower = text.toLowerCase().trim();
           return (
-            // Material Symbols/Icons font glyphs — rendered as icon but text content is the icon name
-            /^[a-z][a-z0-9_]+$/.test(lower) ||   // snake_case = Material Icon name (e.g. arrow_forward_ios)
+            // Material Symbols/Icons font glyphs always contain underscores (arrow_forward_ios, shopping_cart)
+            // Single words like "Amazon", "Zepto" must NOT be filtered
+            /^[a-z][a-z0-9]*(_[a-z0-9]+)+$/.test(lower) ||   // snake_case with underscore = Material Icon
             lower === 'wallet' ||
             lower === 'visit' ||
             lower === 'open' ||
@@ -224,6 +242,13 @@ async function flashSearchPuppeteer(productUrl) {
             lower === 'pro' ||
             lower === 'in' ||
             lower === 'check' ||
+            lower.includes('updated') ||
+            lower.includes('days ago') ||
+            lower.includes('hours ago') ||
+            lower.includes('view all') ||
+            lower.includes('show all') ||
+            lower.includes('all stores') ||
+            lower.includes('more stores') ||
             lower.includes('came from here') ||
             lower.includes('flash ai') ||
             lower.includes('just saved') ||
