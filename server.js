@@ -271,9 +271,36 @@ async function flashSearchPuppeteer(productUrl) {
           'netmeds','lenskart','boat','mamaearth','purplle','bewakoof','decathlon','pepperfry',
           'vijay sales','reliance digital','hotstar','sonyliv','netflix','cleartrip','makemytrip'];
 
-        const productName = (document.querySelector('h1') || {}).textContent?.trim() || document.title || '';
-        const imgEl = document.querySelector('img[src*="flash.co"], img[src*="amazon"], img[src*="media"]');
-        const productImage = imgEl ? imgEl.src : '';
+        const productName = (() => {
+          // Flash shows product name in h1 or specific heading — skip generic app titles
+          const candidates = Array.from(document.querySelectorAll('h1, h2, [class*="product-name"], [class*="productName"], [class*="item-name"]'));
+          for (const el of candidates) {
+            const t = el.textContent.trim();
+            if (t && t.length > 5 && !t.toLowerCase().includes('flash ai') && !t.toLowerCase().includes('compare prices') && !t.toLowerCase().includes('best price')) return t;
+          }
+          // Fallback: page title minus " - Flash" suffix
+          return document.title.replace(/\s*[-|]?\s*(Flash.*|Compare.*|Best Price.*)$/i, '').trim() || '';
+        })();
+
+        const productImage = (() => {
+          // Look for actual product image (not store logo, not icon)
+          const imgs = Array.from(document.querySelectorAll('img'));
+          for (const img of imgs) {
+            const src = img.src || '';
+            const w = img.naturalWidth || img.width;
+            const h = img.naturalHeight || img.height;
+            // Skip tiny icons, store logos, and Flash CDN merchant logos
+            if (src.includes('/merchants/')) continue;
+            if (src.includes('favicon')) continue;
+            if (w < 60 || h < 60) continue;
+            if (src.includes('media-amazon') || src.includes('img.flash.co/a/f:webp') || src.includes('cloudfront') || src.includes('cdn')) return src;
+          }
+          // Fallback: first img with reasonable size
+          for (const img of imgs) {
+            if ((img.naturalWidth || img.width) >= 80 && !img.src.includes('/merchants/')) return img.src;
+          }
+          return '';
+        })();
 
         const stores = [];
         const seenStores = new Set();
