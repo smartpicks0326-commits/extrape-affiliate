@@ -143,11 +143,39 @@ async function flashSearchPuppeteer(productUrl) {
     await page.setViewport({ width: 1280, height: 800 });
     await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36');
     try {
-      // ── Step 1: get pageHash via stream API (inside browser — correct TLS fingerprint) ──
+      // ── Step 1: inject auth token as cookie so flash.co treats us as logged in ──
       await page.goto('https://flash.co', { waitUntil: 'domcontentloaded', timeout: 20000 });
-      const snap = { url: productUrl, token: flashTokenCache.token, deviceId: flashTokenCache.deviceId || 'web-spd', userId: flashTokenCache.userId || '' };
 
-      const streamResult = await page.evaluate(async ({ url, token, deviceId, userId }) => {
+      if (flashTokenCache.token) {
+        await page.evaluate((token) => {
+          // Set token in all the places flash.co might read it
+          try { localStorage.setItem('authToken',    token); } catch(e) {}
+          try { localStorage.setItem('accessToken',  token); } catch(e) {}
+          try { localStorage.setItem('flash_token',  token); } catch(e) {}
+        }, flashTokenCache.token);
+      }
+
+      // ── Step 2: type product URL into flash.co search box and submit ──
+      // Find the search input (flash.co has a URL input on homepage)
+      const inputSelector = 'input[type="text"], input[type="url"], input[type="search"], textarea, [contenteditable="true"]';
+      let inputFound = false;
+      try {
+        await page.waitForSelector(inputSelector, { timeout: 8000 });
+        await page.click(inputSelector);
+        await page.keyboard.down('Control');
+        await page.keyboard.press('KeyA');
+        await page.keyboard.up('Control');
+        await page.type(inputSelector, productUrl, { delay: 20 });
+        await page.keyboard.press('Enter');
+        inputFound = true;
+        console.log('[Flash/Puppeteer] Submitted URL via input box');
+      } catch(e) {
+        console.log('[Flash/Puppeteer] Input not found, using stream API fallback:', e.message);
+      }
+
+      // ── Step 3: also fire stream API in parallel (belt + suspenders) ──
+      const snap = { url: productUrl, token: flashTokenCache.token, deviceId: flashTokenCache.deviceId || 'web-spd', userId: flashTokenCache.userId || '' };
+      const streamPromise = page.evaluate(async ({ url, token, deviceId, userId }) => {
         const ua = navigator.userAgent;
         const idempotencyKey = btoa(unescape(encodeURIComponent(userId + '_' + url + '_WEB')));
         const headers = {
@@ -158,54 +186,89 @@ async function flashSearchPuppeteer(productUrl) {
           'X-Idempotency-Key': idempotencyKey,
         };
         const params = new URLSearchParams({ source:'APPEND', context:'HOME_URL_PASTE', user_agent:ua, device_type:'DESKTOP', country_code:'IN' });
-        let streamText = '';
         try {
-          const sr = await fetch('https://api.flash.co/agents/chat/stream?' + params, { method:'POST', headers, body:JSON.stringify({ query:url, context:'HOME_URL_PASTE' }) });
-          if (sr.status === 401) return { error:'TOKEN_EXPIRED' };
-          if (!sr.ok) return { error:'Stream ' + sr.status };
-          streamText = await sr.text();
-        } catch(e) { return { error:'Stream failed: ' + e.message }; }
-        let pageHash = null;
-        for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/, /product-search\/([A-Za-z0-9_-]{4,})/, /"pageHash":"([A-Za-z0-9_-]{4,})"/]) {
-          const m = streamText.match(pat); if (m) { pageHash = m[1]; break; }
-        }
-        const isFallback = streamText.includes('products-fallback') || streamText.includes('PRODUCTS_FALLBACK');
-        return { pageHash, isFallback, streamSample: streamText.substring(0, 300) };
+          const sr = await fetch('https://api.flash.co/agents/chat/stream?' + params, { method:'POST', headers, body: JSON.stringify({ query:url, context:'HOME_URL_PASTE' }) });
+          if (!sr.ok) return null;
+          const text = await sr.text();
+          let pageHash = null;
+          for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/, /product-search\/([A-Za-z0-9_-]{4,})/, /"pageHash":"([A-Za-z0-9_-]{4,})"/]) {
+            const m = text.match(pat); if (m) { pageHash = m[1]; break; }
+          }
+          return pageHash;
+        } catch(e) { return null; }
       }, snap);
 
-      if (streamResult.error) return streamResult;
+      // ── Step 4: wait for flash.co to navigate to product-details ──
+      // Either the input submission or the stream API will trigger navigation
+      let pageHash = null;
 
-      // ── Step 2: navigate to product page ──
-      // products-fallback = Flash is still processing — navigate there and wait for redirect to product-details
-      let targetUrl;
-      if (streamResult.pageHash) {
-        targetUrl = 'https://flash.co/product-details/' + streamResult.pageHash;
-      } else if (streamResult.isFallback) {
-        targetUrl = 'https://flash.co/products-fallback?url=' + encodeURIComponent(productUrl);
-        console.log('[Flash/Puppeteer] products-fallback — waiting for Flash to process...');
-      } else {
-        return { error: 'FLASH_NO_DATA', message: 'Flash.co could not find this product.' };
-      }
-
-      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-      // If on products-fallback, wait up to 60s for Flash to redirect to product-details
-      if (streamResult.isFallback) {
-        try {
-          await page.waitForFunction(() => window.location.href.includes('product-details'), { timeout: 60000 });
-          console.log('[Flash/Puppeteer] Redirected to:', page.url());
-        } catch(e) {
-          const hasPrices = await page.evaluate(() => !!document.body.innerText.match(/₹\s*[\d,]+/));
-          if (!hasPrices) return { error: 'FLASH_NO_DATA', message: 'Flash.co timed out processing this product.' };
+      // Race: wait for navigation to product-details page (up to 75s)
+      try {
+        await page.waitForFunction(
+          () => window.location.href.includes('product-details'),
+          { timeout: 75000 }
+        );
+        const urlMatch = page.url().match(/product-details\/([A-Za-z0-9_-]{4,})/);
+        if (urlMatch) pageHash = urlMatch[1];
+        console.log('[Flash/Puppeteer] Navigated to product-details:', page.url());
+      } catch(e) {
+        // Navigation didn't happen — try stream result as fallback
+        const streamHash = await streamPromise.catch(() => null);
+        if (streamHash) {
+          pageHash = streamHash;
+          await page.goto('https://flash.co/product-details/' + streamHash, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          console.log('[Flash/Puppeteer] Used stream hash:', streamHash);
+        } else {
+          // Last resort: retry stream API up to 4 times — Flash caches result after processing
+          console.log('[Flash/Puppeteer] No hash yet — retrying stream API...');
+          const retryDelays = [10000, 15000, 20000, 25000];
+          for (const delay of retryDelays) {
+            await new Promise(r => setTimeout(r, delay));
+            const retryHash = await page.evaluate(async ({ url, token, deviceId, userId }) => {
+              const ua = navigator.userAgent;
+              const idempotencyKey = btoa(unescape(encodeURIComponent(userId + '_' + url + '_WEB')));
+              const headers = {
+                'Authorization': 'Bearer ' + token, 'Channel-Type': 'web',
+                'Content-Type': 'application/json', 'Accept': 'text/event-stream',
+                'Origin': 'https://flash.co', 'X-Country-Code': 'IN',
+                'X-Device-Id': deviceId, 'X-Timezone': 'Asia/Calcutta',
+                'X-Idempotency-Key': idempotencyKey,
+              };
+              const params = new URLSearchParams({ source:'APPEND', context:'HOME_URL_PASTE', user_agent:ua, device_type:'DESKTOP', country_code:'IN' });
+              try {
+                const sr = await fetch('https://api.flash.co/agents/chat/stream?' + params, { method:'POST', headers, body: JSON.stringify({ query:url, context:'HOME_URL_PASTE' }) });
+                if (!sr.ok) return null;
+                const text = await sr.text();
+                for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/, /product-search\/([A-Za-z0-9_-]{4,})/, /"pageHash":"([A-Za-z0-9_-]{4,})"/]) {
+                  const m = text.match(pat); if (m) return m[1];
+                }
+                return null;
+              } catch(e) { return null; }
+            }, snap);
+            console.log('[Flash/Puppeteer] Retry hash:', retryHash, '(delay was', delay/1000, 's)');
+            if (retryHash) {
+              pageHash = retryHash;
+              await page.goto('https://flash.co/product-details/' + retryHash, { waitUntil: 'domcontentloaded', timeout: 30000 });
+              break;
+            }
+          }
+          if (!pageHash) return { error: 'FLASH_NO_DATA', message: 'Flash.co could not find comparison data for this product.' };
         }
       }
 
-      const pageHash = streamResult.pageHash || (page.url().match(/product-details\/([A-Za-z0-9_-]{4,})/) || [])[1] || 'unknown';
-      console.log('[Flash/Puppeteer] pageHash:', pageHash, '— waiting for prices...');
+      if (!pageHash) {
+        const urlMatch = page.url().match(/product-details\/([A-Za-z0-9_-]{4,})/);
+        pageHash = urlMatch ? urlMatch[1] : 'unknown';
+      }
+      console.log('[Flash/Puppeteer] pageHash:', pageHash, '— waiting for all prices...');
 
-      // ── Step 3: wait up to 60s for prices ──
+      // ── Step 5: wait for prices to fully load (up to 60s) ──
       try {
-        await page.waitForFunction(() => (document.body.innerText.match(/₹\s*[\d,]{3,}/g) || []).length >= 1, { timeout: 60000 });
+        // Wait until we see at least 2 different prices (means comparison loaded)
+        await page.waitForFunction(() => {
+          const prices = document.body.innerText.match(/₹\s*[\d,]{3,}/g) || [];
+          return prices.length >= 2;
+        }, { timeout: 60000 });
       } catch(e) { console.log('[Flash/Puppeteer] Price wait timed out — extracting anyway'); }
 
       // Wait for product name
@@ -240,7 +303,7 @@ async function flashSearchPuppeteer(productUrl) {
       await page.evaluate(() => window.scrollTo(0, 0));
       await new Promise(r => setTimeout(r, 1000));
 
-      // ── Step 4: extract prices + product info from DOM ──
+      // ── Step 6: extract prices + product info from DOM ──
       const extracted = await page.evaluate(() => {
         function isUILabel(t) {
           const l = t.toLowerCase().trim();
@@ -257,7 +320,7 @@ async function flashSearchPuppeteer(productUrl) {
         const KNOWN = ['amazon','flipkart','myntra','ajio','nykaa','tatacliq','tata cliq','croma','snapdeal',
           'meesho','jiomart','bigbasket','zepto','blinkit','swiggy','instamart','zomato','firstcry',
           'netmeds','lenskart','boat','mamaearth','purplle','bewakoof','decathlon','pepperfry',
-          'vijay sales','reliance digital','nubo','shade station','getuscart'];
+          'tata cliq','vijay sales','reliance digital','nubo','shade station','getuscart'];
 
         const GNAMES = ['flash ai','compare prices','best price','product details','product information','specifications','description','overview','features'];
 
@@ -269,7 +332,7 @@ async function flashSearchPuppeteer(productUrl) {
           return document.title.replace(/\s*[-|]?\s*(Flash.*|Compare.*|Best Price.*)$/i,'').trim() || '';
         })();
 
-        // Product image — decode Flash CDN wrapper to get actual product image URL
+        // Decode Flash CDN image URL to get actual product image
         const productImage = (() => {
           for (const img of document.querySelectorAll('img')) {
             const src = img.src || '';
@@ -288,7 +351,6 @@ async function flashSearchPuppeteer(productUrl) {
           return best;
         })();
 
-        // Store links from anchor tags
         const storeLinks = {};
         document.querySelectorAll('a[href]').forEach(a => {
           const href = a.href;
@@ -298,7 +360,6 @@ async function flashSearchPuppeteer(productUrl) {
           }
         });
 
-        // Find price nodes
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
         const priceNodes = [];
         let node;
@@ -316,14 +377,14 @@ async function flashSearchPuppeteer(productUrl) {
           for (let d = 0; d < 10 && container && !found; d++) {
             const leaves = [];
             container.querySelectorAll('*').forEach(el => { if (!el.children.length) { const t=(el.textContent||'').trim(); if(t) leaves.push(t); }});
-            for (const t of leaves) { if (KNOWN.some(s => t.toLowerCase()===s||t.toLowerCase().startsWith(s+' ')) && !seen.has(t) && !isUILabel(t)) { found=t; break; } }
+            for (const t of leaves) { if (KNOWN.some(s => t.toLowerCase()===s || t.toLowerCase().startsWith(s+' ')) && !seen.has(t) && !isUILabel(t)) { found=t; break; } }
             if (!found) { for (const t of leaves) { if (!isUILabel(t)&&!/^₹/.test(t)&&!/^[\d,]+$/.test(t)&&!seen.has(t)) { found=t; break; } } }
             container = container.parentElement;
           }
           if (found) {
             seen.add(found);
             const k = found.toLowerCase().replace(/\s+/g,'');
-            stores.push({ name: found, price, url: storeLinks[k] || storeLinks[found.toLowerCase()] || '' });
+            stores.push({ name:found, price, url:storeLinks[k]||storeLinks[found.toLowerCase()]||'' });
           }
         }
         return { productName, productImage, stores };
@@ -333,7 +394,7 @@ async function flashSearchPuppeteer(productUrl) {
 
       if (extracted.stores.length === 0) {
         const html = await page.content();
-        return { error: 'No prices found in DOM', pageHash, htmlSample: html.substring(500, 2000) };
+        return { error: 'No prices found in DOM', pageHash, htmlSample: html.substring(500, 2500) };
       }
 
       return {
