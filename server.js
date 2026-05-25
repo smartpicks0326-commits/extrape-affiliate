@@ -143,10 +143,10 @@ async function flashSearchPuppeteer(productUrl) {
     await page.setViewport({ width: 1280, height: 800 });
     await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36');
     try {
+      // ── Step 1: get pageHash via stream API (inside browser — correct TLS fingerprint) ──
       await page.goto('https://flash.co', { waitUntil: 'domcontentloaded', timeout: 20000 });
       const snap = { url: productUrl, token: flashTokenCache.token, deviceId: flashTokenCache.deviceId || 'web-spd', userId: flashTokenCache.userId || '' };
 
-      // ── Step 1: stream API inside browser to get pageHash ──
       const streamResult = await page.evaluate(async ({ url, token, deviceId, userId }) => {
         const ua = navigator.userAgent;
         const idempotencyKey = btoa(unescape(encodeURIComponent(userId + '_' + url + '_WEB')));
@@ -169,31 +169,44 @@ async function flashSearchPuppeteer(productUrl) {
         for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/, /product-search\/([A-Za-z0-9_-]{4,})/, /"pageHash":"([A-Za-z0-9_-]{4,})"/]) {
           const m = streamText.match(pat); if (m) { pageHash = m[1]; break; }
         }
-        const fm = streamText.match(/products-fallback[^"'\s]*/);
-        return { pageHash, fallbackUrl: fm ? 'https://flash.co/' + fm[0] : null, isFallback: !pageHash && streamText.includes('products-fallback'), streamSample: streamText.substring(0,300) };
+        const isFallback = streamText.includes('products-fallback') || streamText.includes('PRODUCTS_FALLBACK');
+        return { pageHash, isFallback, streamSample: streamText.substring(0, 300) };
       }, snap);
 
       if (streamResult.error) return streamResult;
 
-      let pageHash = streamResult.pageHash;
-
-      // ── Step 2: if products-fallback, navigate there and wait for product-details redirect ──
-      if (!pageHash || streamResult.isFallback) {
-        console.log('[Flash/Puppeteer] products-fallback — navigating and waiting...');
-        const fallback = streamResult.fallbackUrl || 'https://flash.co';
-        await page.goto(fallback, { waitUntil:'domcontentloaded', timeout:30000 });
-        try {
-          await page.waitForFunction(() => window.location.href.includes('product-details') || window.location.href.includes('product-search'), { timeout:60000, polling:1500 });
-          const m = page.url().match(/product-details\/([A-Za-z0-9_-]{4,})/);
-          if (m) { pageHash = m[1]; console.log('[Flash/Puppeteer] Redirected to pageHash:', pageHash); }
-          else return { error:'FLASH_NO_DATA', message:'Flash.co could not find comparison data for this product.' };
-        } catch(e) { return { error:'FLASH_NO_DATA', message:'Flash.co timed out processing this product.' }; }
+      // ── Step 2: navigate to product page ──
+      // products-fallback = Flash is still processing — navigate there and wait for redirect to product-details
+      let targetUrl;
+      if (streamResult.pageHash) {
+        targetUrl = 'https://flash.co/product-details/' + streamResult.pageHash;
+      } else if (streamResult.isFallback) {
+        targetUrl = 'https://flash.co/products-fallback?url=' + encodeURIComponent(productUrl);
+        console.log('[Flash/Puppeteer] products-fallback — waiting for Flash to process...');
+      } else {
+        return { error: 'FLASH_NO_DATA', message: 'Flash.co could not find this product.' };
       }
 
-      // ── Step 3: navigate to product-details and wait for ALL prices ──
-      const targetUrl = 'https://flash.co/product-details/' + pageHash;
-      console.log('[Flash/Puppeteer] Navigating to:', targetUrl);
-      if (!page.url().includes(pageHash)) await page.goto(targetUrl, { waitUntil:'domcontentloaded', timeout:30000 });
+      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+      // If on products-fallback, wait up to 60s for Flash to redirect to product-details
+      if (streamResult.isFallback) {
+        try {
+          await page.waitForFunction(() => window.location.href.includes('product-details'), { timeout: 60000 });
+          console.log('[Flash/Puppeteer] Redirected to:', page.url());
+        } catch(e) {
+          const hasPrices = await page.evaluate(() => !!document.body.innerText.match(/₹\s*[\d,]+/));
+          if (!hasPrices) return { error: 'FLASH_NO_DATA', message: 'Flash.co timed out processing this product.' };
+        }
+      }
+
+      const pageHash = streamResult.pageHash || (page.url().match(/product-details\/([A-Za-z0-9_-]{4,})/) || [])[1] || 'unknown';
+      console.log('[Flash/Puppeteer] pageHash:', pageHash, '— waiting for prices...');
+
+      // ── Step 3: wait up to 60s for prices ──
+      try {
+        await page.waitForFunction(() => (document.body.innerText.match(/₹\s*[\d,]{3,}/g) || []).length >= 1, { timeout: 60000 });
+      } catch(e) { console.log('[Flash/Puppeteer] Price wait timed out — extracting anyway'); }
 
       // Wait for product name
       try {
@@ -201,126 +214,138 @@ async function flashSearchPuppeteer(productUrl) {
           const h1 = document.querySelector('h1');
           const G = ['flash ai','compare prices','best price','product details','product information'];
           return h1 && h1.textContent.trim().length > 5 && !G.some(g => h1.textContent.toLowerCase().includes(g));
-        }, { timeout:15000 });
-      } catch(e) { console.log('[Flash/Puppeteer] Product name wait timed out'); }
+        }, { timeout: 15000 });
+      } catch(e) {}
 
-      // Wait for price elements
+      // Scroll to trigger lazy-load
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await new Promise(r => setTimeout(r, 3000));
+
+      // Click "View all stores"
       try {
-        await page.waitForFunction(() => {
-          for (const el of document.querySelectorAll('*')) {
-            if (!el.children.length && /₹\s*[\d,]{3,}/.test(el.textContent)) return true;
+        const clicked = await page.evaluate(() => {
+          for (const btn of document.querySelectorAll('button, a, [role="button"], span, div')) {
+            const t = (btn.textContent || '').toLowerCase().trim();
+            if (t.includes('view all') || t.includes('show all') || t.includes('all stores') || t.includes('more stores') || /view \d+ store/.test(t)) { btn.click(); return true; }
           }
           return false;
-        }, { timeout:30000 });
-      } catch(e) { console.log('[Flash/Puppeteer] Price wait timed out, extracting anyway'); }
-
-      // Scroll 3 times to load lazy stores
-      for (let i = 0; i < 3; i++) {
-        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-        await new Promise(r => setTimeout(r, 1500));
-      }
-      // Click "View all stores" if present
-      try {
-        await page.evaluate(() => {
-          for (const btn of document.querySelectorAll('button,a,[role="button"],span')) {
-            const t = (btn.textContent||'').toLowerCase();
-            if (t.includes('view all')||t.includes('all stores')||t.includes('more stores')) { btn.click(); return; }
-          }
         });
-        await new Promise(r => setTimeout(r, 2000));
+        if (clicked) {
+          await new Promise(r => setTimeout(r, 3000));
+          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+          await new Promise(r => setTimeout(r, 2000));
+        }
       } catch(e) {}
+
       await page.evaluate(() => window.scrollTo(0, 0));
       await new Promise(r => setTimeout(r, 1000));
 
-      // ── Step 4: extract from DOM ──
+      // ── Step 4: extract prices + product info from DOM ──
       const extracted = await page.evaluate(() => {
         function isUILabel(t) {
           const l = t.toLowerCase().trim();
           return /^[a-z][a-z0-9]*(_[a-z0-9]+)+$/.test(l) ||
-            ['wallet','visit','open','buy now','buy','new','deal','sponsored','recommended','pro','in','check'].includes(l) ||
-            l.includes('came from here')||l.includes('flash ai')||l.includes('just saved')||l.includes('ai score')||
-            l.includes('best price')||l.includes('updated')||l.includes('days ago')||l.includes('hours ago')||
-            l.includes('view all')||l.includes('all stores')||l.includes('more stores')||
-            l.startsWith('save ₹')||l.startsWith('₹')||l.startsWith('rs.')||
-            /^[\d\s%,₹]+$/.test(l)||l.length<2||l.length>60;
+            ['wallet','visit','open','buy now','buy','new','deal','sponsored','recommended','pro','in','check','refresh'].includes(l) ||
+            l.includes('updated') || l.includes('days ago') || l.includes('hours ago') ||
+            l.includes('view all') || l.includes('show all') || l.includes('all stores') || l.includes('more stores') ||
+            l.includes('came from here') || l.includes('flash ai') || l.includes('just saved') ||
+            l.includes('ai score') || l.includes('best price') ||
+            l.startsWith('save ₹') || l.startsWith('₹') || l.startsWith('rs.') ||
+            /^[\d\s%,₹]+$/.test(l) || l.length < 2 || l.length > 50;
         }
-        const KNOWN = ['amazon','flipkart','myntra','ajio','nykaa','tatacliq','croma','snapdeal','meesho',
-          'jiomart','bigbasket','zepto','blinkit','swiggy','zomato','firstcry','netmeds','lenskart',
-          'boat','mamaearth','purplle','bewakoof','decathlon','pepperfry','tata cliq','vijay sales','reliance digital'];
+
+        const KNOWN = ['amazon','flipkart','myntra','ajio','nykaa','tatacliq','tata cliq','croma','snapdeal',
+          'meesho','jiomart','bigbasket','zepto','blinkit','swiggy','instamart','zomato','firstcry',
+          'netmeds','lenskart','boat','mamaearth','purplle','bewakoof','decathlon','pepperfry',
+          'vijay sales','reliance digital','nubo','shade station','getuscart'];
+
+        const GNAMES = ['flash ai','compare prices','best price','product details','product information','specifications','description','overview','features'];
 
         const productName = (() => {
-          const G = ['flash ai','compare prices','best price','product details','product information','specifications','overview'];
-          for (const el of document.querySelectorAll('h1,h2')) {
+          for (const el of document.querySelectorAll('h1,h2,[class*="product-name"],[class*="productName"]')) {
             const t = el.textContent.trim();
-            if (t.length>5 && !G.some(g=>t.toLowerCase().includes(g))) return t;
+            if (t && t.length > 5 && !GNAMES.some(g => t.toLowerCase().includes(g))) return t;
           }
-          return document.title.replace(/\s*[-|]?\s*(Flash.*|Compare.*|Best Price.*)$/i,'').trim()||'';
+          return document.title.replace(/\s*[-|]?\s*(Flash.*|Compare.*|Best Price.*)$/i,'').trim() || '';
         })();
 
+        // Product image — decode Flash CDN wrapper to get actual product image URL
         const productImage = (() => {
           for (const img of document.querySelectorAll('img')) {
-            const src = img.src||'';
-            if (!src||src.includes('/merchants/')||src.includes('favicon')||src.includes('/logo')) continue;
-            if (src.includes('img.flash.co')&&(src.includes('plain/')||src.includes('f:webp'))) return src;
-            if (src.includes('media-amazon')||src.includes('flixcart')||src.includes('akamaized')||src.includes('_SL')||src.includes('_AC_')||src.includes('staticimg')) return src;
+            const src = img.src || '';
+            if (!src || src.includes('/merchants/') || src.includes('favicon')) continue;
+            if (src.includes('img.flash.co') && src.includes('/plain/')) {
+              try { return decodeURIComponent(src.split('/plain/')[1]); } catch { return src; }
+            }
+            if (src.includes('media-amazon.com') || src.includes('_SL') || src.includes('flixcart') || src.includes('rukmini')) return src;
           }
-          let best='',bestS=0;
+          let best = '', bestSize = 0;
           for (const img of document.querySelectorAll('img')) {
-            const src=img.src||''; if(!src||src.includes('/merchants/')||src.includes('favicon'))continue;
-            const s=(img.naturalWidth||img.width||0)*(img.naturalHeight||img.height||0);
-            if(s>bestS){bestS=s;best=src;}
+            if (!img.src || img.src.includes('/merchants/') || img.src.includes('favicon')) continue;
+            const sz = (img.naturalWidth||img.width||0)*(img.naturalHeight||img.height||0);
+            if (sz > bestSize) { bestSize = sz; best = img.src; }
           }
           return best;
         })();
 
-        const storeLinks={};
-        document.querySelectorAll('a[href]').forEach(a=>{
-          const href=a.href||''; if(!href||href.includes('flash.co')||href==='#')return;
-          const ctx=(a.closest('[class]')?.textContent||'')+href;
-          ['amazon','flipkart','myntra','ajio','nykaa','tatacliq','croma','snapdeal','meesho','jiomart','bigbasket','zepto','blinkit','swiggy','zomato'].forEach(s=>{
-            if((href.toLowerCase().includes(s)||ctx.toLowerCase().includes(s))&&!storeLinks[s])storeLinks[s]=href;
-          });
+        // Store links from anchor tags
+        const storeLinks = {};
+        document.querySelectorAll('a[href]').forEach(a => {
+          const href = a.href;
+          if (!href || href.includes('flash.co') || href === '#') return;
+          for (const s of ['amazon','flipkart','myntra','ajio','nykaa','tatacliq','croma','snapdeal','meesho','jiomart','bigbasket','zepto','blinkit','swiggy','zomato']) {
+            if (href.toLowerCase().includes(s) && !storeLinks[s]) storeLinks[s] = href;
+          }
         });
 
-        const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,null);
-        const priceNodes=[]; let node;
-        while((node=walker.nextNode())){
-          const m=node.textContent.trim().match(/^₹\s*([\d,]+)$/);
-          if(m){const p=parseInt(m[1].replace(/,/g,''));if(p>=100&&p<=1000000)priceNodes.push({node,price:p});}
-        }
-        const stores=[],seenStores=new Set();
-        for(const{node,price}of priceNodes){
-          let container=node.parentElement,foundName=null;
-          for(let d=0;d<10&&container&&!foundName;d++){
-            const leafTexts=[];
-            container.querySelectorAll('*').forEach(el=>{if(!el.children.length){const t=(el.textContent||'').trim();if(t)leafTexts.push(t);}});
-            for(const t of leafTexts){if(KNOWN.some(s=>t.toLowerCase()===s||t.toLowerCase()===s.replace(' ',''))&&!seenStores.has(t)&&!isUILabel(t)){foundName=t;break;}}
-            if(!foundName){for(const t of leafTexts){if(!isUILabel(t)&&!/^₹/.test(t)&&!seenStores.has(t)){foundName=t;break;}}}
-            container=container.parentElement;
-          }
-          if(foundName){
-            seenStores.add(foundName);
-            const k=foundName.toLowerCase().replace(/\s+/g,'');
-            stores.push({name:foundName,price,url:storeLinks[k]||storeLinks[foundName.toLowerCase()]||''});
+        // Find price nodes
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+        const priceNodes = [];
+        let node;
+        while ((node = walker.nextNode())) {
+          const m = node.textContent.trim().match(/^₹\s*([\d,]+)$/);
+          if (m) {
+            const price = parseInt(m[1].replace(/,/g,''));
+            if (price >= 100 && price <= 1000000) priceNodes.push({ node, price });
           }
         }
-        return{productName,productImage,stores};
+
+        const stores = [], seen = new Set();
+        for (const { node, price } of priceNodes) {
+          let container = node.parentElement, found = null;
+          for (let d = 0; d < 10 && container && !found; d++) {
+            const leaves = [];
+            container.querySelectorAll('*').forEach(el => { if (!el.children.length) { const t=(el.textContent||'').trim(); if(t) leaves.push(t); }});
+            for (const t of leaves) { if (KNOWN.some(s => t.toLowerCase()===s||t.toLowerCase().startsWith(s+' ')) && !seen.has(t) && !isUILabel(t)) { found=t; break; } }
+            if (!found) { for (const t of leaves) { if (!isUILabel(t)&&!/^₹/.test(t)&&!/^[\d,]+$/.test(t)&&!seen.has(t)) { found=t; break; } } }
+            container = container.parentElement;
+          }
+          if (found) {
+            seen.add(found);
+            const k = found.toLowerCase().replace(/\s+/g,'');
+            stores.push({ name: found, price, url: storeLinks[k] || storeLinks[found.toLowerCase()] || '' });
+          }
+        }
+        return { productName, productImage, stores };
       });
 
       console.log('[Flash/Puppeteer] ✅ Extracted', extracted.stores.length, 'stores:', extracted.stores.map(s=>s.name+':₹'+s.price).join(' | '));
-      if(extracted.stores.length===0){
-        const html=await page.content();
-        return{error:'No prices found in DOM',pageHash,htmlSample:html.substring(2000,3000)};
+
+      if (extracted.stores.length === 0) {
+        const html = await page.content();
+        return { error: 'No prices found in DOM', pageHash, htmlSample: html.substring(500, 2000) };
       }
-      return{
-        ok:true, pageHash,
-        data:{
-          response:{feedbacks:[{storePrices:extracted.stores.map(s=>({storeName:s.name,price:s.price,url:s.url}))}]},
-          productName:extracted.productName,
-          productImage:extracted.productImage,
+
+      return {
+        ok: true, pageHash,
+        data: {
+          response: { feedbacks: [{ storePrices: extracted.stores.map(s=>({ storeName:s.name, price:s.price, url:s.url })) }] },
+          productName:  extracted.productName,
+          productImage: extracted.productImage,
         },
-        pollAttempt:0,
+        pollAttempt: 0,
       };
+
     } finally { await page.close().catch(()=>{}); }
   });
 }
