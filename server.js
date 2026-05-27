@@ -14,423 +14,8 @@ const EXTRAPE_ACCESS_TOKEN   = process.env.EXTRAPE_ACCESS_TOKEN   || '';
 const EXTRAPE_REMEMBER_TOKEN = process.env.EXTRAPE_REMEMBER_TOKEN || '';
 const FRONTEND_URL            = process.env.FRONTEND_URL           || 'https://smartpickdeals.live';
 const SERP_API_KEY            = process.env.SERP_API_KEY           || '';
-const FLASH_DEVICE_ID         = process.env.FLASH_DEVICE_ID        || 'web-spd-backend';
-const ADMIN_SECRET            = process.env.ADMIN_SECRET           || 'spd-admin-2024';
 
-// ── Flash token — in-memory cache, loaded from .env at startup ──
-// Update via the bookmarklet: visit https://api.smartpickdeals.live/flash/token-page
-// No server restart or .env editing needed when refreshing the token.
-const flashTokenCache = {
-  token:    process.env.FLASH_AUTH_TOKEN  || '',
-  deviceId: process.env.FLASH_DEVICE_ID   || '',
-  userId:   process.env.FLASH_USER_ID     || '',
-};
-
-function getFlashToken() {
-  if (!flashTokenCache.token) throw new Error('Flash token not set. Visit https://api.smartpickdeals.live/flash/token-page for setup.');
-  return flashTokenCache.token;
-}
-
-// ── POST /flash/update-token ── (called by the bookmarklet from the owner's browser)
-app.post('/flash/update-token', async (req, res) => {
-  const { token, secret } = req.body;
-  if (!token) return res.status(400).json({ error: 'Missing token' });
-  if (secret !== ADMIN_SECRET) return res.status(401).json({ error: 'Wrong secret' });
-  const { deviceId, userId } = req.body;
-  flashTokenCache.token    = token;
-  if (deviceId) flashTokenCache.deviceId = deviceId;
-  if (userId)   flashTokenCache.userId   = userId;
-  console.log('[Flash] ✅ Token updated via bookmarklet. deviceId:', deviceId, 'userId:', userId ? userId.substring(0,8)+'...' : 'n/a');
-  const fs = require('fs');
-  const envPath = require('path').join(process.env.HOME || '/home/smartpick', 'extrape-affiliate', '.env');
-  try {
-    let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
-    const upsert = (key, val) => {
-      if (!val) return;
-      if (envContent.includes(key + '=')) envContent = envContent.replace(new RegExp(key + '=.*'), key + '=' + val);
-      else envContent += '\n' + key + '=' + val + '\n';
-    };
-    upsert('FLASH_AUTH_TOKEN', token);
-    if (deviceId) upsert('FLASH_DEVICE_ID', deviceId);
-    if (userId)   upsert('FLASH_USER_ID',   userId);
-    fs.writeFileSync(envPath, envContent);
-    console.log('[Flash] Token + deviceId + userId written to .env');
-  } catch(e) { console.log('[Flash] Could not write .env:', e.message); }
-  return res.json({ ok: true, message: 'Token updated! Good for ~14 days.' });
-});
-
-// ── GET /flash/token-status ──
-app.get('/flash/token-status', (req, res) => {
-  res.json({ set: !!flashTokenCache.token, preview: flashTokenCache.token ? flashTokenCache.token.substring(0,16)+'...' : null });
-});
-
-// ── GET /flash/token-page ── bookmarklet instructions page
-app.get('/flash/token-page', (req, res) => {
-  const secret = ADMIN_SECRET;
-  const backend = 'https://api.smartpickdeals.live';
-  const bm = `(function(){var t=null;try{t=localStorage.getItem('authToken')||localStorage.getItem('flash_auth_token')||localStorage.getItem('token')||localStorage.getItem('accessToken');}catch(e){}if(!t){var m=document.cookie.match(/(?:^|;\\s*)(?:authToken|flash_auth_token|token)=([^;]+)/);if(m)t=decodeURIComponent(m[1]);}if(!t){var ss=document.querySelectorAll('script');for(var i=0;i<ss.length;i++){var m2=ss[i].textContent.match(/"(?:authToken|token)":\\s*"(eyJ[^"]{20,})"/);if(m2){t=m2[1];break;}}}if(!t){alert('Token not found. Make sure you are logged into flash.co.');return;}fetch('${backend}/flash/update-token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t,secret:'${secret}'})}).then(function(r){return r.json();}).then(function(d){alert(d.ok?'✅ Smart Pick Deals token updated! Good for ~14 days.':'❌ '+d.error);}).catch(function(e){alert('❌ '+e.message);});})()`;
-  res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Flash Token Updater</title>
-<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0f;color:#f0ede8;max-width:600px;margin:60px auto;padding:0 24px;}
-h1{font-size:22px;margin-bottom:6px;}.sub{color:#6b6878;font-size:14px;margin-bottom:32px;}
-.card{background:#13131a;border:1px solid #1e1e2e;border-radius:16px;padding:28px;margin-bottom:20px;}
-h2{font-size:14px;font-weight:700;margin-bottom:18px;color:#ff9a5c;text-transform:uppercase;letter-spacing:.06em;}
-.step{display:flex;gap:14px;margin-bottom:16px;}.num{background:rgba(255,107,43,.12);border:1px solid rgba(255,107,43,.25);color:#ff6b2b;font-weight:800;font-size:12px;width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
-p{font-size:14px;color:#b0ada8;line-height:1.6;margin:0;}
-.bm{display:inline-block;background:#ff6b2b;color:#fff;font-weight:700;font-size:15px;padding:13px 28px;border-radius:12px;text-decoration:none;margin:10px 0;box-shadow:0 4px 20px rgba(255,107,43,.35);}
-.bm:hover{background:#ff9a5c;}.hint{font-size:12px;color:#6b6878;margin-top:8px;}
-.status{background:#0a0a0f;border:1px solid #1e1e2e;border-radius:10px;padding:14px 18px;font-family:monospace;font-size:13px;}
-.ok{color:#29d87a;}.badge{display:inline-block;background:rgba(41,216,122,.1);border:1px solid rgba(41,216,122,.2);color:#29d87a;font-size:11px;font-weight:700;padding:2px 10px;border-radius:999px;margin-left:8px;}</style></head>
-<body><h1>⚡ Flash Token Updater</h1><p class="sub">Refresh your Smart Pick Deals token in 5 seconds</p>
-<div class="card"><h2>Step 1 — One-time setup</h2>
-<div class="step"><div class="num">1</div><p>Drag the button below to your browser bookmarks bar</p></div>
-<a class="bm" href="javascript:${encodeURIComponent(bm)}">⚡ Update SPD Flash Token</a>
-<p class="hint">Can't drag? Right-click → Bookmark this link</p></div>
-<div class="card"><h2>Step 2 — Every ~14 days (takes 5 seconds)</h2>
-<div class="step"><div class="num">1</div><p>Go to <a href="https://flash.co" target="_blank" style="color:#ff9a5c">flash.co</a> and make sure you're logged in</p></div>
-<div class="step"><div class="num">2</div><p>Click the <strong>⚡ Update SPD Flash Token</strong> bookmark</p></div>
-<div class="step"><div class="num">3</div><p>See <strong>"✅ Token updated!"</strong> popup — done</p></div></div>
-<div class="card"><h2>Current status</h2><div class="status" id="st">Checking...</div></div>
-<script>fetch('/flash/token-status').then(r=>r.json()).then(d=>{document.getElementById('st').innerHTML=d.set?'<span class="ok">✅ Token active</span><span class="badge">Set</span><br/><small style="color:#6b6878">Preview: '+d.preview+'</small>':'⚠️ No token yet. Follow steps above.';}).catch(()=>{document.getElementById('st').textContent='Could not reach backend.';});</script>
-</body></html>`);
-});
-
-
-// ── Puppeteer Flash.co scraper ──
-// Runs all Flash API calls from WITHIN a real headless Chrome browser.
-// Chrome's TLS fingerprint passes Flash.co WAF — server IP doesn't matter.
-
-let flashBrowser     = null;
-let flashBrowserBusy = false;
-const flashWaitQueue = [];
-
-async function getFlashBrowser() {
-  if (flashBrowser && flashBrowser.isConnected()) return flashBrowser;
-  console.log('[Flash/Puppeteer] Launching Chrome...');
-  flashBrowser = await puppeteer.launch({
-    headless: 'new',
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu','--single-process','--no-zygote','--disable-extensions','--mute-audio'],
-  });
-  flashBrowser.on('disconnected', () => {
-    console.log('[Flash/Puppeteer] Browser disconnected');
-    flashBrowser = null; flashBrowserBusy = false;
-    while (flashWaitQueue.length) flashWaitQueue.shift()();
-  });
-  try {
-    const warm = await flashBrowser.newPage();
-    await warm.goto('https://flash.co', { waitUntil: 'domcontentloaded', timeout: 20000 });
-    await warm.close();
-    console.log('[Flash/Puppeteer] ✅ Chrome ready');
-  } catch(e) { console.log('[Flash/Puppeteer] Warm-up skipped:', e.message); }
-  return flashBrowser;
-}
-
-function withFlashBrowser(fn) {
-  return new Promise((resolve, reject) => {
-    const run = async () => {
-      flashBrowserBusy = true;
-      try { resolve(await fn()); } catch(e) { reject(e); }
-      finally { flashBrowserBusy = false; if (flashWaitQueue.length) flashWaitQueue.shift()(); }
-    };
-    if (!flashBrowserBusy) run(); else flashWaitQueue.push(run);
-  });
-}
-
-async function flashSearchPuppeteer(productUrl) {
-  return withFlashBrowser(async () => {
-    const browser = await getFlashBrowser();
-    const page    = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800 });
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36');
-    try {
-      // ── Step 1: inject auth token as cookie so flash.co treats us as logged in ──
-      await page.goto('https://flash.co', { waitUntil: 'domcontentloaded', timeout: 20000 });
-
-      if (flashTokenCache.token) {
-        await page.evaluate((token) => {
-          // Set token in all the places flash.co might read it
-          try { localStorage.setItem('authToken',    token); } catch(e) {}
-          try { localStorage.setItem('accessToken',  token); } catch(e) {}
-          try { localStorage.setItem('flash_token',  token); } catch(e) {}
-        }, flashTokenCache.token);
-      }
-
-      // ── Step 2: type product URL into flash.co search box and submit ──
-      // Find the search input (flash.co has a URL input on homepage)
-      const inputSelector = 'input[type="text"], input[type="url"], input[type="search"], textarea, [contenteditable="true"]';
-      let inputFound = false;
-      try {
-        await page.waitForSelector(inputSelector, { timeout: 8000 });
-        await page.click(inputSelector);
-        await page.keyboard.down('Control');
-        await page.keyboard.press('KeyA');
-        await page.keyboard.up('Control');
-        await page.type(inputSelector, productUrl, { delay: 20 });
-        await page.keyboard.press('Enter');
-        inputFound = true;
-        console.log('[Flash/Puppeteer] Submitted URL via input box');
-      } catch(e) {
-        console.log('[Flash/Puppeteer] Input not found, using stream API fallback:', e.message);
-      }
-
-      // ── Step 3: fire stream API — extracts pageHash OR fallback URL + threadId ──
-      const snap = { url: productUrl, token: flashTokenCache.token, deviceId: flashTokenCache.deviceId || 'web-spd', userId: flashTokenCache.userId || '' };
-      const streamResult = await page.evaluate(async ({ url, token, deviceId, userId }) => {
-        const ua = navigator.userAgent;
-        const idempotencyKey = btoa(unescape(encodeURIComponent(userId + '_' + url + '_WEB')));
-        const headers = {
-          'Authorization': 'Bearer ' + token, 'Channel-Type': 'web',
-          'Content-Type': 'application/json', 'Accept': 'text/event-stream',
-          'Origin': 'https://flash.co', 'X-Country-Code': 'IN',
-          'X-Device-Id': deviceId, 'X-Timezone': 'Asia/Calcutta',
-          'X-Idempotency-Key': idempotencyKey,
-        };
-        const params = new URLSearchParams({ source:'APPEND', context:'HOME_URL_PASTE', user_agent:ua, device_type:'DESKTOP', country_code:'IN' });
-        try {
-          const sr = await fetch('https://api.flash.co/agents/chat/stream?' + params, { method:'POST', headers, body: JSON.stringify({ query:url, context:'HOME_URL_PASTE' }) });
-          if (!sr.ok) return { error: sr.status };
-          const text = await sr.text();
-          // Extract pageHash if product already indexed
-          let pageHash = null;
-          for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/, /product-search\/([A-Za-z0-9_-]{4,})/, /"pageHash":"([A-Za-z0-9_-]{4,})"/]) {
-            const m = text.match(pat); if (m) { pageHash = m[1]; break; }
-          }
-          // Extract threadId for polling
-          const threadMatch = text.match(/"threadId"\s*:\s*(\d+)/);
-          const threadId = threadMatch ? threadMatch[1] : null;
-          // Extract exact fallback URL from stream (includes webapp.flash.co domain + all params)
-          const navMatch = text.match(/INT_NAVIGATION[\s\S]*?"(https:\/\/[^"]+products-fallback[^"]+)"/);
-          const fallbackUrl = navMatch ? navMatch[1].replace(/\\u0026/g, '&') : null;
-          return { pageHash, threadId, fallbackUrl, isFallback: !!fallbackUrl };
-        } catch(e) { return { error: e.message }; }
-      }, snap);
-
-      // ── Step 4: get pageHash — use stream result or navigate to exact fallback URL ──
-      let pageHash = null;
-
-      if (streamResult && streamResult.pageHash) {
-        // Product already indexed — navigate directly
-        pageHash = streamResult.pageHash;
-        await page.goto('https://flash.co/product-details/' + pageHash, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        console.log('[Flash/Puppeteer] Direct product-details:', pageHash);
-
-      } else if (streamResult && streamResult.fallbackUrl) {
-        // Product is being processed — navigate to exact fallback URL Flash gave us
-        console.log('[Flash/Puppeteer] Navigating to fallback:', streamResult.fallbackUrl.substring(0, 80));
-        try {
-          await page.goto(streamResult.fallbackUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-        } catch(e) { console.log('[Flash/Puppeteer] Fallback nav error (ok):', e.message); }
-
-        // Wait up to 120s for Flash to redirect to product-details
-        try {
-          await page.waitForFunction(
-            () => window.location.href.includes('product-details'),
-            { timeout: 120000 }
-          );
-          const urlMatch = page.url().match(/product-details\/([A-Za-z0-9_-]{4,})/);
-          if (urlMatch) {
-            pageHash = urlMatch[1];
-            console.log('[Flash/Puppeteer] Fallback redirected to product-details:', pageHash);
-          }
-        } catch(e) {
-          console.log('[Flash/Puppeteer] Fallback did not redirect in 120s');
-          // Try thread polling as last resort
-          if (streamResult.threadId) {
-            console.log('[Flash/Puppeteer] Polling thread', streamResult.threadId);
-            const threadHash = await page.evaluate(async ({ threadId, token, deviceId }) => {
-              const headers = { 'Authorization': 'Bearer ' + token, 'Channel-Type': 'web', 'Accept': 'application/json', 'Origin': 'https://flash.co', 'X-Country-Code': 'IN', 'X-Device-Id': deviceId, 'X-Timezone': 'Asia/Calcutta' };
-              for (let i = 0; i < 12; i++) {
-                await new Promise(r => setTimeout(r, 5000));
-                try {
-                  const r = await fetch('https://api.flash.co/agents/thread/' + threadId, { headers });
-                  if (!r.ok) continue;
-                  const data = await r.json();
-                  const text = JSON.stringify(data);
-                  for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/, /"pageHash"\s*:\s*"([A-Za-z0-9_-]{4,})"/, /"referenceId"\s*:\s*"([A-Za-z0-9_-]{4,})"/]) {
-                    const m = text.match(pat); if (m) return m[1];
-                  }
-                } catch {}
-              }
-              return null;
-            }, { threadId: streamResult.threadId, token: snap.token, deviceId: snap.deviceId });
-            if (threadHash) {
-              pageHash = threadHash;
-              await page.goto('https://flash.co/product-details/' + threadHash, { waitUntil: 'domcontentloaded', timeout: 30000 });
-              console.log('[Flash/Puppeteer] Thread gave hash:', threadHash);
-            }
-          }
-        }
-
-      } else {
-        // UI input approach — wait for flash.co to navigate automatically
-        try {
-          await page.waitForFunction(() => window.location.href.includes('product-details'), { timeout: 60000 });
-          const urlMatch = page.url().match(/product-details\/([A-Za-z0-9_-]{4,})/);
-          if (urlMatch) pageHash = urlMatch[1];
-          console.log('[Flash/Puppeteer] UI navigation to:', page.url());
-        } catch(e) { console.log('[Flash/Puppeteer] UI navigation timed out'); }
-      }
-
-      if (!pageHash) return { error: 'FLASH_NO_DATA', message: 'Flash.co could not find comparison data for this product.' };
-
-      if (!pageHash) {
-        const urlMatch = page.url().match(/product-details\/([A-Za-z0-9_-]{4,})/);
-        pageHash = urlMatch ? urlMatch[1] : 'unknown';
-      }
-      console.log('[Flash/Puppeteer] pageHash:', pageHash, '— waiting for all prices...');
-
-      // ── Step 5: wait for prices to fully load (up to 60s) ──
-      try {
-        // Wait until we see at least 2 different prices (means comparison loaded)
-        await page.waitForFunction(() => {
-          const prices = document.body.innerText.match(/₹\s*[\d,]{3,}/g) || [];
-          return prices.length >= 2;
-        }, { timeout: 60000 });
-      } catch(e) { console.log('[Flash/Puppeteer] Price wait timed out — extracting anyway'); }
-
-      // Wait for product name
-      try {
-        await page.waitForFunction(() => {
-          const h1 = document.querySelector('h1');
-          const G = ['flash ai','compare prices','best price','product details','product information'];
-          return h1 && h1.textContent.trim().length > 5 && !G.some(g => h1.textContent.toLowerCase().includes(g));
-        }, { timeout: 15000 });
-      } catch(e) {}
-
-      // Scroll to trigger lazy-load
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await new Promise(r => setTimeout(r, 3000));
-
-      // Click "View all stores"
-      try {
-        const clicked = await page.evaluate(() => {
-          for (const btn of document.querySelectorAll('button, a, [role="button"], span, div')) {
-            const t = (btn.textContent || '').toLowerCase().trim();
-            if (t.includes('view all') || t.includes('show all') || t.includes('all stores') || t.includes('more stores') || /view \d+ store/.test(t)) { btn.click(); return true; }
-          }
-          return false;
-        });
-        if (clicked) {
-          await new Promise(r => setTimeout(r, 3000));
-          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-          await new Promise(r => setTimeout(r, 2000));
-        }
-      } catch(e) {}
-
-      await page.evaluate(() => window.scrollTo(0, 0));
-      await new Promise(r => setTimeout(r, 1000));
-
-      // ── Step 6: extract prices + product info from DOM ──
-      const extracted = await page.evaluate(() => {
-        function isUILabel(t) {
-          const l = t.toLowerCase().trim();
-          return /^[a-z][a-z0-9]*(_[a-z0-9]+)+$/.test(l) ||
-            ['wallet','visit','open','buy now','buy','new','deal','sponsored','recommended','pro','in','check','refresh'].includes(l) ||
-            l.includes('updated') || l.includes('days ago') || l.includes('hours ago') ||
-            l.includes('view all') || l.includes('show all') || l.includes('all stores') || l.includes('more stores') ||
-            l.includes('came from here') || l.includes('flash ai') || l.includes('just saved') ||
-            l.includes('ai score') || l.includes('best price') ||
-            l.startsWith('save ₹') || l.startsWith('₹') || l.startsWith('rs.') ||
-            /^[\d\s%,₹]+$/.test(l) || l.length < 2 || l.length > 50;
-        }
-
-        const KNOWN = ['amazon','flipkart','myntra','ajio','nykaa','tatacliq','tata cliq','croma','snapdeal',
-          'meesho','jiomart','bigbasket','zepto','blinkit','swiggy','instamart','zomato','firstcry',
-          'netmeds','lenskart','boat','mamaearth','purplle','bewakoof','decathlon','pepperfry',
-          'tata cliq','vijay sales','reliance digital','nubo','shade station','getuscart'];
-
-        const GNAMES = ['flash ai','compare prices','best price','product details','product information','specifications','description','overview','features'];
-
-        const productName = (() => {
-          for (const el of document.querySelectorAll('h1,h2,[class*="product-name"],[class*="productName"]')) {
-            const t = el.textContent.trim();
-            if (t && t.length > 5 && !GNAMES.some(g => t.toLowerCase().includes(g))) return t;
-          }
-          return document.title.replace(/\s*[-|]?\s*(Flash.*|Compare.*|Best Price.*)$/i,'').trim() || '';
-        })();
-
-        // Decode Flash CDN image URL to get actual product image
-        const productImage = (() => {
-          for (const img of document.querySelectorAll('img')) {
-            const src = img.src || '';
-            if (!src || src.includes('/merchants/') || src.includes('favicon')) continue;
-            if (src.includes('img.flash.co') && src.includes('/plain/')) {
-              try { return decodeURIComponent(src.split('/plain/')[1]); } catch { return src; }
-            }
-            if (src.includes('media-amazon.com') || src.includes('_SL') || src.includes('flixcart') || src.includes('rukmini')) return src;
-          }
-          let best = '', bestSize = 0;
-          for (const img of document.querySelectorAll('img')) {
-            if (!img.src || img.src.includes('/merchants/') || img.src.includes('favicon')) continue;
-            const sz = (img.naturalWidth||img.width||0)*(img.naturalHeight||img.height||0);
-            if (sz > bestSize) { bestSize = sz; best = img.src; }
-          }
-          return best;
-        })();
-
-        const storeLinks = {};
-        document.querySelectorAll('a[href]').forEach(a => {
-          const href = a.href;
-          if (!href || href.includes('flash.co') || href === '#') return;
-          for (const s of ['amazon','flipkart','myntra','ajio','nykaa','tatacliq','croma','snapdeal','meesho','jiomart','bigbasket','zepto','blinkit','swiggy','zomato']) {
-            if (href.toLowerCase().includes(s) && !storeLinks[s]) storeLinks[s] = href;
-          }
-        });
-
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-        const priceNodes = [];
-        let node;
-        while ((node = walker.nextNode())) {
-          const m = node.textContent.trim().match(/^₹\s*([\d,]+)$/);
-          if (m) {
-            const price = parseInt(m[1].replace(/,/g,''));
-            if (price >= 100 && price <= 1000000) priceNodes.push({ node, price });
-          }
-        }
-
-        const stores = [], seen = new Set();
-        for (const { node, price } of priceNodes) {
-          let container = node.parentElement, found = null;
-          for (let d = 0; d < 10 && container && !found; d++) {
-            const leaves = [];
-            container.querySelectorAll('*').forEach(el => { if (!el.children.length) { const t=(el.textContent||'').trim(); if(t) leaves.push(t); }});
-            for (const t of leaves) { if (KNOWN.some(s => t.toLowerCase()===s || t.toLowerCase().startsWith(s+' ')) && !seen.has(t) && !isUILabel(t)) { found=t; break; } }
-            if (!found) { for (const t of leaves) { if (!isUILabel(t)&&!/^₹/.test(t)&&!/^[\d,]+$/.test(t)&&!seen.has(t)) { found=t; break; } } }
-            container = container.parentElement;
-          }
-          if (found) {
-            seen.add(found);
-            const k = found.toLowerCase().replace(/\s+/g,'');
-            stores.push({ name:found, price, url:storeLinks[k]||storeLinks[found.toLowerCase()]||'' });
-          }
-        }
-        return { productName, productImage, stores };
-      });
-
-      console.log('[Flash/Puppeteer] ✅ Extracted', extracted.stores.length, 'stores:', extracted.stores.map(s=>s.name+':₹'+s.price).join(' | '));
-
-      if (extracted.stores.length === 0) {
-        const html = await page.content();
-        return { error: 'No prices found in DOM', pageHash, htmlSample: html.substring(500, 2500) };
-      }
-
-      return {
-        ok: true, pageHash,
-        data: {
-          response: { feedbacks: [{ storePrices: extracted.stores.map(s=>({ storeName:s.name, price:s.price, url:s.url })) }] },
-          productName:  extracted.productName,
-          productImage: extracted.productImage,
-        },
-        pollAttempt: 0,
-      };
-
-    } finally { await page.close().catch(()=>{}); }
-  });
-}
-
-getFlashBrowser().catch(e => console.log('[Flash/Puppeteer] Startup launch failed (will retry):', e.message));
-
-// ── Encode affiliate URL ──
+// ── Encode affiliate URL as base64url (no memory needed for redirect) ──
 function makeGoLink(affiliateUrl) {
   // base64url-encode the full affiliate URL
   // Cloudflare Pages function decodes it and redirects directly
@@ -1943,9 +1528,14 @@ app.get('/battery', async (req, res) => {
 });
 
 // ── Flash.co Backend Proxy ──
-// Routes flash.co API calls through the server using the token from env vars
-// FLASH_AUTH_TOKEN and FLASH_DEVICE_ID are declared at the top of this file
-const PROXY_URL = process.env.PROXY_URL || ''; // optional: residential proxy
+// Routes flash.co API calls through Render using the user's session token
+// Requires FLASH_AUTH_TOKEN and FLASH_DEVICE_ID env vars on Render
+// Note: Only works if Render's IP is not blocked by flash.co
+// For better success rate, optionally configure PROXY_URL (residential proxy)
+
+const FLASH_AUTH_TOKEN = process.env.FLASH_AUTH_TOKEN || '';
+const FLASH_DEVICE_ID  = process.env.FLASH_DEVICE_ID  || 'web-spd-backend';
+const PROXY_URL        = process.env.PROXY_URL         || ''; // optional: residential proxy
 
 // Proxy: POST stream to flash.co to get pageHash
 // GET test endpoint — open in browser to test flash.co proxy
@@ -2619,181 +2209,89 @@ app.get('/test-link', async (req, res) => {
   catch(e) { res.status(500).json({ error:e.message }); }
 });
 
-// ── Price comparison — Flash.co (replaces Buyhatke) ──
-// Token managed server-side in env var — frontend needs no auth at all.
-// Response shape is identical to the old Buyhatke version so the frontend needs no changes.
+// ── Price comparison — Buyhatke ──
 app.get('/compare/search', async (req, res) => {
   const { url: rawUrl } = req.query;
   if (!rawUrl) return res.status(400).json({ error: 'Pass ?url=' });
-  if (!flashTokenCache.token) return res.status(503).json({
-    error: 'Flash token not set.',
-    fix: 'Visit https://api.smartpickdeals.live/flash/token-page and follow the bookmarklet setup.',
-  });
 
   try {
+    // Resolve short URLs before any further processing
     let url = rawUrl;
     if (isShortUrl(rawUrl)) {
-      try { url = await resolveRedirect(rawUrl); console.log('[Compare] Resolved', rawUrl.substring(0,50), '→', url.substring(0,70)); }
-      catch(e) { console.log('[Compare] Short URL resolution failed:', e.message); }
-    }
-    console.log('[Compare/Flash] URL:', url);
-
-    const srcHost  = (() => { try { return new URL(url).hostname.replace('www.',''); } catch { return ''; } })();
-    const srcStore = normalizeStore(srcHost.split('.')[0]) || '';
-
-    // ── Run Flash search via Puppeteer (real Chrome browser, bypasses TLS fingerprint block) ──
-    if (!flashTokenCache.token) return res.status(503).json({ error: 'Flash token not set.', fix: 'Visit https://api.smartpickdeals.live/flash/token-page' });
-    const flashResult = await flashSearchPuppeteer(url);
-
-    if (!flashResult) return res.status(500).json({ error: 'Puppeteer returned no result' });
-    if (flashResult.error === 'TOKEN_EXPIRED') {
-      flashTokenCache.token = '';
-      return res.status(503).json({ error: 'Flash token expired.', fix: 'Visit https://api.smartpickdeals.live/flash/token-page and click the bookmarklet on flash.co' });
-    }
-    if (flashResult.error === 'FLASH_NO_DATA') {
-      return res.status(404).json({ error: 'Flash.co has no comparison data for this product. Try a popular product from Amazon, Myntra, Flipkart or Zepto.' });
-    }
-    if (flashResult.error) return res.status(502).json({ error: flashResult.error, pageHash: flashResult.pageHash });
-
-    const rawPriceData = flashResult.data;
-    const pageHash     = flashResult.pageHash;
-
-
-    // ─────────────────────────────────────────────────────────────
-    // Step 3 — Parse Flash feedbacks into the standard store shape.
-    // Flash nests price data differently depending on product type.
-    // We use a deep recursive digger to find it regardless of depth.
-    // ─────────────────────────────────────────────────────────────
-    const feedbacks = rawPriceData?.response?.feedbacks || rawPriceData?.feedbacks || [];
-    const meta      = rawPriceData?.response?.productDetails
-                   || rawPriceData?.productDetails
-                   || rawPriceData?.response
-                   || {};
-
-    const productName  = meta.name || meta.productName || meta.title || ('Product from ' + srcStore);
-    const productImage = meta.imageUrl || meta.image || meta.thumbnail || '';
-
-    // ── Deep recursive price list finder ──
-    // Flash embeds prices under many different key names and nesting levels.
-    // We recursively walk the entire response and collect every array that
-    // looks like a list of store prices (has storeName/price fields).
-    function isStorePriceItem(obj) {
-      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
-      const hasStore = obj.storeName || obj.name || obj.store || obj.retailer || obj.source;
-      const hasPrice = obj.price !== undefined || obj.salePrice !== undefined || obj.amount !== undefined || obj.sellingPrice !== undefined;
-      return !!(hasStore && hasPrice);
-    }
-
-    function deepFindPriceLists(obj, depth) {
-      if (!obj || typeof obj !== 'object' || depth > 12) return [];
-      if (Array.isArray(obj)) {
-        // If this array contains store price items, return it
-        const items = obj.filter(isStorePriceItem);
-        if (items.length > 0) return [items];
-        // Otherwise recurse into each element
-        return obj.flatMap(el => deepFindPriceLists(el, depth + 1));
-      }
-      // It's a plain object — check known keys first for speed, then recurse
-      const knownKeys = ['storePrices','prices','stores','storeList','comparePrices','priceComparison','offers','listings','results','data','feedbacks','feedback','content','payload','response'];
-      const found = [];
-      for (const key of knownKeys) {
-        if (obj[key]) found.push(...deepFindPriceLists(obj[key], depth + 1));
-      }
-      // Also recurse into all other keys
-      for (const key of Object.keys(obj)) {
-        if (!knownKeys.includes(key) && obj[key] && typeof obj[key] === 'object') {
-          found.push(...deepFindPriceLists(obj[key], depth + 1));
-        }
-      }
-      return found;
-    }
-
-    // Find all candidate price lists; pick the longest (most stores)
-    const allPriceLists = deepFindPriceLists(rawPriceData, 0);
-    allPriceLists.sort((a, b) => b.length - a.length);
-    const priceList = allPriceLists[0] || [];
-
-    console.log('[Compare/Flash] Found', allPriceLists.length, 'price list candidates, best has', priceList.length, 'items');
-
-    const storeMap = {};
-    for (const item of priceList) {
-      const rawName = item.storeName || item.name || item.store || item.retailer || item.source || '';
-      const name    = normalizeStore(rawName) || rawName.trim();
-      if (!name) continue;
-      const rawPrice = item.price ?? item.salePrice ?? item.sellingPrice ?? item.amount ?? 0;
-      const price    = parseInt(String(rawPrice).replace(/[^0-9]/g, '')) || 0;
-      if (price <= 0) continue;
-      const storeUrl = item.url || item.link || item.productUrl || item.deepLink || '';
-      if (!storeMap[name] || price < storeMap[name].price) {
-        storeMap[name] = { name, normalizedName: name, price, url: storeUrl };
+      try {
+        url = await resolveRedirect(rawUrl);
+        console.log('[Compare] Resolved', rawUrl.substring(0,50), '→', url.substring(0,70));
+      } catch(e) {
+        console.log('[Compare] Short URL resolution failed:', e.message);
+        // Keep original — fetchBuyhatke will also attempt resolution
       }
     }
+    console.log('[Compare] URL:', url);
 
-    let stores = Object.values(storeMap).sort((a, b) => a.price - b.price);
+    // ── Source store detection ──
+    const srcHost = (() => { try { return new URL(url).hostname.replace('www.',''); } catch(e) { return ''; } })();
+    const srcStore = (() => {
+      if (srcHost.includes('amazon') || srcHost.includes('amzn')) return 'Amazon';
+      if (srcHost.includes('flipkart'))        return 'Flipkart';
+      if (srcHost.includes('myntra'))          return 'Myntra';
+      if (srcHost.includes('ajio'))            return 'Ajio';
+      if (srcHost.includes('nykaa'))           return 'Nykaa';
+      if (srcHost.includes('tatacliq'))        return 'TataCliq';
+      if (srcHost.includes('croma'))           return 'Croma';
+      if (srcHost.includes('snapdeal'))        return 'Snapdeal';
+      if (srcHost.includes('meesho'))          return 'Meesho';
+      if (srcHost.includes('jiomart'))         return 'JioMart';
+      if (srcHost.includes('reliancedigital')) return 'Reliance Digital';
+      if (srcHost.includes('vijaysales'))      return 'Vijay Sales';
+      return '';
+    })();
 
-    stores = stores.map((s, i) => {
-      const n = s.normalizedName.toLowerCase();
-      const isSrc = srcStore && (n === srcStore.toLowerCase() || n.includes(srcStore.toLowerCase()) || srcStore.toLowerCase().includes(n));
-      return { ...s, isBest: i === 0, isSource: isSrc };
-    });
+    let stores       = [];
+    let productName  = '';
+    let productImage = '';
+    const errors     = [];
+
+    // ── Strategy 1: Buyhatke (primary) ──
+    try {
+      const bhRaw    = await fetchBuyhatke(url);
+      const bhParsed = parseBuyhatkeResponse(bhRaw, url, srcStore);
+      stores       = bhParsed.stores;
+      productName  = bhParsed.productName;
+      productImage = bhParsed.productImage;
+      console.log('[Compare] Buyhatke returned', stores.length, 'stores');
+    } catch(e) {
+      errors.push('Buyhatke: ' + e.message);
+      console.log('[Compare] Buyhatke failed:', e.message);
+    }
+
+
 
     if (stores.length === 0) {
-      console.log('[Compare/Flash] Parser found no prices. feedbacks:', feedbacks.length,
-        '| rawPriceData keys:', Object.keys(rawPriceData),
-        '| sample:', JSON.stringify(rawPriceData).substring(0, 600));
       return res.status(404).json({
-        error: 'Flash returned data but no parseable store prices.',
-        feedbackCount: feedbacks.length,
-        pageHash,
-        debug: 'Visit /compare/debug?url=YOUR_URL to inspect the raw Flash response',
+        error: 'No price comparison results found. ' + errors.join(' | '),
+        tried: errors,
       });
     }
 
     const srcEntry = stores.find(s => s.isSource);
     const savings  = srcEntry && !srcEntry.isBest ? srcEntry.price - stores[0].price : 0;
 
-    console.log('[Compare/Flash] FINAL:', stores.map(s => s.name + ':₹' + s.price + (s.isSource ? '[src]' : '') + (s.isBest ? '[best]' : '')).join(' | '));
+    console.log('[Compare] FINAL:',
+      stores.map(s => s.name + ':₹' + s.price + (s.isSource?'[src]':'') + (s.isBest?'[best]':'')).join(' | '));
 
     return res.json({
       stores,
-      productName,
+      productName:  productName || url,
       productImage,
-      totalStores: stores.length,
-      savings:     savings > 0 ? savings : 0,
-      dataSource:  'flash',
+      totalStores:  stores.length,
+      savings:      savings > 0 ? savings : 0,
+      dataSource: 'buyhatke',
     });
 
   } catch(e) {
-    console.error('[Compare/Flash] Unhandled error:', e.message);
+    console.error('[Compare] Unhandled error:', e.message);
     return res.status(500).json({ error: e.message });
   }
-});
-
-// ── Compare debug — dumps raw Flash response so you can inspect the structure ──
-// Usage: https://api.smartpickdeals.live/compare/debug?url=https://amzn.in/d/00aqArIu
-app.get('/compare/debug', async (req, res) => {
-  const { url: rawUrl } = req.query;
-  if (!rawUrl) return res.json({ usage: 'Add ?url=YOUR_PRODUCT_URL', example: '/compare/debug?url=https://amzn.in/d/00aqArIu' });
-  if (!flashTokenCache.token) return res.status(503).json({ error: 'No Flash token. Visit https://api.smartpickdeals.live/flash/token-page' });
-  try {
-    let url = rawUrl;
-    if (isShortUrl(rawUrl)) { try { url = await resolveRedirect(rawUrl); } catch {} }
-    console.log('[Debug] Running Puppeteer search for:', url);
-    const result = await flashSearchPuppeteer(url);
-    if (!result) return res.json({ error: 'No result from Puppeteer' });
-    if (result.error) return res.json({ error: result.error, pageHash: result.pageHash, streamSample: result.streamSample, sample: result.sample });
-    const feedbacks = result.data?.response?.feedbacks || result.data?.feedbacks || [];
-    return res.json({
-      resolvedUrl:    url,
-      pageHash:       result.pageHash,
-      pollAttempt:    result.pollAttempt,
-      feedbackCount:  feedbacks.length,
-      topLevelKeys:   Object.keys(result.data || {}),
-      responseKeys:   result.data?.response ? Object.keys(result.data.response) : [],
-      feedbackSample: feedbacks.slice(0, 2).map(f => ({ keys: Object.keys(f), dataKeys: f.data ? Object.keys(f.data) : [], sample: JSON.stringify(f).substring(0, 800) })),
-      fullRaw: result.data,
-    });
-  } catch(e) { return res.status(500).json({ error: e.message }); }
 });
 // Buyhatke debug — shows full two-step diagnostic for any product URL
 // ── Buyhatke product info — step 1 only, for browser-side fetching ──
