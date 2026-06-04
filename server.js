@@ -171,23 +171,70 @@ app.get('/extrape/token-page', (req, res) => {
   const secret  = ADMIN_SECRET;
   const backend = 'https://api.smartpickdeals.live';
 
-  // The bookmarklet grabs accessToken + rememberToken from extrape.com cookies/localStorage/XHR headers
+  // Strategy: ExtraPe stores tokens in HTTP-only cookies (not readable by JS).
+  // The token only appears as the "Accesstoken" + "Remembermetoken" REQUEST headers
+  // that the extrape.com page itself sends when it calls its API.
+  //
+  // Bookmarklet approach:
+  //   1. Monkey-patch XHR.setRequestHeader + fetch (via Proxy) to intercept outgoing headers.
+  //   2. Trigger a real ExtraPe API call (convert a test URL) so those headers actually fire.
+  //   3. Capture the Accesstoken/Remembermetoken values from the intercepted call.
+  //   4. POST them to our backend.
+  //
+  // Must run on https://www.extrape.com while logged in.
   const bm = `(function(){
-    var at=null,rt=null;
-    // 1. Try localStorage
-    try{at=localStorage.getItem('accessToken')||localStorage.getItem('access_token')||localStorage.getItem('authToken')||localStorage.getItem('token');}catch(e){}
-    try{rt=localStorage.getItem('rememberToken')||localStorage.getItem('remember_token')||localStorage.getItem('remember_me_token');}catch(e){}
-    // 2. Try cookies
-    if(!at){var ca=document.cookie.match(/(?:^|;\\s*)(?:accessToken|access_token|authToken|token)=([^;]+)/);if(ca)at=decodeURIComponent(ca[1]);}
-    if(!rt){var cr=document.cookie.match(/(?:^|;\\s*)(?:rememberToken|remember_token|remember_me_token)=([^;]+)/);if(cr)rt=decodeURIComponent(cr[1]);}
-    // 3. Try meta/script tags
-    if(!at){var scripts=document.querySelectorAll('script');for(var i=0;i<scripts.length;i++){var m=scripts[i].textContent.match(/"(?:accessToken|access_token|authToken|token)":\\s*"([A-Za-z0-9._\\-|]{20,})"/);if(m){at=m[1];break;}}}
-    if(!at){alert('ExtraPe token not found. Make sure you are logged into extrape.com.');return;}
-    fetch('${backend}/extrape/update-token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accessToken:at,rememberToken:rt||'',secret:'${secret}'})})
-      .then(function(r){return r.json();})
-      .then(function(d){alert(d.ok?'✅ Smart Pick Deals ExtraPe token updated! Good for ~14 days.':'❌ '+d.error);})
-      .catch(function(e){alert('❌ '+e.message);});
-  })()`.replace(/\n\s*/g,' ');
+    if(!location.hostname.includes('extrape.com')){alert('Please run this bookmarklet on extrape.com while logged in.');return;}
+    var captured={at:null,rt:null};
+    var done=false;
+    function tryPost(){
+      if(done)return; done=true;
+      if(!captured.at){alert('Could not capture ExtraPe token. Try clicking "Convert" on the extrape.com link-converter page first, then click the bookmarklet again.');return;}
+      fetch('${backend}/extrape/update-token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accessToken:captured.at,rememberToken:captured.rt||'',secret:'${secret}'})})
+        .then(function(r){return r.json();})
+        .then(function(d){alert(d.ok?'\\u2705 Smart Pick Deals ExtraPe token updated! Good for ~14 days.':'\\u274C '+d.error);})
+        .catch(function(e){alert('\\u274C '+e.message);});
+    }
+    // Patch XHR
+    var origOpen=XMLHttpRequest.prototype.open;
+    var origSet=XMLHttpRequest.prototype.setRequestHeader;
+    XMLHttpRequest.prototype.open=function(m,u){this._epUrl=u;return origOpen.apply(this,arguments);};
+    XMLHttpRequest.prototype.setRequestHeader=function(k,v){
+      if(this._epUrl&&this._epUrl.includes('extrape.com')){
+        var kl=k.toLowerCase();
+        if(kl==='accesstoken')captured.at=v;
+        if(kl==='remembermetoken')captured.rt=v;
+      }
+      return origSet.apply(this,arguments);
+    };
+    // Patch fetch
+    var origFetch=window.fetch;
+    window.fetch=function(input,init){
+      try{
+        var url=typeof input==='string'?input:(input&&input.url)||'';
+        if(url.includes('extrape.com')&&init&&init.headers){
+          var h=init.headers;
+          if(h.Accesstoken)captured.at=h.Accesstoken;
+          if(h.Remembermetoken)captured.rt=h.Remembermetoken;
+          if(h.accesstoken)captured.at=h.accesstoken;
+          if(h.remembermetoken)captured.rt=h.remembermetoken;
+          if(typeof Headers!=='undefined'&&h instanceof Headers){
+            if(h.get('Accesstoken'))captured.at=h.get('Accesstoken');
+            if(h.get('Remembermetoken'))captured.rt=h.get('Remembermetoken');
+          }
+        }
+      }catch(e){}
+      return origFetch.apply(this,arguments);
+    };
+    // Trigger an ExtraPe API call — convert a dummy Amazon URL
+    // This forces the page to fire its own API request with auth headers attached
+    fetch('https://www.extrape.com/handler/convertText',{
+      method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json','Accept':'application/json, text/plain, */*','Origin':'https://www.extrape.com','Referer':'https://www.extrape.com/link-converter'},
+      body:JSON.stringify({inputText:encodeURIComponent('https://www.amazon.in/dp/B08N5WRWNW'),bitlyConvert:false,advanceMode:false})
+    }).then(function(){setTimeout(tryPost,300);}).catch(function(){setTimeout(tryPost,300);});
+    // Fallback timeout — if trigger request took the headers with it via fetch patch
+    setTimeout(function(){if(!done)tryPost();},3000);
+  })()`.replace(/\n\s+/g,' ');
 
   res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>ExtraPe Token Updater</title>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0f;color:#f0ede8;max-width:600px;margin:60px auto;padding:0 24px;}
@@ -195,20 +242,25 @@ h1{font-size:22px;margin-bottom:6px;}.sub{color:#6b6878;font-size:14px;margin-bo
 .card{background:#13131a;border:1px solid #1e1e2e;border-radius:16px;padding:28px;margin-bottom:20px;}
 h2{font-size:14px;font-weight:700;margin-bottom:18px;color:#a78bfa;text-transform:uppercase;letter-spacing:.06em;}
 .step{display:flex;gap:14px;margin-bottom:16px;}.num{background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.25);color:#a78bfa;font-weight:800;font-size:12px;width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
-p{font-size:14px;color:#b0ada8;line-height:1.6;margin:0;}
+p{font-size:14px;color:#b0ada8;line-height:1.6;margin:0;}a{color:#a78bfa;}
 .bm{display:inline-block;background:#7c3aed;color:#fff;font-weight:700;font-size:15px;padding:13px 28px;border-radius:12px;text-decoration:none;margin:10px 0;box-shadow:0 4px 20px rgba(124,58,237,.35);}
 .bm:hover{background:#a78bfa;}.hint{font-size:12px;color:#6b6878;margin-top:8px;}
 .status{background:#0a0a0f;border:1px solid #1e1e2e;border-radius:10px;padding:14px 18px;font-family:monospace;font-size:13px;}
+.callout{background:rgba(167,139,250,.07);border:1px solid rgba(167,139,250,.2);border-radius:10px;padding:12px 16px;font-size:13px;color:#b0ada8;margin-top:10px;line-height:1.6;}
 .ok{color:#29d87a;}.warn{color:#f59e0b;}.badge{display:inline-block;background:rgba(41,216,122,.1);border:1px solid rgba(41,216,122,.2);color:#29d87a;font-size:11px;font-weight:700;padding:2px 10px;border-radius:999px;margin-left:8px;}</style></head>
-<body><h1>🔗 ExtraPe Token Updater</h1><p class="sub">Refresh your ExtraPe affiliate token in seconds</p>
+<body><h1>🔗 ExtraPe Token Updater</h1><p class="sub">Captures your auth token by intercepting a live API request</p>
 <div class="card"><h2>Step 1 — One-time setup</h2>
 <div class="step"><div class="num">1</div><p>Drag the button below to your browser bookmarks bar</p></div>
 <a class="bm" href="javascript:${encodeURIComponent(bm)}">🔗 Update SPD ExtraPe Token</a>
-<p class="hint">Can't drag? Right-click → Bookmark this link</p></div>
-<div class="card"><h2>Step 2 — Every ~14 days (takes 5 seconds)</h2>
-<div class="step"><div class="num">1</div><p>Go to <a href="https://www.extrape.com" target="_blank" style="color:#a78bfa">extrape.com</a> and make sure you're logged in</p></div>
-<div class="step"><div class="num">2</div><p>Click the <strong>🔗 Update SPD ExtraPe Token</strong> bookmark</p></div>
-<div class="step"><div class="num">3</div><p>See <strong>"✅ Token updated!"</strong> popup — done</p></div></div>
+<p class="hint">Can't drag? Right-click the button → "Bookmark this link"</p>
+<div class="callout">⚠️ ExtraPe stores tokens in HTTP-only cookies — they can't be read by JS directly. This bookmarklet works by <strong>intercepting the live API request</strong> the page makes after you convert a URL, capturing the auth headers in-flight.</div>
+</div>
+<div class="card"><h2>Step 2 — Every ~14 days</h2>
+<div class="step"><div class="num">1</div><p>Go to <a href="https://www.extrape.com/link-converter" target="_blank">extrape.com/link-converter</a> and make sure you're logged in</p></div>
+<div class="step"><div class="num">2</div><p>Click the <strong>🔗 Update SPD ExtraPe Token</strong> bookmark — it automatically converts a test URL to trigger the API call and captures the token</p></div>
+<div class="step"><div class="num">3</div><p>See <strong>"✅ Token updated!"</strong> popup — done</p></div>
+<div class="callout">💡 If you see <em>"Could not capture token"</em>: manually paste any Amazon URL into the converter and click Convert, then immediately click the bookmarklet again.</div>
+</div>
 <div class="card"><h2>Current status</h2><div class="status" id="st">Checking...</div></div>
 <script>fetch('/extrape/token-status').then(r=>r.json()).then(d=>{
   var days=d.daysRemaining;
