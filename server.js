@@ -171,43 +171,130 @@ app.get('/extrape/token-page', (req, res) => {
   const secret  = ADMIN_SECRET;
   const backend = 'https://api.smartpickdeals.live';
 
-  // Confirmed via DevTools: accessToken and rm (rememberToken) ARE in document.cookie
-  // (not HTTP-only). Cookie names: accessToken=eyJ..., rm=177925...
-  // The URL input is NOT a standard text input — it's a contenteditable div or
-  // a React controlled input that only appears after clicking the converter tab.
-  // Safest approach: read tokens from cookie, then POST to backend directly.
+  // Confirmed from DevTools:
+  // - The Convert button text is exactly "Convert"
+  // - The URL input is a MUI OutlinedInput — NOT the store search box (which is first)
+  // - The correct input has placeholder containing "paste" or "link" or is the LAST text input
+  // - Accesstoken + Remembermetoken appear as REQUEST headers on /handler/convertText
+  // Strategy: patch fetch/XHR first, then fill the correct input and click "Convert"
   const bm = `(function(){
     if(!location.hostname.includes('extrape.com')){
-      alert('Please run this on extrape.com while logged in.');return;
+      alert('Please run this on extrape.com/link-converter while logged in.');return;
+    }
+    var captured={at:null,rt:null};
+    var done=false;
+
+    function sendToBackend(){
+      if(done)return; done=true;
+      if(!captured.at){
+        alert('\\u274C Token not captured. Make sure you are on extrape.com/link-converter and logged in.');return;
+      }
+      fetch('${backend}/extrape/update-token',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({accessToken:captured.at,rememberToken:captured.rt||'',secret:'${secret}'})
+      }).then(function(r){return r.json();})
+        .then(function(d){alert(d.ok?'\\u2705 ExtraPe token updated! Good for ~14 days.':'\\u274C '+d.error);})
+        .catch(function(e){alert('\\u274C Network error: '+e.message);});
     }
 
-    // Read a cookie by name
-    function getCookie(name){
-      var m=document.cookie.match(new RegExp('(?:^|;\\\\s*)'+name+'=([^;]+)'));
-      return m?decodeURIComponent(m[1]):null;
+    // ── Patch XHR ──
+    var origOpen=XMLHttpRequest.prototype.open;
+    var origSetHdr=XMLHttpRequest.prototype.setRequestHeader;
+    XMLHttpRequest.prototype.open=function(m,u){
+      this._epUrl=String(u||''); return origOpen.apply(this,arguments);
+    };
+    XMLHttpRequest.prototype.setRequestHeader=function(k,v){
+      if(this._epUrl&&this._epUrl.includes('convertText')){
+        var kl=(k||'').toLowerCase();
+        if(kl==='accesstoken')captured.at=v;
+        if(kl==='remembermetoken')captured.rt=v;
+      }
+      return origSetHdr.apply(this,arguments);
+    };
+
+    // ── Patch fetch ──
+    var origFetch=window.fetch;
+    window.fetch=function(input,init){
+      try{
+        var url=typeof input==='string'?input:((input&&input.url)||'');
+        if(url.includes('convertText')&&init&&init.headers){
+          var h=init.headers;
+          if(typeof Headers!=='undefined'&&h instanceof Headers){
+            captured.at=h.get('Accesstoken')||h.get('accesstoken')||captured.at;
+            captured.rt=h.get('Remembermetoken')||h.get('remembermetoken')||captured.rt;
+          } else {
+            Object.keys(h).forEach(function(k){
+              var kl=k.toLowerCase();
+              if(kl==='accesstoken')captured.at=h[k];
+              if(kl==='remembermetoken')captured.rt=h[k];
+            });
+          }
+        }
+      }catch(ex){}
+      var p=origFetch.apply(this,arguments);
+      try{
+        var u2=typeof input==='string'?input:((input&&input.url)||'');
+        if(u2.includes('convertText')){
+          p.then(function(){setTimeout(sendToBackend,400);}).catch(function(){setTimeout(sendToBackend,400);});
+        }
+      }catch(ex2){}
+      return p;
+    };
+
+    // ── Find the URL paste input (NOT the store search box) ──
+    // The store search has placeholder "Search for stores"
+    // The URL input has placeholder containing "paste","link","url","amazon","flipkart" or similar
+    // If we can't distinguish, use the LAST visible text input on the page
+    var TEST_URL='https://www.google.com';
+    var allInputs=Array.prototype.slice.call(document.querySelectorAll('input[type="text"],input[type="url"],input:not([type])'));
+    var urlInput=null;
+    for(var i=0;i<allInputs.length;i++){
+      var ph=(allInputs[i].placeholder||'').toLowerCase();
+      var aria=(allInputs[i].getAttribute('aria-label')||'').toLowerCase();
+      if(ph.includes('paste')||ph.includes('product')||ph.includes('link')||
+         ph.includes('url')||ph.includes('amazon')||ph.includes('flipkart')||
+         aria.includes('url')||aria.includes('link')||aria.includes('paste')){
+        urlInput=allInputs[i];break;
+      }
+    }
+    // Fallback: last visible input that is NOT the store search
+    if(!urlInput){
+      for(var j=allInputs.length-1;j>=0;j--){
+        var ph2=(allInputs[j].placeholder||'').toLowerCase();
+        if(!ph2.includes('search')&&allInputs[j].offsetParent!==null){urlInput=allInputs[j];break;}
+      }
     }
 
-    // Grab tokens — confirmed cookie names from DevTools
-    var at = getCookie('accessToken');
-    var rt = getCookie('rm');
-
-    // Fallback: also try localStorage just in case
-    if(!at){try{at=localStorage.getItem('accessToken');}catch(e){}}
-    if(!rt){try{rt=localStorage.getItem('rememberToken')||localStorage.getItem('rm');}catch(e){}}
-
-    if(!at){
-      alert('\\u274C accessToken cookie not found.\\n\\nMake sure you are logged in to extrape.com and try again.');
-      return;
+    if(urlInput){
+      // React-safe value setter
+      var nativeSetter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');
+      if(nativeSetter&&nativeSetter.set){nativeSetter.set.call(urlInput,TEST_URL);}
+      else{urlInput.value=TEST_URL;}
+      urlInput.dispatchEvent(new Event('input',{bubbles:true}));
+      urlInput.dispatchEvent(new Event('change',{bubbles:true}));
+      urlInput.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,key:'Enter',keyCode:13}));
     }
 
-    fetch('${backend}/extrape/update-token',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({accessToken:at,rememberToken:rt||'',secret:'${secret}'})
-    })
-    .then(function(r){return r.json();})
-    .then(function(d){alert(d.ok?'\\u2705 ExtraPe token updated! Good for ~14 days.':'\\u274C '+d.error);})
-    .catch(function(e){alert('\\u274C Network error: '+e.message);});
+    // ── Click the Convert button (confirmed text = "Convert") ──
+    setTimeout(function(){
+      var btn=null;
+      var all=Array.prototype.slice.call(document.querySelectorAll('button,[role="button"]'));
+      // Exact match first
+      for(var i=0;i<all.length;i++){
+        if(all[i].textContent.trim()==='Convert'){btn=all[i];break;}
+      }
+      // Partial match fallback
+      if(!btn){
+        for(var i=0;i<all.length;i++){
+          var t=all[i].textContent.toLowerCase().trim();
+          if(t.includes('convert')&&!t.includes('bitly')&&!t.includes('advanced')){btn=all[i];break;}
+        }
+      }
+      if(btn){btn.click();}
+      else{alert('\\u26A0\\uFE0F Could not find Convert button. Please paste any URL manually and click Convert, then click the bookmark immediately after.');}
+      // Safety net
+      setTimeout(function(){if(!done)sendToBackend();},6000);
+    },400);
   })()`.replace(/\n\s+/g,' ');
 
   res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>ExtraPe Token Updater</title>
