@@ -10,12 +10,29 @@ app.use(express.json());
 app.use(cors());
 
 // ── Env vars ──
-const EXTRAPE_ACCESS_TOKEN   = process.env.EXTRAPE_ACCESS_TOKEN   || '';
-const EXTRAPE_REMEMBER_TOKEN = process.env.EXTRAPE_REMEMBER_TOKEN || '';
-const FRONTEND_URL            = process.env.FRONTEND_URL           || 'https://smartpickdeals.live';
-const SERP_API_KEY            = process.env.SERP_API_KEY           || '';
-const FLASH_DEVICE_ID         = process.env.FLASH_DEVICE_ID        || 'web-spd-backend';
-const ADMIN_SECRET            = process.env.ADMIN_SECRET           || 'spd-admin-2024';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://smartpickdeals.live';
+const SERP_API_KEY = process.env.SERP_API_KEY || '';
+const FLASH_DEVICE_ID = process.env.FLASH_DEVICE_ID || 'web-spd-backend';
+const ADMIN_SECRET = process.env.ADMIN_SECRET || 'spd-admin-2024';
+
+// ── ExtraPe token — in-memory cache, loaded from .env at startup ──
+// Updated via the bookmarklet: visit https://api.smartpickdeals.live/extrape/token-page
+const extrapeTokenCache = {
+  accessToken:   process.env.EXTRAPE_ACCESS_TOKEN   || '',
+  rememberToken: process.env.EXTRAPE_REMEMBER_TOKEN || '',
+  updatedAt:     process.env.EXTRAPE_TOKEN_UPDATED_AT ? Number(process.env.EXTRAPE_TOKEN_UPDATED_AT) : null,
+};
+
+// Convenience getters used by existing code
+function getExtrapeAccessToken()   { return extrapeTokenCache.accessToken; }
+function getExtrapeRememberToken() { return extrapeTokenCache.rememberToken; }
+
+// How many days remain on a token (14-day lifetime)
+function tokenDaysRemaining(updatedAt) {
+  if (!updatedAt) return null;
+  const elapsed = (Date.now() - updatedAt) / (1000 * 60 * 60 * 24);
+  return Math.max(0, Math.round((14 - elapsed) * 10) / 10);
+}
 
 // ── Flash token — in-memory cache, loaded from .env at startup ──
 // Update via the bookmarklet: visit https://api.smartpickdeals.live/flash/token-page
@@ -24,11 +41,35 @@ const flashTokenCache = {
   token:    process.env.FLASH_AUTH_TOKEN  || '',
   deviceId: process.env.FLASH_DEVICE_ID   || '',
   userId:   process.env.FLASH_USER_ID     || '',
+  updatedAt: process.env.FLASH_TOKEN_UPDATED_AT ? Number(process.env.FLASH_TOKEN_UPDATED_AT) : null,
 };
 
 function getFlashToken() {
   if (!flashTokenCache.token) throw new Error('Flash token not set. Visit https://api.smartpickdeals.live/flash/token-page for setup.');
   return flashTokenCache.token;
+}
+
+// ── Shared .env writer helper ──
+function writeEnvVars(updates) {
+  const fs   = require('fs');
+  const path = require('path').join(process.env.HOME || '/home/smartpick', 'extrape-affiliate', '.env');
+  try {
+    let envContent = fs.existsSync(path) ? fs.readFileSync(path, 'utf8') : '';
+    const upsert = (key, val) => {
+      if (val === null || val === undefined) return;
+      const v = String(val);
+      if (envContent.includes(key + '='))
+        envContent = envContent.replace(new RegExp(key + '=.*'), key + '=' + v);
+      else
+        envContent += '\n' + key + '=' + v + '\n';
+    };
+    Object.entries(updates).forEach(([k, v]) => upsert(k, v));
+    fs.writeFileSync(path, envContent);
+    return true;
+  } catch(e) {
+    console.log('[ENV] Could not write .env:', e.message);
+    return false;
+  }
 }
 
 // ── POST /flash/update-token ── (called by the bookmarklet from the owner's browser)
@@ -37,31 +78,31 @@ app.post('/flash/update-token', async (req, res) => {
   if (!token) return res.status(400).json({ error: 'Missing token' });
   if (secret !== ADMIN_SECRET) return res.status(401).json({ error: 'Wrong secret' });
   const { deviceId, userId } = req.body;
-  flashTokenCache.token    = token;
+  const now = Date.now();
+  flashTokenCache.token     = token;
+  flashTokenCache.updatedAt = now;
   if (deviceId) flashTokenCache.deviceId = deviceId;
   if (userId)   flashTokenCache.userId   = userId;
   console.log('[Flash] ✅ Token updated via bookmarklet. deviceId:', deviceId, 'userId:', userId ? userId.substring(0,8)+'...' : 'n/a');
-  const fs = require('fs');
-  const envPath = require('path').join(process.env.HOME || '/home/smartpick', 'extrape-affiliate', '.env');
-  try {
-    let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
-    const upsert = (key, val) => {
-      if (!val) return;
-      if (envContent.includes(key + '=')) envContent = envContent.replace(new RegExp(key + '=.*'), key + '=' + val);
-      else envContent += '\n' + key + '=' + val + '\n';
-    };
-    upsert('FLASH_AUTH_TOKEN', token);
-    if (deviceId) upsert('FLASH_DEVICE_ID', deviceId);
-    if (userId)   upsert('FLASH_USER_ID',   userId);
-    fs.writeFileSync(envPath, envContent);
-    console.log('[Flash] Token + deviceId + userId written to .env');
-  } catch(e) { console.log('[Flash] Could not write .env:', e.message); }
-  return res.json({ ok: true, message: 'Token updated! Good for ~14 days.' });
+  writeEnvVars({
+    FLASH_AUTH_TOKEN:       token,
+    FLASH_TOKEN_UPDATED_AT: now,
+    ...(deviceId ? { FLASH_DEVICE_ID: deviceId } : {}),
+    ...(userId   ? { FLASH_USER_ID:   userId   } : {}),
+  });
+  return res.json({ ok: true, message: 'Token updated! Good for ~14 days.', updatedAt: now });
 });
 
 // ── GET /flash/token-status ──
 app.get('/flash/token-status', (req, res) => {
-  res.json({ set: !!flashTokenCache.token, preview: flashTokenCache.token ? flashTokenCache.token.substring(0,16)+'...' : null });
+  const days = tokenDaysRemaining(flashTokenCache.updatedAt);
+  res.json({
+    set:       !!flashTokenCache.token,
+    preview:   flashTokenCache.token ? flashTokenCache.token.substring(0,16)+'...' : null,
+    updatedAt: flashTokenCache.updatedAt,
+    daysRemaining: days,
+    status: !flashTokenCache.token ? 'not_set' : days === null ? 'set_no_timestamp' : days <= 0 ? 'expired' : days <= 3 ? 'expiring_soon' : 'ok',
+  });
 });
 
 // ── GET /flash/token-page ── bookmarklet instructions page
@@ -94,6 +135,111 @@ p{font-size:14px;color:#b0ada8;line-height:1.6;margin:0;}
 </body></html>`);
 });
 
+
+// ── POST /extrape/update-token ── (called by the ExtraPe bookmarklet)
+app.post('/extrape/update-token', async (req, res) => {
+  const { accessToken, rememberToken, secret } = req.body;
+  if (!accessToken) return res.status(400).json({ error: 'Missing accessToken' });
+  if (secret !== ADMIN_SECRET) return res.status(401).json({ error: 'Wrong secret' });
+  const now = Date.now();
+  extrapeTokenCache.accessToken   = accessToken;
+  extrapeTokenCache.rememberToken = rememberToken || extrapeTokenCache.rememberToken;
+  extrapeTokenCache.updatedAt     = now;
+  console.log('[ExtraPe] ✅ Token updated via bookmarklet. accessToken preview:', accessToken.substring(0,16)+'...');
+  writeEnvVars({
+    EXTRAPE_ACCESS_TOKEN:       accessToken,
+    EXTRAPE_TOKEN_UPDATED_AT:   now,
+    ...(rememberToken ? { EXTRAPE_REMEMBER_TOKEN: rememberToken } : {}),
+  });
+  return res.json({ ok: true, message: 'ExtraPe token updated! Good for ~14 days.', updatedAt: now });
+});
+
+// ── GET /extrape/token-status ──
+app.get('/extrape/token-status', (req, res) => {
+  const days = tokenDaysRemaining(extrapeTokenCache.updatedAt);
+  res.json({
+    set:       !!extrapeTokenCache.accessToken,
+    preview:   extrapeTokenCache.accessToken ? extrapeTokenCache.accessToken.substring(0,16)+'...' : null,
+    updatedAt: extrapeTokenCache.updatedAt,
+    daysRemaining: days,
+    status: !extrapeTokenCache.accessToken ? 'not_set' : days === null ? 'set_no_timestamp' : days <= 0 ? 'expired' : days <= 3 ? 'expiring_soon' : 'ok',
+  });
+});
+
+// ── GET /extrape/token-page ── bookmarklet instructions page
+app.get('/extrape/token-page', (req, res) => {
+  const secret  = ADMIN_SECRET;
+  const backend = 'https://api.smartpickdeals.live';
+
+  // The bookmarklet grabs accessToken + rememberToken from extrape.com cookies/localStorage/XHR headers
+  const bm = `(function(){
+    var at=null,rt=null;
+    // 1. Try localStorage
+    try{at=localStorage.getItem('accessToken')||localStorage.getItem('access_token')||localStorage.getItem('authToken')||localStorage.getItem('token');}catch(e){}
+    try{rt=localStorage.getItem('rememberToken')||localStorage.getItem('remember_token')||localStorage.getItem('remember_me_token');}catch(e){}
+    // 2. Try cookies
+    if(!at){var ca=document.cookie.match(/(?:^|;\\s*)(?:accessToken|access_token|authToken|token)=([^;]+)/);if(ca)at=decodeURIComponent(ca[1]);}
+    if(!rt){var cr=document.cookie.match(/(?:^|;\\s*)(?:rememberToken|remember_token|remember_me_token)=([^;]+)/);if(cr)rt=decodeURIComponent(cr[1]);}
+    // 3. Try meta/script tags
+    if(!at){var scripts=document.querySelectorAll('script');for(var i=0;i<scripts.length;i++){var m=scripts[i].textContent.match(/"(?:accessToken|access_token|authToken|token)":\\s*"([A-Za-z0-9._\\-|]{20,})"/);if(m){at=m[1];break;}}}
+    if(!at){alert('ExtraPe token not found. Make sure you are logged into extrape.com.');return;}
+    fetch('${backend}/extrape/update-token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accessToken:at,rememberToken:rt||'',secret:'${secret}'})})
+      .then(function(r){return r.json();})
+      .then(function(d){alert(d.ok?'✅ Smart Pick Deals ExtraPe token updated! Good for ~14 days.':'❌ '+d.error);})
+      .catch(function(e){alert('❌ '+e.message);});
+  })()`.replace(/\n\s*/g,' ');
+
+  res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>ExtraPe Token Updater</title>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0f;color:#f0ede8;max-width:600px;margin:60px auto;padding:0 24px;}
+h1{font-size:22px;margin-bottom:6px;}.sub{color:#6b6878;font-size:14px;margin-bottom:32px;}
+.card{background:#13131a;border:1px solid #1e1e2e;border-radius:16px;padding:28px;margin-bottom:20px;}
+h2{font-size:14px;font-weight:700;margin-bottom:18px;color:#a78bfa;text-transform:uppercase;letter-spacing:.06em;}
+.step{display:flex;gap:14px;margin-bottom:16px;}.num{background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.25);color:#a78bfa;font-weight:800;font-size:12px;width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+p{font-size:14px;color:#b0ada8;line-height:1.6;margin:0;}
+.bm{display:inline-block;background:#7c3aed;color:#fff;font-weight:700;font-size:15px;padding:13px 28px;border-radius:12px;text-decoration:none;margin:10px 0;box-shadow:0 4px 20px rgba(124,58,237,.35);}
+.bm:hover{background:#a78bfa;}.hint{font-size:12px;color:#6b6878;margin-top:8px;}
+.status{background:#0a0a0f;border:1px solid #1e1e2e;border-radius:10px;padding:14px 18px;font-family:monospace;font-size:13px;}
+.ok{color:#29d87a;}.warn{color:#f59e0b;}.badge{display:inline-block;background:rgba(41,216,122,.1);border:1px solid rgba(41,216,122,.2);color:#29d87a;font-size:11px;font-weight:700;padding:2px 10px;border-radius:999px;margin-left:8px;}</style></head>
+<body><h1>🔗 ExtraPe Token Updater</h1><p class="sub">Refresh your ExtraPe affiliate token in seconds</p>
+<div class="card"><h2>Step 1 — One-time setup</h2>
+<div class="step"><div class="num">1</div><p>Drag the button below to your browser bookmarks bar</p></div>
+<a class="bm" href="javascript:${encodeURIComponent(bm)}">🔗 Update SPD ExtraPe Token</a>
+<p class="hint">Can't drag? Right-click → Bookmark this link</p></div>
+<div class="card"><h2>Step 2 — Every ~14 days (takes 5 seconds)</h2>
+<div class="step"><div class="num">1</div><p>Go to <a href="https://www.extrape.com" target="_blank" style="color:#a78bfa">extrape.com</a> and make sure you're logged in</p></div>
+<div class="step"><div class="num">2</div><p>Click the <strong>🔗 Update SPD ExtraPe Token</strong> bookmark</p></div>
+<div class="step"><div class="num">3</div><p>See <strong>"✅ Token updated!"</strong> popup — done</p></div></div>
+<div class="card"><h2>Current status</h2><div class="status" id="st">Checking...</div></div>
+<script>fetch('/extrape/token-status').then(r=>r.json()).then(d=>{
+  var days=d.daysRemaining;
+  var cls=d.status==='ok'?'ok':d.status==='expiring_soon'?'warn':'';
+  var msg=!d.set?'⚠️ No token yet. Follow steps above.':d.status==='expired'?'🔴 Token expired — refresh now':days!==null?'<span class="'+cls+'">✅ Token active — '+days+' days remaining</span><span class="badge">Set</span><br/><small style="color:#6b6878">Preview: '+d.preview+'</small>':'<span class="ok">✅ Token set (no timestamp)</span><br/><small style="color:#6b6878">Preview: '+d.preview+'</small>';
+  document.getElementById('st').innerHTML=msg;
+}).catch(()=>{document.getElementById('st').textContent='Could not reach backend.';});
+</script></body></html>`);
+});
+
+// ── GET /admin/token-status ── returns both Flash + ExtraPe token health
+app.get('/admin/token-status', (req, res) => {
+  const flashDays  = tokenDaysRemaining(flashTokenCache.updatedAt);
+  const extrapeDays = tokenDaysRemaining(extrapeTokenCache.updatedAt);
+  res.json({
+    flash: {
+      set:           !!flashTokenCache.token,
+      preview:       flashTokenCache.token ? flashTokenCache.token.substring(0,16)+'...' : null,
+      updatedAt:     flashTokenCache.updatedAt,
+      daysRemaining: flashDays,
+      status:        !flashTokenCache.token ? 'not_set' : flashDays === null ? 'set_no_timestamp' : flashDays <= 0 ? 'expired' : flashDays <= 3 ? 'expiring_soon' : 'ok',
+    },
+    extrape: {
+      set:           !!extrapeTokenCache.accessToken,
+      preview:       extrapeTokenCache.accessToken ? extrapeTokenCache.accessToken.substring(0,16)+'...' : null,
+      updatedAt:     extrapeTokenCache.updatedAt,
+      daysRemaining: extrapeDays,
+      status:        !extrapeTokenCache.accessToken ? 'not_set' : extrapeDays === null ? 'set_no_timestamp' : extrapeDays <= 0 ? 'expired' : extrapeDays <= 3 ? 'expiring_soon' : 'ok',
+    },
+  });
+});
 
 // ── Puppeteer Flash.co scraper ──
 // Runs all Flash API calls from WITHIN a real headless Chrome browser.
@@ -856,11 +1002,11 @@ async function convertExtraPe(productUrl) {
     method: 'POST',
     headers: {
       'Accept': 'application/json, text/plain, */*',
-      'Accesstoken': EXTRAPE_ACCESS_TOKEN,
+      'Accesstoken': extrapeTokenCache.accessToken,
       'Content-Type': 'application/json',
       'Origin': 'https://www.extrape.com',
       'Referer': 'https://www.extrape.com/link-converter',
-      'Remembermetoken': EXTRAPE_REMEMBER_TOKEN,
+      'Remembermetoken': extrapeTokenCache.rememberToken,
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
     },
     body: JSON.stringify({ inputText: encodeURIComponent(productUrl), bitlyConvert:false, advanceMode:false })
@@ -2551,7 +2697,7 @@ app.post('/generate', (req, res) => {
   if (!url) return res.status(400).json({ error:'No URL.' });
   try { new URL(url); } catch { return res.status(400).json({ error:'Invalid URL.' }); }
   if (!isSupported(url)) return res.status(400).json({ error:'Store not supported by ExtraPe.' });
-  if (!EXTRAPE_ACCESS_TOKEN) return res.status(500).json({ error:'EXTRAPE_ACCESS_TOKEN not set.' });
+  if (!extrapeTokenCache.accessToken) return res.status(500).json({ error:'EXTRAPE_ACCESS_TOKEN not set. Visit https://api.smartpickdeals.live/extrape/token-page' });
   const id = enqueue(url, store||'Unknown');
   processQueue();
   return res.json({ requestId:id, ...getStatus(id) });

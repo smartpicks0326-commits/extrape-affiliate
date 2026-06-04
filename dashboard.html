@@ -106,6 +106,29 @@ tr:last-child td{border-bottom:none;}
 
 
 
+/* TOKEN STATUS */
+.token-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:0;}
+.token-card{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:16px 18px;}
+.token-name{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;}
+.token-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;}
+.token-label{font-size:12px;color:var(--muted);}
+.token-val{font-family:'DM Mono',monospace;font-size:12px;font-weight:700;}
+.tok-ok{color:var(--success);}
+.tok-warn{color:var(--warn);}
+.tok-err{color:#ff4b6e;}
+.tok-none{color:var(--muted);}
+.token-bar-track{height:5px;background:var(--border);border-radius:999px;overflow:hidden;margin-top:8px;}
+.token-bar-fill{height:100%;border-radius:999px;transition:width .5s ease;}
+.token-actions{display:flex;gap:8px;margin-top:12px;}
+.tok-btn{font-size:11px;font-weight:700;padding:6px 12px;border-radius:8px;border:none;cursor:pointer;text-decoration:none;display:inline-block;text-align:center;}
+.tok-btn-primary{background:var(--accent);color:#fff;}
+.tok-btn-primary:hover{background:var(--accent2);}
+.tok-btn-extrape{background:#7c3aed;color:#fff;}
+.tok-btn-extrape:hover{background:#a78bfa;}
+.tok-btn-secondary{background:transparent;border:1px solid var(--border)!important;color:var(--muted);}
+.tok-btn-secondary:hover{color:var(--text);border-color:rgba(255,107,43,.3)!important;}
+@media(max-width:600px){.token-grid{grid-template-columns:1fr;}}
+
 /* ── Dashboard: responsive ── */
 /* No bottom nav on dashboard - override shared body padding */
 body { padding-bottom: 0 !important; }
@@ -214,6 +237,41 @@ body { padding-bottom: 0 !important; }
       <div class="stat">
         <div class="stat-lbl"><span class="dot" style="background:#38bdf8;"></span>Comparisons</div>
         <div class="stat-val" id="sQ">—</div>
+      </div>
+    </div>
+
+    <!-- Token Status -->
+    <div class="section">
+      <div class="sec-hdr" onclick="toggle('tokenBody','tokenBtn')">
+        <span class="sec-title">🔑 Token Status</span>
+        <span class="sec-meta" id="tokenMeta">—</span>
+        <button class="sec-toggle open" id="tokenBtn">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      <div class="sec-body open" id="tokenBody">
+        <div class="token-grid" id="tokenGrid">
+          <div class="token-card">
+            <div class="token-name">⚡ Flash.co</div>
+            <div class="token-row"><span class="token-label">Status</span><span class="token-val" id="flashStatus">—</span></div>
+            <div class="token-row"><span class="token-label">Days left</span><span class="token-val" id="flashDays">—</span></div>
+            <div class="token-row"><span class="token-label">Last updated</span><span class="token-val" id="flashUpdated" style="font-size:11px;color:var(--muted);">—</span></div>
+            <div class="token-bar-track"><div class="token-bar-fill" id="flashBar" style="background:linear-gradient(90deg,var(--accent),var(--accent2));width:0%"></div></div>
+            <div class="token-actions">
+              <a class="tok-btn tok-btn-primary" href="/flash/token-page" target="_blank">Refresh →</a>
+            </div>
+          </div>
+          <div class="token-card">
+            <div class="token-name">🔗 ExtraPe</div>
+            <div class="token-row"><span class="token-label">Status</span><span class="token-val" id="extrapeStatus">—</span></div>
+            <div class="token-row"><span class="token-label">Days left</span><span class="token-val" id="extrapeDays">—</span></div>
+            <div class="token-row"><span class="token-label">Last updated</span><span class="token-val" id="extrapeUpdated" style="font-size:11px;color:var(--muted);">—</span></div>
+            <div class="token-bar-track"><div class="token-bar-fill" id="extrapeBar" style="background:linear-gradient(90deg,#7c3aed,#a78bfa);width:0%"></div></div>
+            <div class="token-actions">
+              <a class="tok-btn tok-btn-extrape" href="/extrape/token-page" target="_blank">Refresh →</a>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -376,8 +434,10 @@ function startDash() {
   document.getElementById('dashWrap').style.display  = 'block';
   initDates();
   loadData();
+  fetchTokenStatus();
   dataTimer  = setInterval(loadData, 10000);  // full refresh every 10s (for date range)
   clockTimer = setInterval(tickClock, 1000);  // clock every 1s
+  setInterval(fetchTokenStatus, 60000);       // token status every 60s
   connectSSE();                               // real-time push updates
 }
 
@@ -492,6 +552,65 @@ async function fetchBattery() {
     badge.className = 'db-badge bat-down';
     badge.textContent = '🔴 Server down · Render backup active';
   }
+}
+
+// ── Token Status ──
+async function fetchTokenStatus() {
+  try {
+    var r = await fetch(BACKEND + '/admin/token-status', { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return;
+    var d = await r.json();
+    renderTokenStatus('flash',   d.flash);
+    renderTokenStatus('extrape', d.extrape);
+    // Update section meta badge
+    var worstDays = null;
+    [d.flash, d.extrape].forEach(function(t) {
+      if (t && t.daysRemaining !== null) {
+        if (worstDays === null || t.daysRemaining < worstDays) worstDays = t.daysRemaining;
+      }
+    });
+    var meta = document.getElementById('tokenMeta');
+    if (worstDays === null) { meta.textContent = '—'; return; }
+    if (worstDays <= 0)     { meta.textContent = '🔴 Expired'; meta.style.color = '#ff4b6e'; }
+    else if (worstDays <= 3){ meta.textContent = '🟡 ' + Math.floor(worstDays) + 'd left'; meta.style.color = 'var(--warn)'; }
+    else                    { meta.textContent = '🟢 ' + Math.floor(worstDays) + 'd left'; meta.style.color = 'var(--success)'; }
+  } catch(e) {
+    console.log('[TokenStatus] Failed:', e.message);
+  }
+}
+
+function renderTokenStatus(prefix, t) {
+  if (!t) return;
+  var statusEl  = document.getElementById(prefix + 'Status');
+  var daysEl    = document.getElementById(prefix + 'Days');
+  var updatedEl = document.getElementById(prefix + 'Updated');
+  var barEl     = document.getElementById(prefix + 'Bar');
+  if (!statusEl) return;
+
+  // Status label
+  if (!t.set) {
+    statusEl.innerHTML = '<span class="tok-err">Not set</span>';
+    daysEl.innerHTML   = '<span class="tok-none">—</span>';
+    updatedEl.textContent = '—';
+    if (barEl) barEl.style.width = '0%';
+    return;
+  }
+  var statusMap = { ok:'<span class="tok-ok">✅ Active</span>', expiring_soon:'<span class="tok-warn">⚠️ Expiring</span>', expired:'<span class="tok-err">🔴 Expired</span>', set_no_timestamp:'<span class="tok-ok">✅ Set</span>', not_set:'<span class="tok-err">Not set</span>' };
+  statusEl.innerHTML = statusMap[t.status] || '—';
+
+  // Days
+  if (t.daysRemaining !== null) {
+    var d = Math.floor(t.daysRemaining);
+    var cls = d <= 0 ? 'tok-err' : d <= 3 ? 'tok-warn' : 'tok-ok';
+    daysEl.innerHTML = '<span class="' + cls + '">' + (d <= 0 ? 'Expired' : d + ' days') + '</span>';
+    if (barEl) barEl.style.width = Math.max(0, Math.min(100, (t.daysRemaining / 14 * 100))) + '%';
+  } else {
+    daysEl.innerHTML = '<span class="tok-ok">~14 days</span>';
+    if (barEl) barEl.style.width = '100%';
+  }
+
+  // Updated at
+  updatedEl.textContent = t.updatedAt ? fmtTime(t.updatedAt) : 'unknown';
 }
 
 // ── Render ──
