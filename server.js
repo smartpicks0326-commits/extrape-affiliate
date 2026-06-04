@@ -138,18 +138,19 @@ p{font-size:14px;color:#b0ada8;line-height:1.6;margin:0;}
 
 // ── POST /extrape/update-token ── (called by the ExtraPe bookmarklet)
 app.post('/extrape/update-token', async (req, res) => {
-  const { accessToken, rememberToken, secret } = req.body;
+  const { accessToken, rememberToken, rememberMeToken, secret } = req.body;
   if (!accessToken) return res.status(400).json({ error: 'Missing accessToken' });
   if (secret !== ADMIN_SECRET) return res.status(401).json({ error: 'Wrong secret' });
+  const rt = rememberToken || rememberMeToken || extrapeTokenCache.rememberToken;
   const now = Date.now();
   extrapeTokenCache.accessToken   = accessToken;
-  extrapeTokenCache.rememberToken = rememberToken || extrapeTokenCache.rememberToken;
+  extrapeTokenCache.rememberToken = rt;
   extrapeTokenCache.updatedAt     = now;
   console.log('[ExtraPe] ✅ Token updated via bookmarklet. accessToken preview:', accessToken.substring(0,16)+'...');
   writeEnvVars({
     EXTRAPE_ACCESS_TOKEN:       accessToken,
     EXTRAPE_TOKEN_UPDATED_AT:   now,
-    ...(rememberToken ? { EXTRAPE_REMEMBER_TOKEN: rememberToken } : {}),
+    ...(rt ? { EXTRAPE_REMEMBER_TOKEN: rt } : {}),
   });
   return res.json({ ok: true, message: 'ExtraPe token updated! Good for ~14 days.', updatedAt: now });
 });
@@ -190,7 +191,7 @@ app.get('/extrape/token-page', (req, res) => {
       done=true;
       fetch('${backend}/extrape/update-token',{
         method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({accessToken:captured.at,rememberToken:captured.rt||'',secret:'${secret}'})
+        body:JSON.stringify({accessToken:captured.at,rememberMeToken:captured.rt||'',secret:'${secret}'})
       }).then(function(r){return r.json();})
         .then(function(d){alert(d.ok?'\\u2705 ExtraPe token updated! Good for ~14 days.':'\\u274C '+d.error);})
         .catch(function(e){alert('\\u274C '+e.message);});
@@ -206,9 +207,8 @@ app.get('/extrape/token-page', (req, res) => {
     };
     XMLHttpRequest.prototype.setRequestHeader=function(k,v){
       if(this._epUrl&&this._epUrl.includes('convertText')){
-        var kl=(k||'').toLowerCase();
-        if(kl==='accesstoken')captured.at=v;
-        if(kl==='remembermetoken')captured.rt=v;
+        if(k==='accessToken')captured.at=v;
+        if(k==='rememberMeToken')captured.rt=v;
       }
       return origSetHdr.apply(this,arguments);
     };
@@ -1072,11 +1072,11 @@ async function convertExtraPe(productUrl) {
     method: 'POST',
     headers: {
       'Accept': 'application/json, text/plain, */*',
-      'Accesstoken': extrapeTokenCache.accessToken,
+      'accessToken': extrapeTokenCache.accessToken,
       'Content-Type': 'application/json',
       'Origin': 'https://www.extrape.com',
       'Referer': 'https://www.extrape.com/link-converter',
-      'Remembermetoken': extrapeTokenCache.rememberToken,
+      'rememberMeToken': extrapeTokenCache.rememberToken,
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
     },
     body: JSON.stringify({ inputText: encodeURIComponent(productUrl), bitlyConvert:false, advanceMode:false })
