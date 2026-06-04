@@ -171,111 +171,43 @@ app.get('/extrape/token-page', (req, res) => {
   const secret  = ADMIN_SECRET;
   const backend = 'https://api.smartpickdeals.live';
 
-  // Strategy: ExtraPe uses HTTP-only cookies — JS cannot read them.
-  // The Accesstoken + Remembermetoken only appear as REQUEST headers
-  // on the page's own fetch/XHR calls to /handler/convertText.
-  //
-  // Fix: patch fetch FIRST, then fill the page's input field with a
-  // real Amazon URL and simulate a click on the Convert button.
-  // The PAGE's own JS fires /handler/convertText with real auth headers.
-  // Our patched fetch intercepts them before they leave the browser.
+  // Confirmed via DevTools: accessToken and rm (rememberToken) ARE in document.cookie
+  // (not HTTP-only). Cookie names: accessToken=eyJ..., rm=177925...
+  // The URL input is NOT a standard text input — it's a contenteditable div or
+  // a React controlled input that only appears after clicking the converter tab.
+  // Safest approach: read tokens from cookie, then POST to backend directly.
   const bm = `(function(){
-    if(!location.hostname.includes('extrape.com')){alert('Please run this on extrape.com/link-converter while logged in.');return;}
-    var captured={at:null,rt:null};
-    var done=false;
-
-    function sendToBackend(){
-      if(done)return; done=true;
-      if(!captured.at){alert('\\u274C Could not capture ExtraPe token.\\n\\nMake sure you are on extrape.com/link-converter and logged in, then click the bookmark again.');return;}
-      fetch('${backend}/extrape/update-token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accessToken:captured.at,rememberToken:captured.rt||'',secret:'${secret}'})})
-        .then(function(r){return r.json();})
-        .then(function(d){alert(d.ok?'\\u2705 ExtraPe token updated! Good for ~14 days.':'\\u274C '+d.error);})
-        .catch(function(e){alert('\\u274C Network error: '+e.message);});
+    if(!location.hostname.includes('extrape.com')){
+      alert('Please run this on extrape.com while logged in.');return;
     }
 
-    // ── Step 1: Patch XHR before anything fires ──
-    var origOpen=XMLHttpRequest.prototype.open;
-    var origSetHdr=XMLHttpRequest.prototype.setRequestHeader;
-    XMLHttpRequest.prototype.open=function(m,u){
-      this._xhrUrl=String(u||'');
-      return origOpen.apply(this,arguments);
-    };
-    XMLHttpRequest.prototype.setRequestHeader=function(k,v){
-      var kl=(k||'').toLowerCase();
-      if(this._xhrUrl&&this._xhrUrl.includes('convertText')){
-        if(kl==='accesstoken'){captured.at=v;}
-        if(kl==='remembermetoken'){captured.rt=v;}
-      }
-      return origSetHdr.apply(this,arguments);
-    };
-
-    // ── Step 2: Patch fetch ──
-    var origFetch=window.fetch;
-    window.fetch=function(input,init){
-      try{
-        var url=typeof input==='string'?input:((input&&input.url)||'');
-        if(url.includes('convertText')&&init&&init.headers){
-          var h=init.headers;
-          // Plain object headers
-          var keys=Object.keys(h);
-          for(var i=0;i<keys.length;i++){
-            var kl=keys[i].toLowerCase();
-            if(kl==='accesstoken')captured.at=h[keys[i]];
-            if(kl==='remembermetoken')captured.rt=h[keys[i]];
-          }
-          // Headers instance
-          if(typeof Headers!=='undefined'&&h instanceof Headers){
-            try{if(h.get('Accesstoken'))captured.at=h.get('Accesstoken');}catch(e){}
-            try{if(h.get('Remembermetoken'))captured.rt=h.get('Remembermetoken');}catch(e){}
-          }
-        }
-      }catch(ex){}
-      var p=origFetch.apply(this,arguments);
-      // After the convertText call resolves, send to backend
-      if(typeof input==='string'&&input.includes('convertText')){
-        p.then(function(){setTimeout(sendToBackend,200);}).catch(function(){setTimeout(sendToBackend,200);});
-      }
-      return p;
-    };
-
-    // ── Step 3: Fill the input with a real Amazon URL and trigger Convert ──
-    // ExtraPe's input is a controlled React/Vue component — we must set the
-    // native input value setter so React picks up the change event.
-    var TEST_URL='https://www.amazon.in/dp/B08N5WRWNW';
-    var inp=document.querySelector('input[type="text"],input[type="url"],textarea,input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"])');
-    if(inp){
-      var nativeSetter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value')||Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value');
-      if(nativeSetter&&nativeSetter.set){nativeSetter.set.call(inp,TEST_URL);}else{inp.value=TEST_URL;}
-      inp.dispatchEvent(new Event('input',{bubbles:true}));
-      inp.dispatchEvent(new Event('change',{bubbles:true}));
+    // Read a cookie by name
+    function getCookie(name){
+      var m=document.cookie.match(new RegExp('(?:^|;\\\\s*)'+name+'=([^;]+)'));
+      return m?decodeURIComponent(m[1]):null;
     }
 
-    // ── Step 4: Click the Convert / Make Link button ──
-    setTimeout(function(){
-      var btn=null;
-      var all=document.querySelectorAll('button,input[type="submit"],[role="button"]');
-      for(var i=0;i<all.length;i++){
-        var t=(all[i].textContent||all[i].value||'').toLowerCase().trim();
-        if(t.includes('convert')||t.includes('make link')||t.includes('generate')||t.includes('create')){btn=all[i];break;}
-      }
-      if(!btn){
-        // Fallback: click the first visible non-Cancel, non-Share button
-        for(var j=0;j<all.length;j++){
-          var t2=(all[j].textContent||'').toLowerCase().trim();
-          if(!t2.includes('cancel')&&!t2.includes('share')&&!t2.includes('copy')&&all[j].offsetParent!==null){btn=all[j];break;}
-        }
-      }
-      if(btn){btn.click();}
-      else{
-        // No button found — try submitting the form
-        var form=inp&&inp.closest('form');
-        if(form){form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));}
-        else{alert('\\u26A0\\uFE0F Could not find Convert button. Please manually paste a URL and click Convert, then click the bookmarklet again.');}
-      }
-      // Safety timeout — if button click triggered the call, we already have a .then handler
-      // This fires in case the call happened but already resolved before we patched
-      setTimeout(function(){if(!done)sendToBackend();},5000);
-    },300);
+    // Grab tokens — confirmed cookie names from DevTools
+    var at = getCookie('accessToken');
+    var rt = getCookie('rm');
+
+    // Fallback: also try localStorage just in case
+    if(!at){try{at=localStorage.getItem('accessToken');}catch(e){}}
+    if(!rt){try{rt=localStorage.getItem('rememberToken')||localStorage.getItem('rm');}catch(e){}}
+
+    if(!at){
+      alert('\\u274C accessToken cookie not found.\\n\\nMake sure you are logged in to extrape.com and try again.');
+      return;
+    }
+
+    fetch('${backend}/extrape/update-token',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({accessToken:at,rememberToken:rt||'',secret:'${secret}'})
+    })
+    .then(function(r){return r.json();})
+    .then(function(d){alert(d.ok?'\\u2705 ExtraPe token updated! Good for ~14 days.':'\\u274C '+d.error);})
+    .catch(function(e){alert('\\u274C Network error: '+e.message);});
   })()`.replace(/\n\s+/g,' ');
 
   res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>ExtraPe Token Updater</title>
@@ -288,25 +220,21 @@ p{font-size:14px;color:#b0ada8;line-height:1.6;margin:0;}a{color:#a78bfa;}
 .bm{display:inline-block;background:#7c3aed;color:#fff;font-weight:700;font-size:15px;padding:13px 28px;border-radius:12px;text-decoration:none;margin:10px 0;box-shadow:0 4px 20px rgba(124,58,237,.35);}
 .bm:hover{background:#a78bfa;}.hint{font-size:12px;color:#6b6878;margin-top:8px;}
 .status{background:#0a0a0f;border:1px solid #1e1e2e;border-radius:10px;padding:14px 18px;font-family:monospace;font-size:13px;}
-.callout{background:rgba(167,139,250,.07);border:1px solid rgba(167,139,250,.2);border-radius:10px;padding:12px 16px;font-size:13px;color:#b0ada8;margin-top:12px;line-height:1.6;}
-.callout-warn{background:rgba(245,158,11,.07);border-color:rgba(245,158,11,.2);}
 .ok{color:#29d87a;}.warn{color:#f59e0b;}.badge{display:inline-block;background:rgba(41,216,122,.1);border:1px solid rgba(41,216,122,.2);color:#29d87a;font-size:11px;font-weight:700;padding:2px 10px;border-radius:999px;margin-left:8px;}</style></head>
 <body>
 <h1>🔗 ExtraPe Token Updater</h1>
-<p class="sub">Fully automatic — fills the converter and captures the token for you</p>
+<p class="sub">Reads your session token directly from cookies — instant, no conversion needed</p>
 <div class="card">
   <h2>Step 1 — One-time setup</h2>
   <div class="step"><div class="num">1</div><p>Drag the button below to your browser bookmarks bar</p></div>
   <a class="bm" href="javascript:${encodeURIComponent(bm)}">🔗 Update SPD ExtraPe Token</a>
   <p class="hint">Can't drag? Right-click → "Bookmark this link"</p>
-  <div class="callout">How it works: the bookmarklet patches the page's network layer, fills the URL input with a test Amazon link, clicks Convert for you, and captures the <code>Accesstoken</code> + <code>Remembermetoken</code> headers from the outgoing request — all automatically.</div>
 </div>
 <div class="card">
-  <h2>Step 2 — Every ~14 days (5 seconds)</h2>
-  <div class="step"><div class="num">1</div><p>Go to <a href="https://www.extrape.com/link-converter" target="_blank">extrape.com/link-converter</a> — make sure you're logged in</p></div>
-  <div class="step"><div class="num">2</div><p>Click the <strong>🔗 Update SPD ExtraPe Token</strong> bookmark and wait ~3 seconds</p></div>
-  <div class="step"><div class="num">3</div><p>The page auto-converts a URL and you'll see <strong>"✅ Token updated!"</strong></p></div>
-  <div class="callout callout-warn">⚠️ If you see "Could not find Convert button": manually paste any Amazon URL into the input box and click Convert yourself, then immediately click the bookmark again.</div>
+  <h2>Step 2 — Every ~14 days (2 seconds)</h2>
+  <div class="step"><div class="num">1</div><p>Go to <a href="https://www.extrape.com/link-converter" target="_blank">extrape.com</a> — make sure you're logged in</p></div>
+  <div class="step"><div class="num">2</div><p>Click the <strong>🔗 Update SPD ExtraPe Token</strong> bookmark</p></div>
+  <div class="step"><div class="num">3</div><p>See <strong>"✅ Token updated!"</strong> — done</p></div>
 </div>
 <div class="card"><h2>Current status</h2><div class="status" id="st">Checking...</div></div>
 <script>fetch('/extrape/token-status').then(r=>r.json()).then(d=>{
