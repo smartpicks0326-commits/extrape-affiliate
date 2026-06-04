@@ -340,10 +340,17 @@ app.get('/extrape/bookmarklet.js', (req, res) => {
       }
       return origSend.apply(this,arguments);
     };
-    var inp=document.querySelector('input[placeholder="Paste link here"]');
-    if(!inp){alert('\\u26A0\\uFE0F Could not find URL input. Make sure you are on extrape.com/link-converter.');return;}
-    var ns=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');
-    if(ns&&ns.set)ns.set.call(inp,'https://www.amazon.in/dp/B08N5WRWNW');
+    // Converter tab uses a TEXTAREA (placeholder "Input Links...")
+    // Make Links tab uses input[placeholder="Paste link here"]
+    // Try textarea first since that's the active Converter tab
+    var inp=document.querySelector('textarea[placeholder*="Input Links"]')
+         ||document.querySelector('textarea[placeholder*="http"]')
+         ||document.querySelector('input[placeholder="Paste link here"]');
+    if(!inp){alert('\\u26A0\\uFE0F Could not find URL input. Make sure you are on the Converter tab at extrape.com/link-converter.');return;}
+    var nsSetter=inp.tagName==='TEXTAREA'
+      ?Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value')
+      :Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');
+    if(nsSetter&&nsSetter.set)nsSetter.set.call(inp,'https://www.amazon.in/dp/B08N5WRWNW');
     else inp.value='https://www.amazon.in/dp/B08N5WRWNW';
     inp.dispatchEvent(new Event('input',{bubbles:true}));
     inp.dispatchEvent(new Event('change',{bubbles:true}));
