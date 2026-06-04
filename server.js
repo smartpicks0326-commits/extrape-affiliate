@@ -171,37 +171,38 @@ app.get('/extrape/token-page', (req, res) => {
   const secret  = ADMIN_SECRET;
   const backend = 'https://api.smartpickdeals.live';
 
-  // Confirmed from DevTools:
-  // - The Convert button text is exactly "Convert"
-  // - The URL input is a MUI OutlinedInput — NOT the store search box (which is first)
-  // - The correct input has placeholder containing "paste" or "link" or is the LAST text input
-  // - Accesstoken + Remembermetoken appear as REQUEST headers on /handler/convertText
-  // Strategy: patch fetch/XHR first, then fill the correct input and click "Convert"
+  // CONFIRMED from DevTools (2026-06-04):
+  // - Input[2]: type=text, placeholder="Paste link here"   ← URL input
+  // - Input[3]: TEXTAREA, placeholder="Input Links..."     ← alternate input
+  // - Convert button: exact text "Convert"
+  // - ExtraPe uses XHR (not fetch) — FETCH CAUGHT never fired
+  // - Must intercept XHR.send() to know when the call fires, not just setRequestHeader
   const bm = `(function(){
     if(!location.hostname.includes('extrape.com')){
-      alert('Please run this on extrape.com/link-converter while logged in.');return;
+      alert('Run this on extrape.com/link-converter while logged in.');return;
     }
     var captured={at:null,rt:null};
     var done=false;
 
     function sendToBackend(){
-      if(done)return; done=true;
-      if(!captured.at){
-        alert('\\u274C Token not captured. Make sure you are on extrape.com/link-converter and logged in.');return;
-      }
+      if(done)return;
+      if(!captured.at){alert('\\u274C Token not captured. Make sure you are logged in.');return;}
+      done=true;
       fetch('${backend}/extrape/update-token',{
         method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({accessToken:captured.at,rememberToken:captured.rt||'',secret:'${secret}'})
       }).then(function(r){return r.json();})
         .then(function(d){alert(d.ok?'\\u2705 ExtraPe token updated! Good for ~14 days.':'\\u274C '+d.error);})
-        .catch(function(e){alert('\\u274C Network error: '+e.message);});
+        .catch(function(e){alert('\\u274C '+e.message);});
     }
 
-    // ── Patch XHR ──
+    // ── Patch XHR — intercept both setRequestHeader AND send ──
     var origOpen=XMLHttpRequest.prototype.open;
     var origSetHdr=XMLHttpRequest.prototype.setRequestHeader;
+    var origSend=XMLHttpRequest.prototype.send;
     XMLHttpRequest.prototype.open=function(m,u){
-      this._epUrl=String(u||''); return origOpen.apply(this,arguments);
+      this._epUrl=String(u||'');
+      return origOpen.apply(this,arguments);
     };
     XMLHttpRequest.prototype.setRequestHeader=function(k,v){
       if(this._epUrl&&this._epUrl.includes('convertText')){
@@ -211,90 +212,45 @@ app.get('/extrape/token-page', (req, res) => {
       }
       return origSetHdr.apply(this,arguments);
     };
-
-    // ── Patch fetch ──
-    var origFetch=window.fetch;
-    window.fetch=function(input,init){
-      try{
-        var url=typeof input==='string'?input:((input&&input.url)||'');
-        if(url.includes('convertText')&&init&&init.headers){
-          var h=init.headers;
-          if(typeof Headers!=='undefined'&&h instanceof Headers){
-            captured.at=h.get('Accesstoken')||h.get('accesstoken')||captured.at;
-            captured.rt=h.get('Remembermetoken')||h.get('remembermetoken')||captured.rt;
-          } else {
-            Object.keys(h).forEach(function(k){
-              var kl=k.toLowerCase();
-              if(kl==='accesstoken')captured.at=h[k];
-              if(kl==='remembermetoken')captured.rt=h[k];
-            });
-          }
-        }
-      }catch(ex){}
-      var p=origFetch.apply(this,arguments);
-      try{
-        var u2=typeof input==='string'?input:((input&&input.url)||'');
-        if(u2.includes('convertText')){
-          p.then(function(){setTimeout(sendToBackend,400);}).catch(function(){setTimeout(sendToBackend,400);});
-        }
-      }catch(ex2){}
-      return p;
+    XMLHttpRequest.prototype.send=function(body){
+      var self=this;
+      if(this._epUrl&&this._epUrl.includes('convertText')){
+        this.addEventListener('loadend',function(){setTimeout(sendToBackend,300);},{once:true});
+      }
+      return origSend.apply(this,arguments);
     };
 
-    // ── Find the URL paste input (NOT the store search box) ──
-    // The store search has placeholder "Search for stores"
-    // The URL input has placeholder containing "paste","link","url","amazon","flipkart" or similar
-    // If we can't distinguish, use the LAST visible text input on the page
-    var TEST_URL='https://www.google.com';
-    var allInputs=Array.prototype.slice.call(document.querySelectorAll('input[type="text"],input[type="url"],input:not([type])'));
-    var urlInput=null;
-    for(var i=0;i<allInputs.length;i++){
-      var ph=(allInputs[i].placeholder||'').toLowerCase();
-      var aria=(allInputs[i].getAttribute('aria-label')||'').toLowerCase();
-      if(ph.includes('paste')||ph.includes('product')||ph.includes('link')||
-         ph.includes('url')||ph.includes('amazon')||ph.includes('flipkart')||
-         aria.includes('url')||aria.includes('link')||aria.includes('paste')){
-        urlInput=allInputs[i];break;
-      }
-    }
-    // Fallback: last visible input that is NOT the store search
+    // ── Fill input[placeholder="Paste link here"] ──
+    // Confirmed index 2 in DOM, but select by placeholder to be safe
+    var urlInput=document.querySelector('input[placeholder="Paste link here"]');
     if(!urlInput){
-      for(var j=allInputs.length-1;j>=0;j--){
-        var ph2=(allInputs[j].placeholder||'').toLowerCase();
-        if(!ph2.includes('search')&&allInputs[j].offsetParent!==null){urlInput=allInputs[j];break;}
-      }
+      // Fallback: textarea with "Input Links" placeholder
+      urlInput=document.querySelector('textarea[placeholder*="Input Links"],textarea[placeholder*="http"]');
+    }
+    if(!urlInput){
+      alert('\\u26A0\\uFE0F Could not find URL input. Make sure you are on extrape.com/link-converter.');return;
     }
 
-    if(urlInput){
-      // React-safe value setter
-      var nativeSetter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');
-      if(nativeSetter&&nativeSetter.set){nativeSetter.set.call(urlInput,TEST_URL);}
-      else{urlInput.value=TEST_URL;}
-      urlInput.dispatchEvent(new Event('input',{bubbles:true}));
-      urlInput.dispatchEvent(new Event('change',{bubbles:true}));
-      urlInput.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,key:'Enter',keyCode:13}));
-    }
+    // React-safe setter
+    var nativeSetter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value')||
+                     Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value');
+    if(nativeSetter&&nativeSetter.set){nativeSetter.set.call(urlInput,'https://www.amazon.in/dp/B08N5WRWNW');}
+    else{urlInput.value='https://www.amazon.in/dp/B08N5WRWNW';}
+    urlInput.dispatchEvent(new Event('input',{bubbles:true}));
+    urlInput.dispatchEvent(new Event('change',{bubbles:true}));
 
-    // ── Click the Convert button (confirmed text = "Convert") ──
+    // ── Click Convert (confirmed exact text "Convert") ──
     setTimeout(function(){
       var btn=null;
-      var all=Array.prototype.slice.call(document.querySelectorAll('button,[role="button"]'));
-      // Exact match first
+      var all=Array.prototype.slice.call(document.querySelectorAll('button'));
       for(var i=0;i<all.length;i++){
         if(all[i].textContent.trim()==='Convert'){btn=all[i];break;}
       }
-      // Partial match fallback
-      if(!btn){
-        for(var i=0;i<all.length;i++){
-          var t=all[i].textContent.toLowerCase().trim();
-          if(t.includes('convert')&&!t.includes('bitly')&&!t.includes('advanced')){btn=all[i];break;}
-        }
-      }
       if(btn){btn.click();}
-      else{alert('\\u26A0\\uFE0F Could not find Convert button. Please paste any URL manually and click Convert, then click the bookmark immediately after.');}
-      // Safety net
-      setTimeout(function(){if(!done)sendToBackend();},6000);
-    },400);
+      else{alert('\\u26A0\\uFE0F Convert button not found. Paste a URL manually, click Convert, then click bookmark again.');}
+      // Safety net: if XHR already fired before patch, send whatever we have
+      setTimeout(function(){if(!done)sendToBackend();},8000);
+    },300);
   })()`.replace(/\n\s+/g,' ');
 
   res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>ExtraPe Token Updater</title>
