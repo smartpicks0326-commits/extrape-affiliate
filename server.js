@@ -2924,7 +2924,11 @@ app.get('/compare/search', async (req, res) => {
       return res.status(503).json({ error: 'Flash token expired.', fix: 'Visit https://api.smartpickdeals.live/flash/token-page and click the bookmarklet on flash.co' });
     }
     if (flashResult.error === 'FLASH_NO_DATA') {
-      return res.status(404).json({ error: 'Flash.co has no comparison data for this product. Try a popular product from Amazon, Myntra, Flipkart or Zepto.' });
+      const wasShort = isShortUrl(rawUrl);
+      const hint = wasShort
+        ? `Short link (${rawUrl}) was resolved to: ${url} — but Flash.co has no comparison data for this product. Please open the link in your browser, copy the full URL from the address bar, and try again.`
+        : 'Flash.co has no comparison data for this product. Try a popular product URL directly from Amazon, Flipkart, or Myntra.';
+      return res.status(404).json({ error: hint, resolvedUrl: url });
     }
     if (flashResult.error) return res.status(502).json({ error: flashResult.error, pageHash: flashResult.pageHash });
 

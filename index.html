@@ -869,7 +869,9 @@ function detectStoreName(url) {
       {n:'Meesho',   d:['meesho.com']},
       {n:'JioMart',  d:['jiomart.com']},
     ];
-    var found = STORE_DOMAINS.find(function(s){ return s.d.some(function(d){ return h.includes(d)||url.includes(d); }); });
+    var found = STORE_DOMAINS.find(function(s){
+      return s.d.some(function(d){ return h === d || h.endsWith('.'+d) || url.includes(d); });
+    });
     return found ? found.n : h.split('.')[0];
   } catch(e){ return 'Unknown'; }
 }
@@ -1160,6 +1162,7 @@ async function runCompareSearch(url) {
 
   var affiliateLink = url;
   var compareData   = null;
+  var compareError  = null;
 
   try {
     var results = await Promise.allSettled([
@@ -1168,6 +1171,7 @@ async function runCompareSearch(url) {
     ]);
     if (results[0].status === 'fulfilled') affiliateLink = results[0].value;
     if (results[1].status === 'fulfilled') compareData   = results[1].value;
+    if (results[1].status === 'rejected')  compareError  = results[1].reason && results[1].reason.message;
   } catch(e) { console.error('[Compare] error:', e); }
 
   clearInterval(stepTimer);
@@ -1182,7 +1186,7 @@ async function runCompareSearch(url) {
   fetch(BACKEND + '/track/compare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: url, store: storeName }) }).catch(function(){});
 
   await sleep(300);
-  showCompareResults(storeName, url, affiliateLink, compareData);
+  showCompareResults(storeName, url, affiliateLink, compareData, compareError);
 }
 
 async function getAffiliateLink(url, store) {
@@ -1215,8 +1219,19 @@ async function getCompareData(url) {
     } catch(e) { console.log('[Flash] failed:', e.message); }
   }
   var r = await fetch(BACKEND + '/compare/search?url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(45000) });
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  return await r.json();
+  var body = await r.json().catch(function(){ return {}; });
+  if (!r.ok) {
+    var msg = body.error || ('Server error ' + r.status);
+    if (r.status === 404 || msg.includes('no comparison data') || msg.includes('no parseable') || msg.includes('FLASH_NO_DATA')) {
+      msg = 'No price comparison data found for this product. Try pasting the full product URL directly from Amazon or Flipkart instead of a short link.';
+    } else if (r.status === 503) {
+      msg = 'Comparison service is temporarily unavailable. Please try again in a moment.';
+    } else if (msg.includes('token expired') || msg.includes('TOKEN_EXPIRED')) {
+      msg = 'Comparison service token expired. Please contact support.';
+    }
+    throw new Error(msg);
+  }
+  return body;
 }
 
 async function callFlash(productUrl, token) {
@@ -1243,7 +1258,7 @@ function parseFlash(data) {
 
 function normStore(s){ var l=(s||'').toLowerCase(); if(l.includes('amazon'))return 'Amazon'; if(l.includes('flipkart'))return 'Flipkart'; if(l.includes('myntra'))return 'Myntra'; if(l.includes('ajio'))return 'Ajio'; if(l.includes('nykaa'))return 'Nykaa'; if(l.includes('tatacliq'))return 'TataCliq'; if(l.includes('croma'))return 'Croma'; if(l.includes('snapdeal'))return 'Snapdeal'; if(l.includes('meesho'))return 'Meesho'; if(l.includes('jiomart'))return 'JioMart'; return ''; }
 
-function showCompareResults(storeName, url, affiliateLink, data) {
+function showCompareResults(storeName, url, affiliateLink, data, compareError) {
   document.getElementById('compareLoading').style.display = 'none';
   document.getElementById('compareResults').style.display = 'block';
   window.scrollTo(0, 0);
@@ -1264,7 +1279,14 @@ function showCompareResults(storeName, url, affiliateLink, data) {
   var banner = document.getElementById('dealBanner');
   if (stores.length === 0) {
     banner.className = 'deal-banner banner-orange';
-    banner.innerHTML = '⚠️ No prices found. Try a different product URL.';
+    var errMsg = compareError || 'No prices found for this product. Try a full product URL from Amazon or Flipkart.';
+    // If it's a short link, add extra guidance
+    if (url.includes('amzn.in') || url.includes('amzn.to') || url.includes('fkrt.co') || url.includes('dl.flipkart.com')) {
+      errMsg = '⚠️ Short links may not have comparison data. Please open the link in your browser, copy the full URL from the address bar, and paste it here.';
+    } else {
+      errMsg = '⚠️ ' + errMsg;
+    }
+    banner.innerHTML = errMsg;
     banner.style.display = 'flex';
   } else {
     banner.className = 'deal-banner banner-green';
