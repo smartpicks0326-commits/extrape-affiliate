@@ -8,18 +8,19 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --bg:        #0a0a0f;
-      --surface:   #13131a;
-      --border:    #1e1e2e;
-      --accent:    #ff6b2b;
-      --accent2:   #ff9a5c;
-      --text:      #f0ede8;
-      --muted:     #6b6878;
-      --success:   #29d87a;
-      --error:     #ff4b6e;
+      --bg:      #0a0a0f;
+      --surface: #13131a;
+      --border:  #1e1e2e;
+      --accent:  #ff6b2b;
+      --accent2: #ff9a5c;
+      --text:    #f0ede8;
+      --muted:   #6b6878;
+      --success: #29d87a;
+      --error:   #ff4b6e;
     }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { max-width: 100vw; overflow-x: hidden; }
 
     body {
       font-family: 'Inter', sans-serif;
@@ -60,7 +61,34 @@
       z-index: 0;
     }
 
-    /* ── HEADER ── */
+    /* ── NAV ── */
+    nav.top-nav {
+      position: relative;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(10,10,15,.9);
+      backdrop-filter: blur(12px);
+      width: 100%;
+    }
+    .logo-text { font-size: 16px; font-weight: 800; color: var(--text); }
+    .logo-text span {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .nav-btns { display: flex; gap: 8px; }
+    .nav-btn { font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 700; padding: 7px 14px; border-radius: 8px; text-decoration: none; transition: all .2s; }
+    .nb-out { color: var(--muted); border: 1px solid var(--border); background: transparent; }
+    .nb-out:hover { color: var(--text); }
+    .nb-fill { background: var(--accent); color: #fff; border: 1px solid transparent; }
+    .nb-fill:hover { background: var(--accent2); }
+
+    /* ── HERO HEADER ── */
     header {
       position: relative;
       z-index: 1;
@@ -85,18 +113,13 @@
       border-radius: 999px;
       margin-bottom: 24px;
     }
-
     .badge::before {
       content: '●';
       font-size: 8px;
       color: var(--accent);
-      animation: pulse 2s infinite;
+      animation: pulse-dot 2s infinite;
     }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.3; }
-    }
+    @keyframes pulse-dot { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
 
     h1 {
       font-size: clamp(2.2rem, 6vw, 3.6rem);
@@ -105,14 +128,12 @@
       letter-spacing: -0.03em;
       margin-bottom: 16px;
     }
-
     h1 span {
       background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
     }
-
     .subtitle {
       color: var(--muted);
       font-size: 1rem;
@@ -121,6 +142,24 @@
       max-width: 440px;
       margin: 0 auto;
     }
+
+    /* ── TICKER ── */
+    .ticker-wrap {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      overflow: hidden;
+      padding: 14px 0;
+      mask-image: linear-gradient(90deg, transparent, black 10%, black 90%, transparent);
+      -webkit-mask-image: linear-gradient(90deg, transparent, black 10%, black 90%, transparent);
+    }
+    .ticker { display: flex; gap: 0; width: max-content; animation: ticker 30s linear infinite; }
+    .ticker span {
+      font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--muted);
+      padding: 0 18px; border-right: 1px solid var(--border); white-space: nowrap;
+    }
+    @keyframes ticker { from{transform:translateX(0);} to{transform:translateX(-50%);} }
 
     /* ── MAIN CARD ── */
     main {
@@ -149,13 +188,8 @@
       display: block;
     }
 
-    .input-row {
-      display: flex;
-      gap: 10px;
-    }
-
     #productUrl {
-      flex: 1;
+      width: 100%;
       background: var(--bg);
       border: 1.5px solid var(--border);
       color: var(--text);
@@ -165,45 +199,81 @@
       border-radius: 12px;
       outline: none;
       transition: border-color 0.2s, box-shadow 0.2s;
+      -webkit-appearance: none;
     }
-
     #productUrl::placeholder { color: var(--muted); }
-
     #productUrl:focus {
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(255,107,43,0.12);
     }
 
-    button#convertBtn {
-      background: var(--accent);
-      color: #fff;
+    /* ── DETECTED STORE BADGE ── */
+    #storeBadge {
+      display: none;
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    /* ── ACTION BUTTONS ROW ── */
+    .action-btns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .action-btn {
       border: none;
       font-family: 'Inter', sans-serif;
       font-weight: 700;
       font-size: 14px;
-      padding: 14px 24px;
+      padding: 14px 20px;
       border-radius: 12px;
       cursor: pointer;
+      transition: background 0.2s, transform 0.1s, box-shadow 0.2s, opacity 0.2s;
       white-space: nowrap;
-      transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
-      box-shadow: 0 4px 20px rgba(255,107,43,0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .action-btn:active { transform: scale(0.97); }
+    .action-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    #compareBtn {
+      background: var(--surface);
+      color: var(--text);
+      border: 1.5px solid var(--border);
+      box-shadow: none;
+    }
+    #compareBtn:hover:not(:disabled) {
+      border-color: rgba(255,107,43,0.4);
+      background: rgba(255,107,43,0.07);
+    }
+    #compareBtn.active-mode {
+      border-color: var(--accent);
+      background: rgba(255,107,43,0.1);
+      color: var(--accent2);
+      box-shadow: 0 0 0 3px rgba(255,107,43,0.12);
     }
 
-    button#convertBtn:hover {
+    #convertBtn {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(255,107,43,0.35);
+    }
+    #convertBtn:hover:not(:disabled) {
       background: var(--accent2);
       box-shadow: 0 6px 28px rgba(255,107,43,0.45);
     }
-
-    button#convertBtn:active { transform: scale(0.97); }
-
-    button#convertBtn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-      transform: none;
+    #convertBtn.active-mode {
+      background: var(--accent);
+      box-shadow: 0 4px 20px rgba(255,107,43,0.35), 0 0 0 3px rgba(255,107,43,0.2);
     }
 
-    /* ── LOADER ── */
-    #loader {
+    /* ── CONVERT LOADER ── */
+    #convertLoader {
       display: none;
       align-items: center;
       gap: 14px;
@@ -213,176 +283,242 @@
       border: 1px solid rgba(255,107,43,0.12);
       border-radius: 12px;
     }
-
-    #loader.show { display: flex; }
+    #convertLoader.show { display: flex; }
 
     .spinner {
-      width: 22px;
-      height: 22px;
+      width: 22px; height: 22px;
       border: 2.5px solid rgba(255,107,43,0.2);
       border-top-color: var(--accent);
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
       flex-shrink: 0;
     }
-
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    .loader-text {
-      font-size: 13px;
-      color: var(--muted);
-    }
+    .loader-text { font-size: 13px; color: var(--muted); }
+    .loader-text strong { display: block; color: var(--text); font-size: 14px; margin-bottom: 2px; }
 
-    .loader-text strong {
-      display: block;
-      color: var(--text);
-      font-size: 14px;
-      margin-bottom: 2px;
-    }
-
-    /* ── RESULT ── */
-    #result {
-      display: none;
-      margin-top: 28px;
-    }
-
-    #result.show { display: block; }
+    /* ── CONVERT RESULT ── */
+    #convertResult { display: none; margin-top: 28px; }
+    #convertResult.show { display: block; }
 
     .result-label {
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--success);
-      margin-bottom: 10px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
+      font-size: 11px; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--success);
+      margin-bottom: 10px; display: flex; align-items: center; gap: 6px;
     }
-
     .result-label::before { content: '✓'; }
-
     .result-box {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      background: var(--bg);
-      border: 1.5px solid rgba(41, 216, 122, 0.25);
-      border-radius: 12px;
-      padding: 14px 18px;
+      display: flex; flex-direction: column; gap: 12px;
+      background: var(--bg); border: 1.5px solid rgba(41,216,122,0.25);
+      border-radius: 12px; padding: 14px 18px;
     }
-
     .result-link {
-      font-family: 'DM Mono', monospace;
-      font-size: 13px;
-      color: var(--success);
-      overflow-wrap: break-word;
-      word-break: break-word;
-      line-height: 1.6;
-      width: 100%;
+      font-family: 'DM Mono', monospace; font-size: 13px; color: var(--success);
+      overflow-wrap: break-word; word-break: break-word; line-height: 1.6; width: 100%;
     }
-
-    /* Share button — full width, shown only when navigator.share available */
     button#shareBtn {
-      width: 100%;
-      background: rgba(255,107,43,0.1);
-      color: var(--accent2);
-      border: 1px solid rgba(255,107,43,0.2);
-      font-family: 'Inter', sans-serif;
-      font-weight: 600;
-      font-size: 13px;
-      padding: 10px 16px;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: background 0.2s;
+      width: 100%; background: rgba(255,107,43,0.1); color: var(--accent2);
+      border: 1px solid rgba(255,107,43,0.2); font-family: 'Inter', sans-serif;
+      font-weight: 600; font-size: 13px; padding: 10px 16px; border-radius: 8px;
+      cursor: pointer; transition: background 0.2s;
     }
     button#shareBtn:hover { background: rgba(255,107,43,0.18); }
-
-    /* Copy + Open row */
-    .result-actions-row {
-      display: flex;
-      gap: 8px;
-    }
+    .result-actions-row { display: flex; gap: 8px; }
     .result-actions-row button { flex: 1; }
-
     button#copyBtn {
-      background: rgba(41, 216, 122, 0.12);
-      color: var(--success);
-      border: 1px solid rgba(41, 216, 122, 0.25);
-      font-family: 'Inter', sans-serif;
-      font-weight: 600;
-      font-size: 12px;
-      padding: 10px 16px;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: background 0.2s;
+      background: rgba(41,216,122,0.12); color: var(--success);
+      border: 1px solid rgba(41,216,122,0.25); font-family: 'Inter', sans-serif;
+      font-weight: 600; font-size: 12px; padding: 10px 16px; border-radius: 8px;
+      cursor: pointer; transition: background 0.2s;
     }
-    button#copyBtn:hover { background: rgba(41, 216, 122, 0.2); }
+    button#copyBtn:hover { background: rgba(41,216,122,0.2); }
     button#copyBtn.copied { color: #fff; background: var(--success); border-color: var(--success); }
-
     button#openBtn {
-      background: rgba(255,107,43,0.12);
-      color: var(--accent2);
-      border: 1px solid rgba(255,107,43,0.25);
-      font-family: 'Inter', sans-serif;
-      font-weight: 600;
-      font-size: 12px;
-      padding: 10px 16px;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: background 0.2s;
+      background: rgba(255,107,43,0.12); color: var(--accent2);
+      border: 1px solid rgba(255,107,43,0.25); font-family: 'Inter', sans-serif;
+      font-weight: 600; font-size: 12px; padding: 10px 16px; border-radius: 8px;
+      cursor: pointer; transition: background 0.2s;
     }
     button#openBtn:hover { background: rgba(255,107,43,0.18); }
 
     /* ── ERROR ── */
-    #error {
-      display: none;
-      margin-top: 28px;
-      padding: 16px 20px;
-      background: rgba(255, 75, 110, 0.07);
-      border: 1px solid rgba(255, 75, 110, 0.2);
-      border-radius: 12px;
-      font-size: 13.5px;
-      color: var(--error);
-      line-height: 1.6;
+    #errorBox {
+      display: none; margin-top: 28px; padding: 16px 20px;
+      background: rgba(255,75,110,0.07); border: 1px solid rgba(255,75,110,0.2);
+      border-radius: 12px; font-size: 13.5px; color: var(--error); line-height: 1.6;
     }
+    #errorBox.show { display: block; }
 
-    #error.show { display: block; }
-
-    /* ── DIVIDER / STEPS ── */
+    /* ── HOW IT WORKS ── */
     .how-it-works {
-      margin-top: 28px;
-      padding-top: 24px;
-      border-top: 1px solid var(--border);
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
+      margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--border);
+      display: grid; grid-template-columns: repeat(3,1fr); gap: 16px;
     }
-
-    .step {
-      text-align: center;
-    }
-
+    .hiw-step { text-align: center; }
     .step-num {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 32px;
-      height: 32px;
-      border-radius: 10px;
-      background: rgba(255,107,43,0.1);
-      border: 1px solid rgba(255,107,43,0.2);
-      color: var(--accent);
-      font-size: 13px;
-      font-weight: 700;
-      margin-bottom: 8px;
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px; border-radius: 10px;
+      background: rgba(255,107,43,0.1); border: 1px solid rgba(255,107,43,0.2);
+      color: var(--accent); font-size: 13px; font-weight: 700; margin-bottom: 8px;
+    }
+    .hiw-step p { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+    /* ══════════════════════════════════════════════
+       COMPARE SECTIONS
+    ══════════════════════════════════════════════ */
+
+    /* ── COMPARE LOADING ── */
+    #compareLoading {
+      display: none;
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 600px;
+      padding: 0 20px 40px;
+      box-sizing: border-box;
     }
 
-    .step p {
-      font-size: 12px;
-      color: var(--muted);
-      line-height: 1.5;
+    .src-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; padding: 16px 18px; margin-bottom: 14px;
+      display: flex; align-items: center; gap: 12px;
     }
+    .src-logo {
+      width: 40px; height: 40px; border-radius: 10px;
+      background: rgba(255,255,255,.06); border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden; flex-shrink: 0; font-size: 16px; font-weight: 800;
+    }
+    .src-logo img { width: 26px; height: 26px; object-fit: contain; }
+    .src-info { flex: 1; }
+    .src-name { font-weight: 700; font-size: 15px; }
+    .src-label { font-size: 11px; color: var(--muted); }
+
+    .progress-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; padding: 20px 18px; margin-bottom: 14px;
+    }
+    .pct-row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+    .pct-num { font-family: 'DM Mono', monospace; font-size: 42px; font-weight: 800; letter-spacing: -.02em; line-height: 1; }
+    .pct-label { font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+    .prog-track { height: 6px; background: var(--border); border-radius: 999px; overflow: hidden; margin-bottom: 8px; }
+    .prog-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 999px; width: 0%; transition: width .6s cubic-bezier(.4,0,.2,1); }
+    .prog-hint { font-size: 12px; color: var(--muted); font-style: italic; }
+
+    .steps-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; padding: 6px 18px; margin-bottom: 14px;
+    }
+    .cmp-step { display: flex; align-items: center; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--border); }
+    .cmp-step:last-child { border-bottom: none; }
+    .step-dot {
+      width: 22px; height: 22px; border-radius: 50%;
+      background: var(--border); border: 1.5px solid rgba(255,255,255,.08);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; flex-shrink: 0; transition: all .3s;
+    }
+    .step-dot.active { background: rgba(255,107,43,.15); border-color: var(--accent); animation: step-pulse 1.2s infinite; }
+    .step-dot.done { background: rgba(41,216,122,.12); border-color: var(--success); color: var(--success); font-size: 11px; }
+    @keyframes step-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(255,107,43,.3)} 50%{box-shadow:0 0 0 6px rgba(255,107,43,0)} }
+    .step-text strong { display: block; font-size: 13px; font-weight: 700; margin-bottom: 1px; }
+    .step-text span { font-size: 11px; color: var(--muted); }
+
+    /* ── COMPARE RESULTS ── */
+    #compareResults {
+      display: none;
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 600px;
+      padding: 32px 20px 80px;
+      box-sizing: border-box;
+    }
+
+    .back-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: none; border: none; color: var(--muted);
+      font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 600;
+      cursor: pointer; margin-bottom: 20px; padding: 6px 0; transition: color .2s;
+    }
+    .back-btn:hover { color: var(--text); }
+
+    .prod-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 20px; padding: 20px 22px; margin-bottom: 20px;
+      display: flex; gap: 20px; align-items: center;
+      box-shadow: 0 8px 32px rgba(0,0,0,.28), 0 0 0 1px rgba(255,255,255,.03);
+    }
+    .prod-img-wrap {
+      width: 116px; height: 116px; border-radius: 14px; background: #fff;
+      border: 1px solid rgba(255,255,255,.12); display: flex;
+      align-items: center; justify-content: center; overflow: hidden;
+      flex-shrink: 0; box-shadow: 0 4px 20px rgba(0,0,0,.25);
+    }
+    .prod-img-wrap img { width: 100px; height: 100px; object-fit: contain; }
+    .prod-details { flex: 1; min-width: 0; }
+    .prod-title { font-size: 15px; font-weight: 700; line-height: 1.4; margin-bottom: 6px; letter-spacing: -.01em; }
+    .prod-meta { font-size: 11px; color: var(--muted); letter-spacing: .02em; }
+
+    .deal-banner {
+      border-radius: 14px; padding: 13px 18px; margin-bottom: 18px;
+      font-size: 13px; font-weight: 600; display: flex; align-items: center;
+      gap: 10px; letter-spacing: .01em;
+    }
+    .banner-green { background: rgba(41,216,122,.07); border: 1px solid rgba(41,216,122,.2); color: var(--success); }
+    .banner-orange { background: rgba(255,107,43,.07); border: 1px solid rgba(255,107,43,.2); color: var(--accent2); }
+
+    .sec-hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+    .sec-title { font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+    .sec-badge { font-size: 11px; font-weight: 700; color: var(--text); background: rgba(255,255,255,.07); border: 1px solid var(--border); padding: 2px 9px; border-radius: 999px; }
+
+    .store-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 16px; padding: 0; margin-bottom: 10px; overflow: hidden;
+      transition: border-color .2s, box-shadow .2s; box-shadow: 0 2px 12px rgba(0,0,0,.2);
+    }
+    .store-card:hover { border-color: rgba(255,107,43,.3); box-shadow: 0 4px 24px rgba(0,0,0,.32); }
+    .store-card.best { border-color: rgba(41,216,122,.3); background: rgba(41,216,122,.015); }
+    .store-card.source { border-color: rgba(255,107,43,.25); }
+    .store-main { display: flex; align-items: center; gap: 14px; padding: 16px 18px; }
+    .store-logo-wrap {
+      width: 42px; height: 42px; border-radius: 10px; background: #fff;
+      border: 1px solid rgba(255,255,255,.1); display: flex;
+      align-items: center; justify-content: center; overflow: hidden;
+      flex-shrink: 0; font-size: 16px; font-weight: 800; box-shadow: 0 2px 8px rgba(0,0,0,.2);
+    }
+    .store-logo-wrap img { width: 28px; height: 28px; object-fit: contain; border-radius: 3px; }
+    .store-body { flex: 1; min-width: 0; }
+    .store-name { font-size: 14px; font-weight: 700; margin-bottom: 5px; letter-spacing: -.01em; }
+    .store-tags { display: flex; gap: 5px; flex-wrap: wrap; }
+    .tag { font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 999px; letter-spacing: .02em; }
+    .tag-src { color: var(--accent2); background: rgba(255,107,43,.1); border: 1px solid rgba(255,107,43,.2); }
+    .tag-best { color: var(--success); background: rgba(41,216,122,.1); border: 1px solid rgba(41,216,122,.2); }
+    .tag-save { color: #a78bfa; background: rgba(167,139,250,.1); border: 1px solid rgba(167,139,250,.2); }
+    .store-price { font-family: 'DM Mono', monospace; font-size: 20px; font-weight: 800; flex-shrink: 0; text-align: right; letter-spacing: -.02em; }
+    .store-price small { font-size: 11px; font-weight: 400; color: var(--muted); display: block; margin-top: 2px; }
+    .store-actions { display: flex; flex-direction: column; border-top: 1px solid var(--border); }
+    .store-actions-top { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--border); }
+    .btn-copy, .btn-share, .btn-visit { font-family: 'Inter', sans-serif; font-weight: 600; cursor: pointer; border: none; transition: all .2s; display: flex; align-items: center; justify-content: center; gap: 6px; letter-spacing: .02em; }
+    .btn-copy { background: transparent; color: var(--muted); font-size: 12px; padding: 11px 12px; border-right: 1px solid var(--border); }
+    .btn-copy:hover { background: rgba(255,255,255,.04); color: var(--text); }
+    .btn-copy.ok { color: var(--success); }
+    .btn-share { background: transparent; color: var(--muted); font-size: 12px; padding: 11px 12px; }
+    .btn-share:hover { background: rgba(255,255,255,.04); color: var(--text); }
+    .btn-share.ok { color: var(--success); }
+    .btn-visit { background: var(--accent); color: #fff; font-size: 14px; font-weight: 700; padding: 13px 12px; width: 100%; }
+    .btn-visit:hover { background: var(--accent2); }
+    .aff-status { font-size: 11px; color: var(--muted); padding: 5px 18px 8px; font-style: italic; display: flex; align-items: center; gap: 5px; }
+
+    .view-more-btn {
+      width: 100%; background: var(--surface); border: 1px solid var(--border);
+      color: var(--muted); font-family: 'Inter', sans-serif; font-weight: 600;
+      font-size: 13px; padding: 14px; border-radius: 14px; cursor: pointer;
+      margin-top: 4px; display: flex; align-items: center; justify-content: center;
+      gap: 8px; transition: all .2s;
+    }
+    .view-more-btn:hover { border-color: rgba(255,107,43,.3); color: var(--text); }
+    #otherSec { display: none; margin-top: 12px; }
 
     /* ── FOOTER ── */
     footer {
@@ -392,508 +528,1012 @@
       text-align: center;
       font-size: 12px;
       color: var(--muted);
+      line-height: 1.8;
+    }
+
+    /* ── BOTTOM NAV (mobile) ── */
+    .bottom-nav {
+      display: none;
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: rgba(10,10,15,0.97);
+      border-top: 1px solid var(--border);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      z-index: 100;
+      padding: 8px 0 max(8px, env(safe-area-inset-bottom));
+    }
+    .bn-items { display: flex; justify-content: space-around; align-items: center; }
+    .bn-item {
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      text-decoration: none; color: var(--muted);
+      font-size: 10px; font-weight: 600; padding: 6px 20px;
+      border-radius: 10px; transition: color .2s; min-width: 64px;
+      -webkit-tap-highlight-color: transparent; cursor: pointer; background: none; border: none;
+    }
+    .bn-item.active, .bn-item:hover { color: var(--accent2); }
+    .bn-item svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; }
+    .bn-item.active svg { stroke: var(--accent); }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 768px) {
+      .bottom-nav { display: block; }
+      body { padding-bottom: 70px; }
+      .nav-btns { display: none; }
+      button, a, input[type=text], input[type=url] { min-height: 44px; }
+      * { -webkit-tap-highlight-color: rgba(255,107,43,0.1); }
+      header { padding: 32px 16px 0; }
+      h1 { font-size: clamp(1.8rem, 8vw, 2.4rem); margin-bottom: 12px; }
+      .subtitle { font-size: .9rem; }
+      .action-btns { gap: 8px; }
+      .action-btn { font-size: 13px; padding: 13px 14px; }
+      main { padding: 24px 16px 14px; }
+      .card { padding: 18px 16px; }
+      .result-box { padding: 14px; gap: 10px; }
+      .result-link { font-size: 13px; }
+      button#shareBtn { font-size: 14px; padding: 12px 16px; }
+      .result-actions-row button { min-height: 44px; font-size: 14px; }
+      #compareLoading { padding: 0 14px 40px; }
+      #compareResults { padding: 24px 14px 80px; }
+      .prod-card { padding: 14px; gap: 14px; border-radius: 16px; }
+      .prod-img-wrap { width: 80px; height: 80px; border-radius: 10px; }
+      .prod-img-wrap img { width: 68px; height: 68px; }
+      .prod-title { font-size: 13px; }
+      .store-main { padding: 12px 14px; gap: 10px; }
+      .store-price { font-size: 17px; }
+      .btn-copy, .btn-share { font-size: 12px; padding: 12px 10px; }
+      .btn-visit { font-size: 13px; padding: 13px; }
+      .pct-num { font-size: 34px; }
+      .steps-card { padding: 4px 14px; }
+      .cmp-step { padding: 11px 0; gap: 10px; }
+      .step-text strong { font-size: 12px; }
+      .step-text span { font-size: 10px; }
+      .how-it-works { grid-template-columns: 1fr; }
     }
 
     @media (max-width: 480px) {
-      .input-row { flex-direction: column; }
-      .how-it-works { grid-template-columns: 1fr; }
-      .card { padding: 24px 20px; }
+      header { padding: 24px 12px 0; }
+      h1 { font-size: 1.7rem; }
+      .card { padding: 14px 12px; }
+      .action-btn { font-size: 12px; padding: 12px 10px; }
+      .store-name { font-size: 13px; }
+      .store-price { font-size: 15px; }
+      .tag { font-size: 9px; padding: 2px 6px; }
+      #productUrl { font-size: 16px !important; }
     }
-
-    /* ── TICKER ── */
-    .ticker-wrap {
-      position: relative;
-      z-index: 1;
-      width: 100%;
-      overflow: hidden;
-      padding: 14px 0;
-      mask-image: linear-gradient(90deg, transparent, black 10%, black 90%, transparent);
-      -webkit-mask-image: linear-gradient(90deg, transparent, black 10%, black 90%, transparent);
-    }
-
-    .ticker {
-      display: flex;
-      gap: 0;
-      width: max-content;
-      animation: ticker 30s linear infinite;
-    }
-
-    .ticker span {
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--muted);
-      padding: 0 18px;
-      border-right: 1px solid var(--border);
-      white-space: nowrap;
-    }
-
-    @keyframes ticker {
-      from { transform: translateX(0); }
-      to   { transform: translateX(-50%); }
-    }
-  
-
-
-.nav-btn{font-family:'Inter',sans-serif;font-size:12px;font-weight:700;padding:7px 14px;border-radius:8px;text-decoration:none;transition:all .2s;}
-.nb-out{color:var(--muted);border:1px solid var(--border);background:transparent;}
-.nb-out:hover{color:var(--text);}
-.nb-fill{background:var(--accent);color:#fff;border:1px solid transparent;}
-.nb-fill:hover{background:var(--accent2);}
-
-/* ══════════════════════════════════════════════
-   ENTERPRISE RESPONSIVE DESIGN SYSTEM
-   Breakpoints:
-     xs: < 480px  (small phones)
-     sm: < 768px  (phones)
-     md: < 1024px (tablets)
-     lg: 1024px+  (desktop)
-   ══════════════════════════════════════════════ */
-
-/* ── Bottom navigation (mobile only) ── */
-.bottom-nav {
-  display: none;
-  position: fixed;
-  bottom: 0; left: 0; right: 0;
-  background: rgba(10,10,15,0.97);
-  border-top: 1px solid var(--border);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  z-index: 100;
-  padding: 8px 0 max(8px, env(safe-area-inset-bottom));
-}
-.bn-items { display: flex; justify-content: space-around; align-items: center; }
-.bn-item {
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
-  text-decoration: none; color: var(--muted);
-  font-size: 10px; font-weight: 600; padding: 6px 20px;
-  border-radius: 10px; transition: color .2s; min-width: 64px;
-  -webkit-tap-highlight-color: transparent;
-}
-.bn-item.active, .bn-item:hover { color: var(--accent2); }
-.bn-item svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; }
-.bn-item.active svg { stroke: var(--accent); }
-
-@media (max-width: 768px) {
-  .bottom-nav { display: block; }
-  /* Add padding so content doesn't hide behind bottom nav */
-  body { padding-bottom: 70px; }
-  /* Hide desktop nav links on mobile — bottom nav replaces them */
-  .nav-btns { display: none; }
-  .desktop-nav-btns { display: none !important; }
-  /* Larger touch targets */
-  button, a, input[type=text], input[type=url], input[type=password] {
-    min-height: 44px;
-  }
-  /* Better tap highlight */
-  * { -webkit-tap-highlight-color: rgba(255,107,43,0.1); }
-}
-
-@media (max-width: 480px) {
-  body { font-size: 15px; }
-}
-
-/* ── Index: responsive ── */
-@media (max-width: 768px) {
-  header { padding: 32px 16px 0; }
-  h1 { font-size: clamp(1.8rem, 8vw, 2.4rem); margin-bottom: 12px; }
-  .subtitle { font-size: .9rem; }
-  .input-row { flex-direction: column; gap: 8px; }
-  #productUrl { font-size: 14px; padding: 14px 16px; border-radius: 10px; }
-  button#convertBtn { width: 100%; border-radius: 10px; font-size: 15px; padding: 14px; }
-  .card { padding: 18px 16px; margin: 0 0 14px; }
-  .result-box { padding: 14px; gap: 10px; }
-  .result-link { font-size: 13px; }
-  button#shareBtn { font-size: 14px; padding: 12px 16px; }
-  .result-actions-row button { min-height: 44px; font-size: 14px; }
-  .supported-stores { gap: 6px; }
-  .store-chip { font-size: 11px; padding: 4px 8px; }
-}
-@media (max-width: 480px) {
-  header { padding: 24px 12px 0; }
-  h1 { font-size: 1.7rem; }
-  .card { padding: 14px 12px; }
-}
-</style>
+  </style>
 </head>
 <body>
 
-  <!-- NAV -->
-  <nav style="position:relative;z-index:10;display:flex;align-items:center;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--border);background:rgba(10,10,15,.9);backdrop-filter:blur(12px);width:100%;">
-    <span style="font-size:16px;font-weight:800;color:var(--text);">Smart Pick <span style="background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Deals</span></span>
-    <div class="nav-btns desktop-only">
-      <a class="nav-btn nb-fill" href="index.html">🔗 Convert</a>
-      <a class="nav-btn nb-out" href="compare.html">📊 Compare</a>
-    </div>
-  </nav>
-
-  <header>
-    <div class="badge">200+ Stores · Best Deals Handpicked</div>
-    <h1>Shop Smart.<br/><span>Save Smarter.</span></h1>
-    <p class="subtitle">Paste any product link from your favourite store and get the best deal — instantly.</p>
-  </header>
-
-  <!-- Supported stores ticker -->
-  <div class="ticker-wrap">
-    <div class="ticker">
-      <span>Amazon</span><span>Flipkart</span><span>Myntra</span><span>Ajio</span>
-      <span>TataCliq</span><span>Croma</span><span>Nykaa</span><span>Snapdeal</span>
-      <span>MakeMyTrip</span><span>ClearTrip</span><span>Netflix</span><span>SonyLiv</span>
-      <span>Netmeds</span><span>Mamaearth</span><span>Boat</span><span>WOW</span>
-      <!-- duplicate for seamless loop -->
-      <span>Amazon</span><span>Flipkart</span><span>Myntra</span><span>Ajio</span>
-      <span>TataCliq</span><span>Croma</span><span>Nykaa</span><span>Snapdeal</span>
-      <span>MakeMyTrip</span><span>ClearTrip</span><span>Netflix</span><span>SonyLiv</span>
-      <span>Netmeds</span><span>Mamaearth</span><span>Boat</span><span>WOW</span>
-    </div>
-  </div>
-
-  <main>
-    <div class="card">
-      <label class="input-label" for="productUrl">Product URL (any supported store)</label>
-      <div class="input-row">
-        <input
-          type="text" inputmode="url"
-          id="productUrl"
-          placeholder="https://www.flipkart.com/... or amazon.in/... or myntra.com/..."
-          autocomplete="off"
-          spellcheck="false"
-        />
-        <button id="convertBtn" onclick="convert()">Convert →</button>
-      </div>
-      <!-- Detected store badge -->
-      <div id="storeBadge" style="display:none; margin-top:10px; font-size:12px; color:var(--muted);">
-        Detected: <strong id="storeName" style="color:var(--accent2)"></strong>
-      </div>
-
-      <!-- Loader -->
-      <div id="loader">
-        <div class="spinner"></div>
-        <div class="loader-text">
-          <strong id="loaderTitle">Generating your link…</strong>
-          <span id="loaderSub">Fetching your deal link instantly</span>
-          <div id="queueInfo" style="display:none; margin-top:8px;">
-            <div id="queueBadge" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,107,43,0.12);border:1px solid rgba(255,107,43,0.25);color:#ff9a5c;font-size:11px;font-weight:600;letter-spacing:0.08em;padding:4px 12px;border-radius:999px;">
-              <span id="queueText">Position in queue: 1</span>
-            </div>
-            <div id="etaText" style="margin-top:6px;font-size:12px;color:#6b6878;"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Result -->
-      <div id="result">
-        <div class="result-label">Link ready</div>
-        <div class="result-box">
-          <span class="result-link" id="affiliateLink"></span>
-          <button id="shareBtn" onclick="shareLink()" style="display:none;">⬆ Share</button>
-          <div class="result-actions-row">
-            <button id="copyBtn" onclick="copyLink()">Copy</button>
-            <button id="openBtn" onclick="openLink()">Open ↗</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Error -->
-      <div id="error" id="errorBox"></div>
-
-      <!-- Steps -->
-      <div class="how-it-works">
-        <div class="step">
-          <div class="step-num">1</div>
-          <p>Paste any product URL from your favourite store</p>
-        </div>
-        <div class="step">
-          <div class="step-num">2</div>
-          <p>Select your best deal from 200+ stores</p>
-        </div>
-        <div class="step">
-          <div class="step-num">3</div>
-          <p>Copy and share to help your friends save money</p>
-        </div>
-      </div>
-    </div>
-  </main>
-
-  <footer>Exciting deals from 200+ stores, find &amp; generate instantly &nbsp;·&nbsp; &copy; Smart Pick Deals<br/><a href="mailto:support@smartpickdeals.live" style="color:var(--muted);font-size:12px;text-decoration:none;display:inline-block;margin-top:5px;letter-spacing:.01em;transition:color .2s;" onmouseover="this.style.color='var(--accent2)'" onmouseout="this.style.color='var(--muted)'">✉ support@smartpickdeals.live</a></footer>
-
-  <script>
-    // Primary: laptop server. Fallback: Render if laptop is down
-    var BACKEND_URL = 'https://api.smartpickdeals.live';
-    const BACKEND_PRIMARY  = 'https://api.smartpickdeals.live';
-    const BACKEND_FALLBACK = 'https://extrape-affiliate.onrender.com';
-    var backendReady = false;
-
-    // Returns the best available backend — awaitable before any API call
-    async function resolveBackend() {
-      if (backendReady) return BACKEND_URL;
-      try {
-        const r = await fetch(BACKEND_PRIMARY + '/ping', { signal: AbortSignal.timeout(2500) });
-        if (r.ok) { BACKEND_URL = BACKEND_PRIMARY; console.log('[Backend] Laptop ✅'); }
-        else throw new Error();
-      } catch(e) {
-        BACKEND_URL = BACKEND_FALLBACK;
-        console.log('[Backend] Laptop down — using Render fallback');
-      }
-      backendReady = true;
-      return BACKEND_URL;
-    }
-    resolveBackend(); // pre-warm on page load
-
-    const SUPPORTED_STORES = [
-      { name: 'Amazon',      domains: ['amazon.in', 'amazon.com', 'amzn.in', 'amzn.to'] },
-      { name: 'Flipkart',    domains: ['flipkart.com', 'dl.flipkart.com'] },
-      { name: 'Myntra',      domains: ['myntra.com'] },
-      { name: 'Ajio',        domains: ['ajio.com'] },
-      { name: 'Nykaa',       domains: ['nykaa.com', 'nykaafashion.com', 'nykaabeauty.com'] },
-      { name: 'TataCliq',    domains: ['tatacliq.com'] },
-      { name: 'Croma',       domains: ['croma.com'] },
-      { name: 'Snapdeal',    domains: ['snapdeal.com'] },
-      { name: 'Boat',        domains: ['boat-lifestyle.com'] },
-      { name: 'MakeMyTrip',  domains: ['makemytrip.com'] },
-      { name: 'ClearTrip',   domains: ['cleartrip.com'] },
-      { name: 'Netflix',     domains: ['netflix.com'] },
-      { name: 'SonyLiv',     domains: ['sonyliv.com'] },
-      { name: 'Netmeds',     domains: ['netmeds.com'] },
-      { name: 'Mamaearth',   domains: ['mamaearth.in'] },
-      { name: 'Meesho',      domains: ['meesho.com'] },
-      { name: 'JioMart',     domains: ['jiomart.com'] },
-      { name: 'BigBasket',   domains: ['bigbasket.com'] },
-      { name: 'FirstCry',    domains: ['firstcry.com'] },
-    ];
-
-    function detectStore(url) {
-      try {
-        const hostname = new URL(url).hostname.replace('www.', '');
-        return SUPPORTED_STORES.find(s => s.domains.some(d => hostname.includes(d))) || null;
-      } catch { return null; }
-    }
-
-    document.getElementById('productUrl').addEventListener('input', function () {
-      const url = this.value.trim();
-      const badge = document.getElementById('storeBadge');
-      const storeName = document.getElementById('storeName');
-      const store = url ? detectStore(url) : null;
-      if (store) { storeName.textContent = store.name; badge.style.display = 'block'; }
-      else { badge.style.display = 'none'; }
-    });
-
-    let pollInterval = null;
-
-    function stopPolling() {
-      if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
-    }
-
-    function formatTime(seconds) {
-      if (seconds <= 0) return 'almost done...';
-      if (seconds < 60) return 'about ' + seconds + ' seconds';
-      return 'about ' + Math.ceil(seconds / 60) + ' minute(s)';
-    }
-
-    async function pollStatus(requestId, storeName) {
-      try {
-        const res = await fetch((await resolveBackend()) + '/status/' + requestId);
-        const data = await res.json();
-
-        if (data.state === 'pending') {
-          // Show queue position
-          document.getElementById('queueInfo').style.display = 'block';
-          document.getElementById('loaderTitle').textContent = 'You are in the queue...';
-          document.getElementById('loaderSub').textContent = 'We will process your ' + storeName + ' link shortly';
-          document.getElementById('queueText').textContent =
-            data.position + ' request' + (data.position > 1 ? 's' : '') + ' ahead of you';
-          document.getElementById('etaText').textContent =
-            'Estimated wait: ' + formatTime(data.estimatedSeconds);
-
-        } else if (data.state === 'processing') {
-          document.getElementById('queueInfo').style.display = 'none';
-          document.getElementById('loaderTitle').textContent = 'Generating your link...';
-          document.getElementById('loaderSub').textContent = 'Fetching your ' + storeName + ' deal link';
-
-        } else if (data.state === 'done') {
-          stopPolling();
-          document.getElementById('loader').classList.remove('show');
-          document.getElementById('productUrl').disabled = false;
-          document.getElementById('convertBtn').disabled = false;
-
-          // displayLink = clean URL shown to user and copied (no tag, no pages.dev)
-          // affiliateLink = actual click URL with commission (used only for Visit button)
-          const displayUrl = data.displayLink || data.affiliateLink;
-          const clickUrl   = data.affiliateLink;
-
-          document.getElementById('affiliateLink').textContent = displayUrl;
-          // Store click URL separately — only Visit button uses it
-          document.getElementById('affiliateLink').dataset.clickUrl = clickUrl;
-          document.getElementById('result').classList.add('show');
-
-        } else if (data.state === 'error') {
-          stopPolling();
-          document.getElementById('loader').classList.remove('show');
-          document.getElementById('productUrl').disabled = false;
-          document.getElementById('convertBtn').disabled = false;
-          showError(data.error || 'Something went wrong. Please try again.');
-        }
-      } catch(err) {
-        console.error('Polling error:', err);
-      }
-    }
-
-    async function convert() {
-      const input    = document.getElementById('productUrl');
-      const loader   = document.getElementById('loader');
-      const result   = document.getElementById('result');
-      const errorBox = document.getElementById('error');
-      const btn      = document.getElementById('convertBtn');
-      const url      = input.value.trim();
-
-      result.classList.remove('show');
-      errorBox.classList.remove('show');
-      document.getElementById('queueInfo').style.display = 'none';
-
-      if (!url) return showError('Please paste a product URL.');
-      try { new URL(url); } catch { return showError('That does not look like a valid URL.'); }
-
-      const store = detectStore(url);
-      if (!store) return showError('This store may not be supported. Try Amazon, Flipkart, Myntra, Ajio, Nykaa, TataCliq and 200+ more.');
-
-      btn.disabled = true;
-      input.disabled = true;
-      document.getElementById('loaderTitle').textContent = 'Adding to queue...';
-      document.getElementById('loaderSub').textContent = 'Fetching your ' + store.name + ' deal link';
-      loader.classList.add('show');
-
-      try {
-        // Wake up Render first if sleeping (free tier sleeps after 15min)
-        document.getElementById('loaderTitle').textContent = 'Connecting...';
-        document.getElementById('loaderSub').textContent = 'Starting up — may take 20-30 seconds on first use';
-
-        // Try with 35 second timeout to handle Render cold start
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 35000);
-
-        let res, data;
-        try {
-          await resolveBackend();
-          res = await fetch(BACKEND_URL + '/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url, store: store.name }),
-            signal: controller.signal
-          });
-          clearTimeout(timer);
-          data = await res.json();
-        } catch(fetchErr) {
-          clearTimeout(timer);
-          if (fetchErr.name === 'AbortError') {
-            throw new Error('Backend is starting up. Please click Convert again in 10 seconds.');
-          }
-          // Network error — backend probably sleeping, wake it up
-          document.getElementById('loaderTitle').textContent = 'Waking up server...';
-          document.getElementById('loaderSub').textContent = 'Free server needs 30 seconds to start. Please wait...';
-          // Retry once after 8 seconds
-          await new Promise(r => setTimeout(r, 8000));
-          const res2 = await fetch(BACKEND_URL + '/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url, store: store.name })
-          });
-          data = await res2.json();
-          res = res2;
-        }
-
-        if (!res.ok || data.error) throw new Error(data.error || 'Something went wrong.');
-
-        document.getElementById('loaderTitle').textContent = 'Generating affiliate link...';
-        document.getElementById('loaderSub').textContent = 'Fetching your ' + store.name + ' deal link';
-
-        // Start polling every 2 seconds
-        pollInterval = setInterval(() => pollStatus(data.requestId, store.name), 2000);
-        pollStatus(data.requestId, store.name);
-
-      } catch(err) {
-        loader.classList.remove('show');
-        input.disabled = false;
-        btn.disabled = false;
-        showError(err.message || 'Connection failed. The server may be starting up — please try again in 30 seconds.');
-      }
-    }
-
-    function showError(msg) {
-      const errorBox = document.getElementById('error');
-      errorBox.textContent = 'Warning: ' + msg;
-      errorBox.classList.add('show');
-    }
-
-    function copyLink() {
-      const el   = document.getElementById('affiliateLink');
-      // Copy the CLEAN display URL — no tag, no redirect domain visible
-      // Commission is earned when user clicks Visit from our page, not from copied links
-      const link = el.textContent.trim();
-      const btn  = document.getElementById('copyBtn');
-      navigator.clipboard.writeText(link).then(() => {
-        btn.textContent = 'Copied!';
-        btn.classList.add('copied');
-        setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
-      });
-    }
-
-    // Show share button only if Web Share API is available
-    if (navigator.share) {
-      const shareBtn = document.getElementById('shareBtn');
-      if (shareBtn) shareBtn.style.display = '';
-    }
-
-    async function shareUrl(url,title){if(navigator.share){navigator.share({title:title||"Smart Pick Deals",url:url}).catch(function(e){if(e.name!=="AbortError")console.log(e);});}else{navigator.clipboard.writeText(url).then(function(){alert("Link copied!");});}}
-
-    async function shareLink() {
-      const el  = document.getElementById('affiliateLink');
-      const url = el.dataset.clickUrl || el.textContent.trim();
-      const title = document.getElementById('storeDetected')?.textContent || 'Smart Pick Deals';
-      try {
-        await navigator.share({ title: title + ' — Best Deal', url });
-      } catch(e) {
-        // Fallback to copy if share cancelled
-        if (e.name !== 'AbortError') copyLink();
-      }
-    }
-
-    function openLink() {
-      const el       = document.getElementById('affiliateLink');
-      const clickUrl = el.dataset.clickUrl || el.textContent.trim();
-      const dispUrl  = el.textContent.trim();
-      const store    = document.getElementById('storeDetected')?.textContent || '';
-
-      // Track the click BEFORE opening (fire-and-forget, doesn't delay open)
-      try {
-        fetch(BACKEND_URL+'/track/click', {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ dest: dispUrl, store: store })
-        }).catch(()=>{});
-      } catch(e) {}
-
-      window.open(clickUrl, '_blank');
-    }
-
-    document.getElementById('productUrl').addEventListener('keydown', e => {
-      if (e.key === 'Enter') convert();
-    });
-  </script>
-
-<script>fetch((typeof BACKEND_URL!=='undefined'?BACKEND_URL:'https://api.smartpickdeals.live')+'/track/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:'converter'})}).catch(()=>{});</script>
-
-<nav class="bottom-nav">
-  <div class="bn-items">
-    <a class="bn-item active" href="index.html">
-      <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-      Convert
-    </a>
-    <a class="bn-item " href="compare.html">
-      <svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
-      Compare
-    </a>
+<!-- TOP NAV -->
+<nav class="top-nav">
+  <span class="logo-text">Smart Pick <span>Deals</span></span>
+  <div class="nav-btns">
+    <button class="nav-btn nb-fill" onclick="switchMode('convert')" id="navConvertBtn">🔗 Convert</button>
+    <button class="nav-btn nb-out" onclick="switchMode('compare')" id="navCompareBtn">📊 Compare</button>
   </div>
 </nav>
+
+<!-- HERO HEADER -->
+<header id="heroHeader">
+  <div class="badge">200+ Stores · Best Deals Handpicked</div>
+  <h1 id="heroTitle">Shop Smart.<br/><span id="heroAccent">Save Smarter.</span></h1>
+  <p class="subtitle" id="heroSubtitle">Paste any product link from your favourite store and get the best deal — instantly.</p>
+</header>
+
+<!-- TICKER -->
+<div class="ticker-wrap" id="tickerWrap">
+  <div class="ticker">
+    <span>Amazon</span><span>Flipkart</span><span>Myntra</span><span>Ajio</span>
+    <span>TataCliq</span><span>Croma</span><span>Nykaa</span><span>Snapdeal</span>
+    <span>MakeMyTrip</span><span>ClearTrip</span><span>Netflix</span><span>SonyLiv</span>
+    <span>Netmeds</span><span>Mamaearth</span><span>Boat</span><span>WOW</span>
+    <span>Amazon</span><span>Flipkart</span><span>Myntra</span><span>Ajio</span>
+    <span>TataCliq</span><span>Croma</span><span>Nykaa</span><span>Snapdeal</span>
+    <span>MakeMyTrip</span><span>ClearTrip</span><span>Netflix</span><span>SonyLiv</span>
+    <span>Netmeds</span><span>Mamaearth</span><span>Boat</span><span>WOW</span>
+  </div>
+</div>
+
+<!-- MAIN INPUT CARD -->
+<main id="mainCard">
+  <div class="card">
+    <label class="input-label" for="productUrl">Product URL (any supported store)</label>
+    <input
+      type="text" inputmode="url"
+      id="productUrl"
+      placeholder="https://www.flipkart.com/... or amazon.in/... or myntra.com/..."
+      autocomplete="off"
+      spellcheck="false"
+    />
+
+    <!-- Detected store badge -->
+    <div id="storeBadge">
+      Detected: <strong id="storeName" style="color:var(--accent2)"></strong>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="action-btns">
+      <button class="action-btn" id="compareBtn" onclick="triggerCompare()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+        Compare
+      </button>
+      <button class="action-btn" id="convertBtn" onclick="triggerConvert()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        Convert →
+      </button>
+    </div>
+
+    <!-- ── CONVERT LOADER ── -->
+    <div id="convertLoader">
+      <div class="spinner"></div>
+      <div class="loader-text">
+        <strong id="loaderTitle">Generating your link…</strong>
+        <span id="loaderSub">Fetching your deal link instantly</span>
+        <div id="queueInfo" style="display:none; margin-top:8px;">
+          <div id="queueBadge" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,107,43,0.12);border:1px solid rgba(255,107,43,0.25);color:#ff9a5c;font-size:11px;font-weight:600;letter-spacing:0.08em;padding:4px 12px;border-radius:999px;">
+            <span id="queueText">Position in queue: 1</span>
+          </div>
+          <div id="etaText" style="margin-top:6px;font-size:12px;color:#6b6878;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CONVERT RESULT ── -->
+    <div id="convertResult">
+      <div class="result-label">Link ready</div>
+      <div class="result-box">
+        <span class="result-link" id="affiliateLink"></span>
+        <button id="shareBtn" onclick="shareLink()" style="display:none;">⬆ Share</button>
+        <div class="result-actions-row">
+          <button id="copyBtn" onclick="copyLink()">Copy</button>
+          <button id="openBtn" onclick="openLink()">Open ↗</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ERROR ── -->
+    <div id="errorBox"></div>
+
+    <!-- ── HOW IT WORKS ── -->
+    <div class="how-it-works" id="howItWorks">
+      <div class="hiw-step">
+        <div class="step-num">1</div>
+        <p id="hiw1">Paste any product URL from your favourite store</p>
+      </div>
+      <div class="hiw-step">
+        <div class="step-num">2</div>
+        <p id="hiw2">Select your best deal from 200+ stores</p>
+      </div>
+      <div class="hiw-step">
+        <div class="step-num">3</div>
+        <p id="hiw3">Copy and share to help your friends save money</p>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- ══════════════════════════════════════
+     COMPARE — LOADING
+══════════════════════════════════════ -->
+<div id="compareLoading">
+  <div class="src-card">
+    <div class="src-logo" id="srcLogo">🔗</div>
+    <div class="src-info">
+      <div class="src-name" id="srcName">Detecting store...</div>
+      <div class="src-label">You came from here</div>
+    </div>
+  </div>
+  <div class="progress-card">
+    <div class="pct-row" style="justify-content:space-between;display:flex;align-items:baseline;">
+      <div style="display:flex;align-items:baseline;gap:8px;">
+        <div class="pct-num" id="rpNum">0%</div>
+        <div class="pct-label">Research Progress</div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);" id="countdown">
+        Estimated time remaining: <span style="font-family:'DM Mono',monospace;font-weight:600;" id="cdTime">00:25</span>
+      </div>
+    </div>
+    <div class="prog-track"><div class="prog-fill" id="rpFill"></div></div>
+    <div class="prog-hint" id="rpHint">Starting...</div>
+  </div>
+  <div class="steps-card">
+    <div class="cmp-step"><div class="step-dot" id="s1"></div><div class="step-text"><strong>Identifying the product</strong><span>Reading the link you shared</span></div></div>
+    <div class="cmp-step"><div class="step-dot" id="s2"></div><div class="step-text"><strong>Comparing prices across all stores</strong><span>So you never overpay</span></div></div>
+    <div class="cmp-step"><div class="step-dot" id="s3"></div><div class="step-text"><strong>Reading thousands of reviews</strong><span>Getting the real story from buyers</span></div></div>
+    <div class="cmp-step"><div class="step-dot" id="s4"></div><div class="step-text"><strong>Spotting pros, cons & hidden details</strong><span>That most shoppers miss</span></div></div>
+    <div class="cmp-step"><div class="step-dot" id="s5"></div><div class="step-text"><strong>Generating affiliate links</strong><span>For all supported stores</span></div></div>
+    <div class="cmp-step"><div class="step-dot" id="s6"></div><div class="step-text"><strong>Building your buying guide</strong><span>Everything you need to decide</span></div></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     COMPARE — RESULTS
+══════════════════════════════════════ -->
+<div id="compareResults">
+  <button class="back-btn" id="backBtn">← Search again</button>
+
+  <div class="prod-card">
+    <div class="prod-img-wrap" id="prodImg"><span style="font-size:32px">📦</span></div>
+    <div class="prod-details">
+      <div class="prod-title" id="prodTitle">Product</div>
+      <div class="prod-meta" id="prodMeta"></div>
+    </div>
+  </div>
+
+  <div class="deal-banner" id="dealBanner" style="display:none;"></div>
+
+  <div class="sec-hdr">
+    <span class="sec-title">Best Prices Found</span>
+    <span class="sec-badge" id="recCount"></span>
+  </div>
+  <div id="recList"></div>
+
+  <button class="view-more-btn" id="viewMoreBtn" style="display:none;">
+    <span id="viewMoreTxt">View more stores</span>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+  </button>
+  <div id="otherSec">
+    <div class="sec-hdr" style="margin-top:16px;">
+      <span class="sec-title">Other Stores</span>
+      <span class="sec-badge" id="othCount"></span>
+    </div>
+    <div id="othList"></div>
+  </div>
+</div>
+
+<footer>Exciting deals from 200+ stores, find &amp; generate instantly &nbsp;·&nbsp; &copy; Smart Pick Deals<br/>
+<a href="mailto:support@smartpickdeals.live" style="color:var(--muted);font-size:12px;text-decoration:none;display:inline-block;margin-top:5px;letter-spacing:.01em;transition:color .2s;" onmouseover="this.style.color='var(--accent2)'" onmouseout="this.style.color='var(--muted)'">✉ support@smartpickdeals.live</a>
+</footer>
+
+<!-- MOBILE BOTTOM NAV -->
+<nav class="bottom-nav">
+  <div class="bn-items">
+    <button class="bn-item active" id="bnConvert" onclick="switchMode('convert')">
+      <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      Convert
+    </button>
+    <button class="bn-item" id="bnCompare" onclick="switchMode('compare')">
+      <svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+      Compare
+    </button>
+  </div>
+</nav>
+
+<script>
+/* ══════════════════════════════════════════════════════════
+   BACKEND / SHARED CONFIG
+══════════════════════════════════════════════════════════ */
+var BACKEND_URL      = 'https://api.smartpickdeals.live';
+var BACKEND_PRIMARY  = 'https://api.smartpickdeals.live';
+var BACKEND_FALLBACK = 'https://extrape-affiliate.onrender.com';
+var BACKEND          = BACKEND_PRIMARY;
+var backendReady     = false;
+
+async function resolveBackend() {
+  if (backendReady) return BACKEND_URL;
+  try {
+    var r = await fetch(BACKEND_PRIMARY + '/ping', { signal: AbortSignal.timeout(2500) });
+    if (r.ok) { BACKEND_URL = BACKEND_PRIMARY; BACKEND = BACKEND_PRIMARY; }
+    else throw new Error();
+  } catch(e) {
+    BACKEND_URL = BACKEND_FALLBACK; BACKEND = BACKEND_FALLBACK;
+  }
+  backendReady = true;
+  return BACKEND_URL;
+}
+resolveBackend(); // pre-warm
+
+/* ══════════════════════════════════════════════════════════
+   MODE SWITCHING (Convert / Compare)
+══════════════════════════════════════════════════════════ */
+var currentMode = 'convert'; // default
+
+function switchMode(mode) {
+  currentMode = mode;
+
+  // Update nav buttons
+  document.getElementById('navConvertBtn').className = 'nav-btn ' + (mode === 'convert' ? 'nb-fill' : 'nb-out');
+  document.getElementById('navCompareBtn').className = 'nav-btn ' + (mode === 'compare' ? 'nb-fill' : 'nb-out');
+
+  // Update bottom nav
+  document.getElementById('bnConvert').className = 'bn-item' + (mode === 'convert' ? ' active' : '');
+  document.getElementById('bnCompare').className = 'bn-item' + (mode === 'compare' ? ' active' : '');
+
+  // Update action buttons styling
+  document.getElementById('convertBtn').className = 'action-btn' + (mode === 'convert' ? ' active-mode' : '');
+  document.getElementById('compareBtn').className = 'action-btn' + (mode === 'compare' ? ' active-mode' : '');
+
+  // Update hero copy
+  if (mode === 'compare') {
+    document.getElementById('heroTitle').innerHTML = 'Compare Prices.<br/><span id="heroAccent">Save More.</span>';
+    document.getElementById('heroSubtitle').textContent = 'Paste any product link. We compare prices across Amazon, Flipkart, Myntra, Croma and 200+ stores — with links ready to use.';
+    document.querySelector('.badge').textContent = '';
+    document.querySelector('.badge').innerHTML = '200+ Stores · Compare Prices';
+    document.getElementById('hiw1').textContent = 'Paste any product URL from your favourite store';
+    document.getElementById('hiw2').textContent = 'We compare prices across 200+ stores';
+    document.getElementById('hiw3').textContent = 'Pick the best deal and save instantly';
+    document.getElementById('productUrl').placeholder = 'Paste Amazon, Flipkart, Croma link...';
+  } else {
+    document.getElementById('heroTitle').innerHTML = 'Shop Smart.<br/><span id="heroAccent">Save Smarter.</span>';
+    document.getElementById('heroSubtitle').textContent = 'Paste any product link from your favourite store and get the best deal — instantly.';
+    document.querySelector('.badge').innerHTML = '200+ Stores · Best Deals Handpicked';
+    document.getElementById('hiw1').textContent = 'Paste any product URL from your favourite store';
+    document.getElementById('hiw2').textContent = 'Select your best deal from 200+ stores';
+    document.getElementById('hiw3').textContent = 'Copy and share to help your friends save money';
+    document.getElementById('productUrl').placeholder = 'https://www.flipkart.com/... or amazon.in/... or myntra.com/...';
+  }
+
+  // Ensure we're back on the input card (hide compare states)
+  showInputView();
+}
+
+function showInputView() {
+  document.getElementById('heroHeader').style.display = '';
+  document.getElementById('tickerWrap').style.display = '';
+  document.getElementById('mainCard').style.display = '';
+  document.getElementById('compareLoading').style.display = 'none';
+  document.getElementById('compareResults').style.display = 'none';
+  // Clear convert states too
+  document.getElementById('convertResult').classList.remove('show');
+  document.getElementById('convertLoader').classList.remove('show');
+  document.getElementById('errorBox').classList.remove('show');
+  document.getElementById('queueInfo').style.display = 'none';
+}
+
+/* ══════════════════════════════════════════════════════════
+   STORE DETECTION
+══════════════════════════════════════════════════════════ */
+var SUPPORTED_STORES = [
+  { name: 'Amazon',      domains: ['amazon.in', 'amazon.com', 'amzn.in', 'amzn.to'] },
+  { name: 'Flipkart',    domains: ['flipkart.com', 'dl.flipkart.com', 'fkrt.co'] },
+  { name: 'Myntra',      domains: ['myntra.com'] },
+  { name: 'Ajio',        domains: ['ajio.com'] },
+  { name: 'Nykaa',       domains: ['nykaa.com', 'nykaafashion.com', 'nykaabeauty.com'] },
+  { name: 'TataCliq',    domains: ['tatacliq.com'] },
+  { name: 'Croma',       domains: ['croma.com', 'bilty.co'] },
+  { name: 'Snapdeal',    domains: ['snapdeal.com'] },
+  { name: 'Boat',        domains: ['boat-lifestyle.com'] },
+  { name: 'MakeMyTrip',  domains: ['makemytrip.com'] },
+  { name: 'ClearTrip',   domains: ['cleartrip.com'] },
+  { name: 'Netflix',     domains: ['netflix.com'] },
+  { name: 'SonyLiv',     domains: ['sonyliv.com'] },
+  { name: 'Netmeds',     domains: ['netmeds.com'] },
+  { name: 'Mamaearth',   domains: ['mamaearth.in'] },
+  { name: 'Meesho',      domains: ['meesho.com'] },
+  { name: 'JioMart',     domains: ['jiomart.com'] },
+  { name: 'BigBasket',   domains: ['bigbasket.com'] },
+  { name: 'FirstCry',    domains: ['firstcry.com'] },
+  { name: 'Lenskart',    domains: ['lenskart.com'] },
+  { name: 'Pepperfry',   domains: ['pepperfry.com'] },
+  { name: 'Purplle',     domains: ['purplle.com'] },
+  { name: 'Bewakoof',    domains: ['bewakoof.com'] },
+  { name: 'Decathlon',   domains: ['decathlon.in'] },
+];
+
+var STORE_DOMAIN_MAP = {
+  Amazon: 'amazon.in', Flipkart: 'flipkart.com', Myntra: 'myntra.com', Ajio: 'ajio.com',
+  Nykaa: 'nykaa.com', TataCliq: 'tatacliq.com', Croma: 'croma.com', Snapdeal: 'snapdeal.com',
+  Meesho: 'meesho.com', JioMart: 'jiomart.com', Netmeds: 'netmeds.com', Lenskart: 'lenskart.com',
+  BigBasket: 'bigbasket.com', FirstCry: 'firstcry.com', Mamaearth: 'mamaearth.in',
+  Boat: 'boat-lifestyle.com', Pepperfry: 'pepperfry.com', MakeMyTrip: 'makemytrip.com',
+  ClearTrip: 'cleartrip.com', Netflix: 'netflix.com', SonyLiv: 'sonyliv.com',
+  Hotstar: 'hotstar.com', Purplle: 'purplle.com', Bewakoof: 'bewakoof.com',
+  Decathlon: 'decathlon.in', Swiggy: 'swiggy.com', Zomato: 'zomato.com',
+  Ixigo: 'ixigo.com', EaseMyTrip: 'easemytrip.com', Paytm: 'paytm.com',
+  Reliance: 'reliancedigital.in', WOW: 'wowskinscience.com', Mivi: 'mivi.in',
+  Noise: 'gonoise.com',
+};
+
+function detectStore(url) {
+  try {
+    var hostname = new URL(url).hostname.replace('www.', '');
+    return SUPPORTED_STORES.find(function(s) {
+      return s.domains.some(function(d) { return hostname.includes(d) || url.includes(d); });
+    }) || null;
+  } catch(e) { return null; }
+}
+
+function detectStoreName(url) {
+  try {
+    var h = new URL(url).hostname.replace('www.','');
+    var STORE_DOMAINS = [
+      {n:'Amazon',   d:['amazon.in','amazon.com','amzn.in','amzn.to']},
+      {n:'Flipkart', d:['flipkart.com','dl.flipkart.com','fkrt.co']},
+      {n:'Myntra',   d:['myntra.com']},
+      {n:'Ajio',     d:['ajio.com']},
+      {n:'Nykaa',    d:['nykaa.com']},
+      {n:'TataCliq', d:['tatacliq.com']},
+      {n:'Croma',    d:['croma.com','bilty.co']},
+      {n:'Snapdeal', d:['snapdeal.com']},
+      {n:'Meesho',   d:['meesho.com']},
+      {n:'JioMart',  d:['jiomart.com']},
+    ];
+    var found = STORE_DOMAINS.find(function(s){ return s.d.some(function(d){ return h.includes(d)||url.includes(d); }); });
+    return found ? found.n : h.split('.')[0];
+  } catch(e){ return 'Unknown'; }
+}
+
+function logoHTML(name, size) {
+  size = size || 26;
+  var init = (name || '?')[0].toUpperCase();
+  var domain = STORE_DOMAIN_MAP[name] || (name.toLowerCase().replace(/\s+/g,'') + '.com');
+  var src = 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(domain) + '&sz=32';
+  return '<img src="' + src + '" width="' + size + '" height="' + size +
+    '" style="object-fit:contain;border-radius:3px;"' +
+    ' onerror="this.replaceWith(document.createTextNode(\'' + init + '\'))">';
+}
+
+// Live store detection badge on input
+document.getElementById('productUrl').addEventListener('input', function() {
+  var url = this.value.trim();
+  var badge = document.getElementById('storeBadge');
+  var storeName = document.getElementById('storeName');
+  var store = url ? detectStore(url) : null;
+  if (store) { storeName.textContent = store.name; badge.style.display = 'block'; }
+  else { badge.style.display = 'none'; }
+});
+
+// Enter key support
+document.getElementById('productUrl').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') {
+    if (currentMode === 'compare') triggerCompare();
+    else triggerConvert();
+  }
+});
+
+/* ══════════════════════════════════════════════════════════
+   CONVERT FLOW
+══════════════════════════════════════════════════════════ */
+var pollInterval = null;
+
+function stopPolling() {
+  if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+}
+
+function showError(msg) {
+  var eb = document.getElementById('errorBox');
+  eb.textContent = 'Warning: ' + msg;
+  eb.classList.add('show');
+}
+
+function triggerCompare() {
+  switchMode('compare');
+  setTimeout(doCompare, 50);
+}
+
+function triggerConvert() {
+  if (currentMode !== 'convert') switchMode('convert');
+  doConvert();
+}
+
+async function doConvert() {
+  var input    = document.getElementById('productUrl');
+  var loader   = document.getElementById('convertLoader');
+  var result   = document.getElementById('convertResult');
+  var errorBox = document.getElementById('errorBox');
+  var url      = input.value.trim();
+
+  result.classList.remove('show');
+  errorBox.classList.remove('show');
+  document.getElementById('queueInfo').style.display = 'none';
+
+  if (!url) return showError('Please paste a product URL.');
+  try { new URL(url); } catch(e) { return showError('That does not look like a valid URL.'); }
+
+  var store = detectStore(url);
+  if (!store) return showError('This store may not be supported. Try Amazon, Flipkart, Myntra, Ajio, Nykaa, TataCliq and 200+ more.');
+
+  document.getElementById('convertBtn').disabled = true;
+  document.getElementById('compareBtn').disabled = true;
+  input.disabled = true;
+  document.getElementById('loaderTitle').textContent = 'Adding to queue...';
+  document.getElementById('loaderSub').textContent = 'Fetching your ' + store.name + ' deal link';
+  loader.classList.add('show');
+
+  try {
+    document.getElementById('loaderTitle').textContent = 'Connecting...';
+    document.getElementById('loaderSub').textContent = 'Starting up — may take 20-30 seconds on first use';
+
+    var controller = new AbortController();
+    var timer = setTimeout(function(){ controller.abort(); }, 35000);
+
+    var res, data;
+    try {
+      await resolveBackend();
+      res = await fetch(BACKEND_URL + '/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: url, store: store.name }),
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      data = await res.json();
+    } catch(fetchErr) {
+      clearTimeout(timer);
+      if (fetchErr.name === 'AbortError') {
+        throw new Error('Backend is starting up. Please click Convert again in 10 seconds.');
+      }
+      document.getElementById('loaderTitle').textContent = 'Waking up server...';
+      document.getElementById('loaderSub').textContent = 'Free server needs 30 seconds to start. Please wait...';
+      await new Promise(function(r){ setTimeout(r, 8000); });
+      var res2 = await fetch(BACKEND_URL + '/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: url, store: store.name })
+      });
+      data = await res2.json();
+      res = res2;
+    }
+
+    if (!res.ok || data.error) throw new Error(data.error || 'Something went wrong.');
+
+    document.getElementById('loaderTitle').textContent = 'Generating affiliate link...';
+    document.getElementById('loaderSub').textContent = 'Fetching your ' + store.name + ' deal link';
+
+    pollInterval = setInterval(function(){ pollConvertStatus(data.requestId, store.name); }, 2000);
+    pollConvertStatus(data.requestId, store.name);
+
+  } catch(err) {
+    loader.classList.remove('show');
+    input.disabled = false;
+    document.getElementById('convertBtn').disabled = false;
+    document.getElementById('compareBtn').disabled = false;
+    showError(err.message || 'Connection failed. The server may be starting up — please try again in 30 seconds.');
+  }
+}
+
+async function pollConvertStatus(requestId, storeName) {
+  try {
+    var res = await fetch((await resolveBackend()) + '/status/' + requestId);
+    var data = await res.json();
+
+    if (data.state === 'pending') {
+      document.getElementById('queueInfo').style.display = 'block';
+      document.getElementById('loaderTitle').textContent = 'You are in the queue...';
+      document.getElementById('loaderSub').textContent = 'We will process your ' + storeName + ' link shortly';
+      document.getElementById('queueText').textContent = data.position + ' request' + (data.position > 1 ? 's' : '') + ' ahead of you';
+      document.getElementById('etaText').textContent = 'Estimated wait: ' + (data.estimatedSeconds <= 0 ? 'almost done...' : data.estimatedSeconds < 60 ? 'about ' + data.estimatedSeconds + ' seconds' : 'about ' + Math.ceil(data.estimatedSeconds / 60) + ' minute(s)');
+    } else if (data.state === 'processing') {
+      document.getElementById('queueInfo').style.display = 'none';
+      document.getElementById('loaderTitle').textContent = 'Generating your link...';
+      document.getElementById('loaderSub').textContent = 'Fetching your ' + storeName + ' deal link';
+    } else if (data.state === 'done') {
+      stopPolling();
+      document.getElementById('convertLoader').classList.remove('show');
+      document.getElementById('productUrl').disabled = false;
+      document.getElementById('convertBtn').disabled = false;
+      document.getElementById('compareBtn').disabled = false;
+
+      var displayUrl = data.displayLink || data.affiliateLink;
+      var clickUrl   = data.affiliateLink;
+      document.getElementById('affiliateLink').textContent = displayUrl;
+      document.getElementById('affiliateLink').dataset.clickUrl = clickUrl;
+      document.getElementById('convertResult').classList.add('show');
+
+    } else if (data.state === 'error') {
+      stopPolling();
+      document.getElementById('convertLoader').classList.remove('show');
+      document.getElementById('productUrl').disabled = false;
+      document.getElementById('convertBtn').disabled = false;
+      document.getElementById('compareBtn').disabled = false;
+      showError(data.error || 'Something went wrong. Please try again.');
+    }
+  } catch(err) { console.error('Polling error:', err); }
+}
+
+function copyLink() {
+  var el  = document.getElementById('affiliateLink');
+  var btn = document.getElementById('copyBtn');
+  navigator.clipboard.writeText(el.textContent.trim()).then(function() {
+    btn.textContent = 'Copied!'; btn.classList.add('copied');
+    setTimeout(function(){ btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+function shareLink() {
+  var el  = document.getElementById('affiliateLink');
+  var url = el.dataset.clickUrl || el.textContent.trim();
+  var title = document.getElementById('storeName')?.textContent || 'Smart Pick Deals';
+  navigator.share({ title: title + ' — Best Deal', url: url }).catch(function(e) {
+    if (e.name !== 'AbortError') copyLink();
+  });
+}
+
+function openLink() {
+  var el       = document.getElementById('affiliateLink');
+  var clickUrl = el.dataset.clickUrl || el.textContent.trim();
+  var dispUrl  = el.textContent.trim();
+  var store    = document.getElementById('storeName')?.textContent || '';
+  try {
+    fetch(BACKEND_URL + '/track/click', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dest: dispUrl, store: store }) }).catch(function(){});
+  } catch(e) {}
+  window.open(clickUrl, '_blank');
+}
+
+if (navigator.share) {
+  var shareBtn = document.getElementById('shareBtn');
+  if (shareBtn) shareBtn.style.display = '';
+}
+
+/* ══════════════════════════════════════════════════════════
+   COMPARE FLOW
+══════════════════════════════════════════════════════════ */
+var EXTRAPE_OK = ['Amazon','Flipkart','Myntra','Ajio','Nykaa','TataCliq','Croma','Snapdeal','Netmeds','Lenskart'];
+var allStores  = [];
+var showOther  = false;
+
+function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+
+function getCookie(name) {
+  try {
+    var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+    return m ? decodeURIComponent(m[1]) : null;
+  } catch(e){ return null; }
+}
+
+function doCompare() {
+  var url = (document.getElementById('productUrl').value || '').trim();
+  if (!url) { alert('Please paste a product URL.'); return; }
+  if (!url.startsWith('http')) url = 'https://' + url;
+  try { new URL(url); } catch(e) { alert('Not a valid URL.'); return; }
+  runCompareSearch(url);
+}
+
+async function runCompareSearch(url) {
+  var storeName = detectStoreName(url);
+  showOther = false;
+  allStores = [];
+
+  // Hide input card, show compare loading
+  document.getElementById('heroHeader').style.display = 'none';
+  document.getElementById('tickerWrap').style.display = 'none';
+  document.getElementById('mainCard').style.display = 'none';
+  document.getElementById('compareResults').style.display = 'none';
+  document.getElementById('compareLoading').style.display = 'block';
+  window.scrollTo(0, 0);
+
+  document.getElementById('srcName').textContent = storeName;
+  document.getElementById('srcLogo').innerHTML = logoHTML(storeName, 26);
+
+  var stepIds  = ['s1','s2','s3','s4','s5','s6'];
+  var stepData = [
+    { pct: 10, hint: 'Reading the link you shared...' },
+    { pct: 25, hint: 'Comparing prices across all stores...' },
+    { pct: 45, hint: 'Reading thousands of reviews...' },
+    { pct: 62, hint: 'Analysing pros and cons...' },
+    { pct: 78, hint: 'Generating affiliate links...' },
+    { pct: 92, hint: 'Building your personalised guide...' },
+  ];
+  stepIds.forEach(function(id){ var el = document.getElementById(id); el.className = 'step-dot'; el.textContent = ''; });
+
+  var stepIdx = 0;
+  function nextStep() {
+    if (stepIdx >= stepData.length) return;
+    var s = stepData[stepIdx];
+    document.getElementById('rpFill').style.width = s.pct + '%';
+    document.getElementById('rpNum').textContent = s.pct + '%';
+    document.getElementById('rpHint').textContent = s.hint;
+    if (stepIdx > 0) { var p = document.getElementById(stepIds[stepIdx-1]); p.className = 'step-dot done'; p.textContent = '✓'; }
+    document.getElementById(stepIds[stepIdx]).className = 'step-dot active';
+    stepIdx++;
+  }
+  nextStep();
+  var stepTimer = setInterval(nextStep, 1800);
+
+  // Countdown
+  var secsLeft = 25;
+  function fmtCd(s){ return '00:' + String(Math.max(0,s)).padStart(2,'0'); }
+  var cdTimeEl = document.getElementById('cdTime');
+  if (cdTimeEl) cdTimeEl.textContent = fmtCd(secsLeft);
+  var cdTimer = setInterval(function() {
+    secsLeft--;
+    if (secsLeft <= 0) {
+      if (cdTimeEl) cdTimeEl.textContent = '00:00';
+      var cdEl = document.getElementById('countdown');
+      if (cdEl) cdEl.innerHTML = 'Finalising results...';
+      clearInterval(cdTimer); return;
+    }
+    if (cdTimeEl) cdTimeEl.textContent = fmtCd(secsLeft);
+  }, 1000);
+
+  var affiliateLink = url;
+  var compareData   = null;
+
+  try {
+    var results = await Promise.allSettled([
+      getAffiliateLink(url, storeName),
+      getCompareData(url)
+    ]);
+    if (results[0].status === 'fulfilled') affiliateLink = results[0].value;
+    if (results[1].status === 'fulfilled') compareData   = results[1].value;
+  } catch(e) { console.error('[Compare] error:', e); }
+
+  clearInterval(stepTimer);
+  clearInterval(cdTimer);
+  var cdEl2 = document.getElementById('countdown');
+  if (cdEl2) cdEl2.style.display = 'none';
+  stepIds.forEach(function(id){ var el = document.getElementById(id); el.className = 'step-dot done'; el.textContent = '✓'; });
+  document.getElementById('rpFill').style.width = '100%';
+  document.getElementById('rpNum').textContent = '100%';
+  document.getElementById('rpHint').textContent = 'Done!';
+
+  fetch(BACKEND + '/track/compare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: url, store: storeName }) }).catch(function(){});
+
+  await sleep(300);
+  showCompareResults(storeName, url, affiliateLink, compareData);
+}
+
+async function getAffiliateLink(url, store) {
+  try {
+    var r = await fetch(BACKEND + '/generate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: url, store: store }),
+      signal: AbortSignal.timeout(35000)
+    });
+    var d = await r.json();
+    if (!d.requestId) return url;
+    for (var i = 0; i < 25; i++) {
+      await sleep(2000);
+      var s = await fetch(BACKEND + '/status/' + d.requestId, { signal: AbortSignal.timeout(10000) });
+      var sd = await s.json();
+      if (sd.state === 'done') return sd.displayLink || sd.affiliateLink || url;
+      if (sd.state === 'error') return url;
+    }
+    return url;
+  } catch(e) { return url; }
+}
+
+async function getCompareData(url) {
+  try { await fetch(BACKEND + '/ping', { signal: AbortSignal.timeout(5000) }); } catch(e) {}
+  var tok = getCookie('flash_auth_token');
+  if (tok) {
+    try {
+      var fr = await callFlash(url, tok);
+      if (fr && fr.stores && fr.stores.length > 0) { fr.source = 'flash'; return fr; }
+    } catch(e) { console.log('[Flash] failed:', e.message); }
+  }
+  var r = await fetch(BACKEND + '/compare/search?url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(45000) });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return await r.json();
+}
+
+async function callFlash(productUrl, token) {
+  var h = { 'Authorization': 'Bearer ' + token, 'Channel-Type': 'web', 'Content-Type': 'application/json', 'Origin': 'https://flash.co', 'X-Country-Code': 'IN', 'X-Device-Id': getCookie('flash_device_id') || 'web-spd', 'X-Timezone': 'Asia/Calcutta' };
+  var sr = await fetch('https://apiv3.flash.tech/agents/chat/stream?source=APPEND&context=HOME_URL_PASTE&device_type=DESKTOP&country_code=IN', { method: 'POST', headers: h, body: JSON.stringify({ query: productUrl, context: 'HOME_URL_PASTE' }), signal: AbortSignal.timeout(30000) });
+  if (!sr.ok) throw new Error('Flash ' + sr.status);
+  var text = await sr.text();
+  var pageHash = null;
+  var m = text.match(/product-search\/([A-Za-z0-9_-]{4,})/) || text.match(/\/h\/([A-Za-z0-9_-]{4,})/);
+  if (m) pageHash = m[1];
+  if (!pageHash) throw new Error('No pageHash');
+  var pr = await fetch('https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash, { headers: h, signal: AbortSignal.timeout(12000) });
+  if (!pr.ok) throw new Error('Flash prices ' + pr.status);
+  var pd = await pr.json();
+  return { stores: parseFlash(pd), productName: pd.productName || pd.name || (pd.data && pd.data.name) || null, productImage: pd.imageUrl || pd.image || (pd.data && pd.data.imageUrl) || null };
+}
+
+function parseFlash(data) {
+  var best = [];
+  function dig(o,d){ if(!o||d>7||typeof o!=='object')return; if(Array.isArray(o)){ if(o.length>0){ var f=o[0]; if(f&&(f.price!==undefined||f.amount!==undefined||f.storeName||f.retailer))best.push(o); } o.forEach(function(x){dig(x,d+1);}); } else { Object.values(o).forEach(function(v){dig(v,d+1);}); } }
+  dig(data, 0); best.sort(function(a,b){ return b.length-a.length; });
+  return (best[0]||[]).map(function(s){ var raw=s.storeName||s.name||s.store||s.retailer||''; var n=normStore(raw)||raw; var price=parseInt(String(s.price||s.amount||s.salePrice||0).replace(/[^0-9]/g,''))||0; return {name:n,normalizedName:n,price:price,url:s.url||s.link||''}; }).filter(function(s){ return s.price>0&&s.name; });
+}
+
+function normStore(s){ var l=(s||'').toLowerCase(); if(l.includes('amazon'))return 'Amazon'; if(l.includes('flipkart'))return 'Flipkart'; if(l.includes('myntra'))return 'Myntra'; if(l.includes('ajio'))return 'Ajio'; if(l.includes('nykaa'))return 'Nykaa'; if(l.includes('tatacliq'))return 'TataCliq'; if(l.includes('croma'))return 'Croma'; if(l.includes('snapdeal'))return 'Snapdeal'; if(l.includes('meesho'))return 'Meesho'; if(l.includes('jiomart'))return 'JioMart'; return ''; }
+
+function showCompareResults(storeName, url, affiliateLink, data) {
+  document.getElementById('compareLoading').style.display = 'none';
+  document.getElementById('compareResults').style.display = 'block';
+  window.scrollTo(0, 0);
+
+  var stores       = (data && data.stores) ? data.stores : [];
+  var productName  = (data && data.productName) ? data.productName : ('Product from ' + storeName);
+  var productImage = (data && data.productImage) ? data.productImage : null;
+
+  if (productImage) {
+    var img = new Image(); img.src = productImage;
+    img.style = 'width:82px;height:82px;object-fit:contain;border-radius:8px;';
+    img.onerror = function(){ document.getElementById('prodImg').innerHTML = '<span style="font-size:32px">📦</span>'; };
+    document.getElementById('prodImg').innerHTML = ''; document.getElementById('prodImg').appendChild(img);
+  }
+  document.getElementById('prodTitle').textContent = productName;
+  document.getElementById('prodMeta').textContent = stores.length > 0 ? 'Found ' + stores.length + ' stores · Sorted lowest to highest' : 'Your affiliate link is ready';
+
+  var banner = document.getElementById('dealBanner');
+  if (stores.length === 0) {
+    banner.className = 'deal-banner banner-orange';
+    banner.innerHTML = '⚠️ No prices found. Try a different product URL.';
+    banner.style.display = 'flex';
+  } else {
+    banner.className = 'deal-banner banner-green';
+    var src  = stores.find(function(s){ return s.isSource; });
+    var best = stores[0];
+    var save = (src && !src.isBest && src.price > best.price) ? src.price - best.price : 0;
+    if (src && src.isBest) banner.innerHTML = '✅ You already have the best deal!';
+    else if (save > 0) banner.innerHTML = '✅ Smart Pick Deals found you a saving of ₹' + save.toLocaleString('en-IN') + '!';
+    else banner.innerHTML = '✅ ' + (best.normalizedName || best.name) + ' has the best price!';
+    banner.style.display = 'flex';
+  }
+
+  var srcNorm = storeName.toLowerCase();
+  allStores = stores.map(function(s) {
+    var n = (s.normalizedName || s.name || '').toLowerCase();
+    var isSrc = n === srcNorm || n.includes(srcNorm) || srcNorm.includes(n);
+    return Object.assign({}, s, { isSource: isSrc, displayLink: isSrc ? affiliateLink : (s.url || url), affiliateLink: null, affiliateLoading: isSrc ? false : EXTRAPE_OK.includes(s.normalizedName || s.name) });
+  });
+
+  var rec = allStores.slice(0, 8);
+  var oth = allStores.slice(8);
+  document.getElementById('recCount').textContent = '(' + rec.length + ')';
+  document.getElementById('othCount').textContent = '(' + oth.length + ')';
+  renderStoreList('recList', rec);
+  renderStoreList('othList', oth);
+
+  if (oth.length > 0) { document.getElementById('viewMoreBtn').style.display = 'flex'; document.getElementById('viewMoreTxt').textContent = 'View ' + oth.length + ' more stores'; }
+  else { document.getElementById('viewMoreBtn').style.display = 'none'; }
+
+  generateAffiliateLinks();
+}
+
+function renderStoreList(id, stores) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = '';
+  var srcStore = allStores.find(function(s){ return s.isSource; });
+
+  stores.forEach(function(s, idx) {
+    var name    = s.normalizedName || s.name;
+    var link    = s.displayLink || s.url || '#';
+    var save    = (srcStore && !s.isBest && srcStore.price > s.price) ? (srcStore.price - s.price) : 0;
+    var tags    = '';
+    if (s.isSource) tags += '<span class="tag tag-src">You came from here</span>';
+    if (s.isBest && !s.isSource) tags += '<span class="tag tag-best">🏆 Best Price</span>';
+    if (save > 0) tags += '<span class="tag tag-save">Save ₹' + save.toLocaleString('en-IN') + '</span>';
+    var priceStr  = s.price > 0 ? '₹' + Number(s.price).toLocaleString('en-IN') : '';
+    var cardClass = 'store-card' + (s.isBest ? ' best' : '') + (s.isSource ? ' source' : '');
+    var copyId    = 'copy-' + id + '-' + idx;
+    var shareId   = 'share-' + id + '-' + idx;
+    var visitId   = 'visit-' + id + '-' + idx;
+    var affId     = 'aff-' + id + '-' + idx;
+
+    var div = document.createElement('div');
+    div.className = cardClass;
+    div.id = 'card-' + id + '-' + idx;
+    div.innerHTML =
+      '<div class="store-main">' +
+        '<div class="store-logo-wrap">' + logoHTML(name, 26) + '</div>' +
+        '<div class="store-body"><div class="store-name">' + name + '</div><div class="store-tags">' + tags + '</div></div>' +
+        '<div class="store-price">' + priceStr + (s.affiliateLoading ? '<small>Getting link...</small>' : '') + '</div>' +
+      '</div>' +
+      (s.affiliateLoading ? '<div class="aff-status" id="' + affId + '">⏳ Generating affiliate link...</div>' : '') +
+      '<div class="store-actions">' +
+        '<div class="store-actions-top">' +
+          '<button class="btn-copy" id="' + copyId + '">📋 Copy</button>' +
+          '<button class="btn-share" id="' + shareId + '">↗ Share</button>' +
+        '</div>' +
+        '<button class="btn-visit" id="' + visitId + '">Open ↗</button>' +
+      '</div>';
+
+    el.appendChild(div);
+    wireStoreButtons(copyId, shareId, visitId, link, name, s);
+  });
+}
+
+function wireStoreButtons(copyId, shareId, visitId, link, name, storeObj) {
+  var cBtn = document.getElementById(copyId);
+  var sBtn = document.getElementById(shareId);
+  var vBtn = document.getElementById(visitId);
+  if (cBtn) {
+    cBtn.onclick = function() {
+      var l = storeObj.affiliateLink || link;
+      navigator.clipboard.writeText(l).then(function() {
+        cBtn.textContent = '✅ Copied!'; cBtn.classList.add('ok');
+        setTimeout(function(){ cBtn.textContent = '📋 Copy'; cBtn.classList.remove('ok'); }, 2500);
+      });
+    };
+  }
+  if (sBtn) {
+    sBtn.onclick = function() {
+      var l = storeObj.affiliateLink || storeObj.displayLink || link;
+      var shareText = name + ' — Best Price\n' + l;
+      if (navigator.share) {
+        navigator.share({ title: name + ' — Best Price', text: 'Check out this deal!', url: l })
+          .then(function(){ sBtn.textContent = '✅ Shared!'; sBtn.classList.add('ok'); setTimeout(function(){ sBtn.textContent = '↗ Share'; sBtn.classList.remove('ok'); }, 2500); })
+          .catch(function(){});
+      } else {
+        navigator.clipboard.writeText(shareText).then(function() {
+          sBtn.textContent = '✅ Copied!'; sBtn.classList.add('ok');
+          setTimeout(function(){ sBtn.textContent = '↗ Share'; sBtn.classList.remove('ok'); }, 2500);
+        });
+      }
+    };
+  }
+  if (vBtn) {
+    vBtn.onclick = function() {
+      var l = storeObj.affiliateLink || storeObj.displayLink || link;
+      fetch(BACKEND + '/track/click', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dest: l, store: name }) }).catch(function(){
+        fetch(BACKEND_FALLBACK + '/track/click', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dest: l, store: name }) }).catch(function(){});
+      });
+      window.open(l, '_blank');
+    };
+  }
+}
+
+async function generateAffiliateLinks() {
+  var tasks = allStores.map(function(s,idx){ return {s:s,idx:idx}; }).filter(function(t){
+    return !t.s.isSource && EXTRAPE_OK.includes(t.s.normalizedName || t.s.name) && t.s.url;
+  });
+  for (var i = 0; i < tasks.length; i += 3) {
+    var batch = tasks.slice(i, i+3);
+    await Promise.all(batch.map(async function(task) {
+      var s = task.s;
+      var name = s.normalizedName || s.name;
+      try {
+        var link = await getAffiliateLink(s.url, name);
+        if (link && link !== s.url) {
+          s.affiliateLink = link; s.displayLink = link;
+          allStores.forEach(function(as) {
+            if ((as.normalizedName || as.name) === name && !as.isSource) { as.affiliateLink = link; as.displayLink = link; }
+          });
+          updateStoreCard(name, link);
+        }
+      } catch(e) {}
+    }));
+  }
+}
+
+function updateStoreCard(name, link) {
+  document.querySelectorAll('.store-name').forEach(function(el) {
+    if (el.textContent === name) {
+      var card = el.closest('.store-card');
+      if (!card) return;
+      var affStatus = card.querySelector('.aff-status');
+      if (affStatus) affStatus.remove();
+      var priceEl = card.querySelector('.store-price small');
+      if (priceEl) priceEl.remove();
+      var storeObj = allStores.find(function(s){ return (s.normalizedName || s.name) === name && !s.isSource; });
+      var copyBtn  = card.querySelector('.btn-copy');
+      var visitBtn = card.querySelector('.btn-visit');
+      if (storeObj && copyBtn && visitBtn) {
+        copyBtn.onclick = function() {
+          navigator.clipboard.writeText(link).then(function() {
+            copyBtn.textContent = '✅ Copied!'; copyBtn.classList.add('ok');
+            setTimeout(function(){ copyBtn.textContent = 'Copy'; copyBtn.classList.remove('ok'); }, 2500);
+          });
+        };
+        visitBtn.onclick = function() {
+          fetch(BACKEND + '/track/click', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dest: link, store: name }) }).catch(function(){
+            fetch(BACKEND_FALLBACK + '/track/click', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dest: link, store: name }) }).catch(function(){});
+          });
+          window.open(link, '_blank');
+        };
+      }
+    }
+  });
+}
+
+// Back button & view more
+document.getElementById('backBtn').onclick = function() {
+  document.getElementById('compareResults').style.display = 'none';
+  showInputView();
+  document.getElementById('productUrl').value = '';
+  document.getElementById('storeBadge').style.display = 'none';
+  window.scrollTo(0, 0);
+};
+
+document.getElementById('viewMoreBtn').onclick = function() {
+  showOther = !showOther;
+  document.getElementById('otherSec').style.display = showOther ? 'block' : 'none';
+  var n = allStores.length - Math.min(allStores.length, 8);
+  document.getElementById('viewMoreTxt').textContent = showOther ? 'Hide other stores' : 'View ' + n + ' more stores';
+  var svg = document.querySelector('#viewMoreBtn svg');
+  if (svg) svg.style.transform = showOther ? 'rotate(180deg)' : '';
+};
+
+// Initial mode setup & tracking
+switchMode('convert');
+fetch(BACKEND_URL + '/track/visit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page: 'converter' }) }).catch(function(){});
+</script>
 </body>
 </html>
