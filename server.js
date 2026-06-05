@@ -430,160 +430,205 @@ async function flashSearchPuppeteer(productUrl) {
   return withFlashBrowser(async () => {
     const browser = await getFlashBrowser();
     const page    = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800 });
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36');
+    await page.setViewport({ width: 1280, height: 900 });
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+
+    // Capture console logs from the page for debugging
+    const pageLogs = [];
+    page.on('console', m => pageLogs.push(m.text().substring(0, 200)));
+
     try {
-      // ── Step 1: inject auth token as cookie so flash.co treats us as logged in ──
-      await page.goto('https://flash.co', { waitUntil: 'domcontentloaded', timeout: 20000 });
+      // ── Step 1: Go to flash.co and inject auth token ──
+      await page.goto('https://flash.co', { waitUntil: 'networkidle2', timeout: 25000 });
+      console.log('[Flash/Puppeteer] flash.co loaded, URL:', page.url());
 
       if (flashTokenCache.token) {
-        await page.evaluate((token) => {
-          // Set token in all the places flash.co might read it
-          try { localStorage.setItem('authToken',    token); } catch(e) {}
-          try { localStorage.setItem('accessToken',  token); } catch(e) {}
-          try { localStorage.setItem('flash_token',  token); } catch(e) {}
+        await page.evaluate((tok) => {
+          try { localStorage.setItem('authToken',   tok); } catch(e) {}
+          try { localStorage.setItem('accessToken', tok); } catch(e) {}
+          try { localStorage.setItem('flash_token', tok); } catch(e) {}
+          // Also try setting as cookie via document.cookie
+          document.cookie = `authToken=${tok}; path=/; domain=flash.co`;
         }, flashTokenCache.token);
+        console.log('[Flash/Puppeteer] Auth token injected');
       }
 
-      // ── Step 2: type product URL into flash.co search box and submit ──
-      // Find the search input (flash.co has a URL input on homepage)
-      const inputSelector = 'input[type="text"], input[type="url"], input[type="search"], textarea, [contenteditable="true"]';
+      // ── Step 2: Submit URL via search input ──
+      const inputSelectors = [
+        'input[placeholder*="paste"]',
+        'input[placeholder*="link"]',
+        'input[placeholder*="url"]',
+        'input[placeholder*="URL"]',
+        'input[type="text"]',
+        'input[type="url"]',
+        'input[type="search"]',
+        'textarea',
+      ];
       let inputFound = false;
-      try {
-        await page.waitForSelector(inputSelector, { timeout: 8000 });
-        await page.click(inputSelector);
-        await page.keyboard.down('Control');
-        await page.keyboard.press('KeyA');
-        await page.keyboard.up('Control');
-        await page.type(inputSelector, productUrl, { delay: 20 });
-        await page.keyboard.press('Enter');
-        inputFound = true;
-        console.log('[Flash/Puppeteer] Submitted URL via input box');
-      } catch(e) {
-        console.log('[Flash/Puppeteer] Input not found, using stream API fallback:', e.message);
-      }
-
-      // ── Step 3: also fire stream API in parallel (belt + suspenders) ──
-      const snap = { url: productUrl, token: flashTokenCache.token, deviceId: flashTokenCache.deviceId || 'web-spd', userId: flashTokenCache.userId || '' };
-      const streamPromise = page.evaluate(async ({ url, token, deviceId, userId }) => {
-        const ua = navigator.userAgent;
-        const idempotencyKey = btoa(unescape(encodeURIComponent(userId + '_' + url + '_WEB')));
-        const headers = {
-          'Authorization': 'Bearer ' + token, 'Channel-Type': 'web',
-          'Content-Type': 'application/json', 'Accept': 'text/event-stream',
-          'Origin': 'https://flash.co', 'X-Country-Code': 'IN',
-          'X-Device-Id': deviceId, 'X-Timezone': 'Asia/Calcutta',
-          'X-Idempotency-Key': idempotencyKey,
-        };
-        const params = new URLSearchParams({ source:'APPEND', context:'HOME_URL_PASTE', user_agent:ua, device_type:'DESKTOP', country_code:'IN' });
+      for (const sel of inputSelectors) {
         try {
-          const sr = await fetch('https://api.flash.co/agents/chat/stream?' + params, { method:'POST', headers, body: JSON.stringify({ query:url, context:'HOME_URL_PASTE' }) });
-          if (!sr.ok) return null;
-          const text = await sr.text();
-          let pageHash = null;
-          for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/, /product-search\/([A-Za-z0-9_-]{4,})/, /"pageHash":"([A-Za-z0-9_-]{4,})"/]) {
-            const m = text.match(pat); if (m) { pageHash = m[1]; break; }
+          const el = await page.$(sel);
+          if (!el) continue;
+          await el.click({ clickCount: 3 });
+          await el.type(productUrl, { delay: 15 });
+          await page.keyboard.press('Enter');
+          inputFound = true;
+          console.log('[Flash/Puppeteer] Typed URL into selector:', sel);
+          break;
+        } catch(e) { /* try next */ }
+      }
+      if (!inputFound) console.log('[Flash/Puppeteer] WARNING: No input found — relying on stream API only');
+
+      // ── Step 3: Fire stream API in parallel ──
+      const snap = {
+        url:      productUrl,
+        token:    flashTokenCache.token,
+        deviceId: flashTokenCache.deviceId || 'web-spd-' + Date.now(),
+        userId:   flashTokenCache.userId   || '',
+      };
+
+      const streamPromise = page.evaluate(async ({ url, token, deviceId, userId }) => {
+        const idKey = btoa(unescape(encodeURIComponent(userId + '_' + url + '_WEB'))).substring(0, 64);
+        const headers = {
+          'Authorization':   'Bearer ' + token,
+          'Channel-Type':    'web',
+          'Content-Type':    'application/json',
+          'Accept':          'text/event-stream',
+          'Origin':          'https://flash.co',
+          'X-Country-Code':  'IN',
+          'X-Device-Id':     deviceId,
+          'X-Timezone':      'Asia/Calcutta',
+          'X-Idempotency-Key': idKey,
+        };
+        const params = new URLSearchParams({
+          source: 'APPEND', context: 'HOME_URL_PASTE',
+          user_agent: navigator.userAgent, device_type: 'DESKTOP', country_code: 'IN',
+        });
+        try {
+          const r = await fetch('https://api.flash.co/agents/chat/stream?' + params, {
+            method: 'POST', headers,
+            body: JSON.stringify({ query: url, context: 'HOME_URL_PASTE' }),
+          });
+          if (!r.ok) return { hash: null, status: r.status };
+          const text = await r.text();
+          const patterns = [
+            /product-details\/([A-Za-z0-9_-]{4,})/,
+            /product-search\/([A-Za-z0-9_-]{4,})/,
+            /"pageHash"\s*:\s*"([A-Za-z0-9_-]{4,})"/,
+            /\/h\/([A-Za-z0-9_-]{6,})/,
+          ];
+          for (const pat of patterns) {
+            const m = text.match(pat); if (m) return { hash: m[1], status: r.status, sample: text.substring(0, 300) };
           }
-          return pageHash;
-        } catch(e) { return null; }
+          return { hash: null, status: r.status, sample: text.substring(0, 300) };
+        } catch(e) { return { hash: null, error: e.message }; }
       }, snap);
 
-      // ── Step 4: wait for flash.co to navigate to product-details ──
-      // Either the input submission or the stream API will trigger navigation
+      // ── Step 4: Wait for navigation to product-details ──
       let pageHash = null;
 
-      // Race: wait for navigation to product-details page (up to 75s)
       try {
         await page.waitForFunction(
-          () => window.location.href.includes('product-details'),
-          { timeout: 75000 }
+          () => window.location.href.includes('product-details') || window.location.href.includes('/h/'),
+          { timeout: 80000 }
         );
-        const urlMatch = page.url().match(/product-details\/([A-Za-z0-9_-]{4,})/);
+        const curUrl  = page.url();
+        const urlMatch = curUrl.match(/product-details\/([A-Za-z0-9_-]{4,})/) || curUrl.match(/\/h\/([A-Za-z0-9_-]{4,})/);
         if (urlMatch) pageHash = urlMatch[1];
-        console.log('[Flash/Puppeteer] Navigated to product-details:', page.url());
-      } catch(e) {
-        // Navigation didn't happen — try stream result as fallback
-        const streamHash = await streamPromise.catch(() => null);
-        if (streamHash) {
-          pageHash = streamHash;
-          await page.goto('https://flash.co/product-details/' + streamHash, { waitUntil: 'domcontentloaded', timeout: 30000 });
-          console.log('[Flash/Puppeteer] Used stream hash:', streamHash);
+        console.log('[Flash/Puppeteer] Navigated:', curUrl);
+      } catch(navErr) {
+        console.log('[Flash/Puppeteer] Navigation timed out — checking stream result');
+        const streamResult = await streamPromise.catch(() => null);
+        console.log('[Flash/Puppeteer] Stream result:', JSON.stringify(streamResult || {}).substring(0, 200));
+
+        if (streamResult && streamResult.hash) {
+          pageHash = streamResult.hash;
+          await page.goto('https://flash.co/product-details/' + pageHash, { waitUntil: 'networkidle2', timeout: 35000 });
+          console.log('[Flash/Puppeteer] Navigated via stream hash:', pageHash);
         } else {
-          // Last resort: retry stream API up to 4 times — Flash caches result after processing
-          console.log('[Flash/Puppeteer] No hash yet — retrying stream API...');
-          const retryDelays = [10000, 15000, 20000, 25000];
-          for (const delay of retryDelays) {
+          // Final retry loop
+          console.log('[Flash/Puppeteer] No hash — retrying stream API 3 times...');
+          for (const delay of [12000, 18000, 25000]) {
             await new Promise(r => setTimeout(r, delay));
-            const retryHash = await page.evaluate(async ({ url, token, deviceId, userId }) => {
-              const ua = navigator.userAgent;
-              const idempotencyKey = btoa(unescape(encodeURIComponent(userId + '_' + url + '_WEB')));
+            const retryResult = await page.evaluate(async ({ url, token, deviceId, userId }) => {
+              const idKey = btoa(unescape(encodeURIComponent(userId + '_' + url + '_WEB'))).substring(0, 64);
               const headers = {
                 'Authorization': 'Bearer ' + token, 'Channel-Type': 'web',
-                'Content-Type': 'application/json', 'Accept': 'text/event-stream',
-                'Origin': 'https://flash.co', 'X-Country-Code': 'IN',
-                'X-Device-Id': deviceId, 'X-Timezone': 'Asia/Calcutta',
-                'X-Idempotency-Key': idempotencyKey,
+                'Content-Type': 'application/json', 'Origin': 'https://flash.co',
+                'X-Country-Code': 'IN', 'X-Device-Id': deviceId, 'X-Timezone': 'Asia/Calcutta',
+                'X-Idempotency-Key': idKey,
               };
-              const params = new URLSearchParams({ source:'APPEND', context:'HOME_URL_PASTE', user_agent:ua, device_type:'DESKTOP', country_code:'IN' });
+              const params = new URLSearchParams({ source:'APPEND', context:'HOME_URL_PASTE', device_type:'DESKTOP', country_code:'IN' });
               try {
-                const sr = await fetch('https://api.flash.co/agents/chat/stream?' + params, { method:'POST', headers, body: JSON.stringify({ query:url, context:'HOME_URL_PASTE' }) });
-                if (!sr.ok) return null;
-                const text = await sr.text();
+                const r = await fetch('https://api.flash.co/agents/chat/stream?' + params, {
+                  method:'POST', headers, body: JSON.stringify({ query:url, context:'HOME_URL_PASTE' }),
+                });
+                if (!r.ok) return null;
+                const text = await r.text();
                 for (const pat of [/product-details\/([A-Za-z0-9_-]{4,})/, /product-search\/([A-Za-z0-9_-]{4,})/, /"pageHash":"([A-Za-z0-9_-]{4,})"/]) {
                   const m = text.match(pat); if (m) return m[1];
                 }
                 return null;
               } catch(e) { return null; }
             }, snap);
-            console.log('[Flash/Puppeteer] Retry hash:', retryHash, '(delay was', delay/1000, 's)');
-            if (retryHash) {
-              pageHash = retryHash;
-              await page.goto('https://flash.co/product-details/' + retryHash, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            console.log('[Flash/Puppeteer] Retry got hash:', retryResult);
+            if (retryResult) {
+              pageHash = retryResult;
+              await page.goto('https://flash.co/product-details/' + pageHash, { waitUntil: 'networkidle2', timeout: 35000 });
               break;
             }
           }
-          if (!pageHash) return { error: 'FLASH_NO_DATA', message: 'Flash.co could not find comparison data for this product.' };
+          if (!pageHash) {
+            const html = await page.content();
+            return { error: 'FLASH_NO_DATA', htmlSample: html.substring(0, 3000), pageLogs };
+          }
         }
       }
 
       if (!pageHash) {
-        const urlMatch = page.url().match(/product-details\/([A-Za-z0-9_-]{4,})/);
-        pageHash = urlMatch ? urlMatch[1] : 'unknown';
+        const cur = page.url();
+        const m   = cur.match(/product-details\/([A-Za-z0-9_-]{4,})/) || cur.match(/\/h\/([A-Za-z0-9_-]{4,})/);
+        pageHash  = m ? m[1] : 'unknown';
       }
-      console.log('[Flash/Puppeteer] pageHash:', pageHash, '— waiting for all prices...');
+      console.log('[Flash/Puppeteer] pageHash:', pageHash);
 
-      // ── Step 5: wait for prices to fully load (up to 60s) ──
+      // ── Step 5: Wait for prices to load ──
       try {
-        // Wait until we see at least 2 different prices (means comparison loaded)
         await page.waitForFunction(() => {
-          const prices = document.body.innerText.match(/₹\s*[\d,]{3,}/g) || [];
+          const prices = document.body.innerText.match(/₹[\s\d,]{2,}/g) || [];
           return prices.length >= 2;
-        }, { timeout: 60000 });
-      } catch(e) { console.log('[Flash/Puppeteer] Price wait timed out — extracting anyway'); }
+        }, { timeout: 65000 });
+        console.log('[Flash/Puppeteer] Prices detected in DOM');
+      } catch(e) {
+        console.log('[Flash/Puppeteer] Price wait timed out — will extract whatever is available');
+      }
 
-      // Wait for product name
+      // Wait for product name (not a generic Flash placeholder)
+      const genericNames = ['flash ai','compare prices','best price','product details','product information','loading'];
       try {
-        await page.waitForFunction(() => {
-          const h1 = document.querySelector('h1');
-          const G = ['flash ai','compare prices','best price','product details','product information'];
-          return h1 && h1.textContent.trim().length > 5 && !G.some(g => h1.textContent.toLowerCase().includes(g));
-        }, { timeout: 15000 });
+        await page.waitForFunction((generic) => {
+          const h = document.querySelector('h1, h2, [class*="product-name"], [class*="productName"], [class*="title"]');
+          return h && h.textContent.trim().length > 5 && !generic.some(g => h.textContent.toLowerCase().includes(g));
+        }, { timeout: 20000 }, genericNames);
       } catch(e) {}
 
-      // Scroll to trigger lazy-load
+      // Scroll to load lazy content + expand all stores
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 2500));
 
-      // Click "View all stores"
+      // Click "View all" / "Show more" buttons
       try {
         const clicked = await page.evaluate(() => {
-          for (const btn of document.querySelectorAll('button, a, [role="button"], span, div')) {
-            const t = (btn.textContent || '').toLowerCase().trim();
-            if (t.includes('view all') || t.includes('show all') || t.includes('all stores') || t.includes('more stores') || /view \d+ store/.test(t)) { btn.click(); return true; }
+          let count = 0;
+          for (const el of document.querySelectorAll('button, a, [role="button"], span, div, p')) {
+            const t = (el.textContent || '').toLowerCase().trim();
+            if (/view all|show all|all stores|more stores|view \d+ store|show \d+/.test(t)) {
+              el.click(); count++;
+            }
           }
-          return false;
+          return count;
         });
-        if (clicked) {
+        if (clicked > 0) {
           await new Promise(r => setTimeout(r, 3000));
           await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
           await new Promise(r => setTimeout(r, 2000));
@@ -591,113 +636,238 @@ async function flashSearchPuppeteer(productUrl) {
       } catch(e) {}
 
       await page.evaluate(() => window.scrollTo(0, 0));
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 800));
 
-      // ── Step 6: extract prices + product info from DOM ──
-      const extracted = await page.evaluate(() => {
-        function isUILabel(t) {
-          const l = t.toLowerCase().trim();
-          return /^[a-z][a-z0-9]*(_[a-z0-9]+)+$/.test(l) ||
-            ['wallet','visit','open','buy now','buy','new','deal','sponsored','recommended','pro','in','check','refresh'].includes(l) ||
-            l.includes('updated') || l.includes('days ago') || l.includes('hours ago') ||
-            l.includes('view all') || l.includes('show all') || l.includes('all stores') || l.includes('more stores') ||
-            l.includes('came from here') || l.includes('flash ai') || l.includes('just saved') ||
-            l.includes('ai score') || l.includes('best price') ||
-            l.startsWith('save ₹') || l.startsWith('₹') || l.startsWith('rs.') ||
-            /^[\d\s%,₹]+$/.test(l) || l.length < 2 || l.length > 50;
-        }
-
-        const KNOWN = ['amazon','flipkart','myntra','ajio','nykaa','tatacliq','tata cliq','croma','snapdeal',
-          'meesho','jiomart','bigbasket','zepto','blinkit','swiggy','instamart','zomato','firstcry',
-          'netmeds','lenskart','boat','mamaearth','purplle','bewakoof','decathlon','pepperfry',
-          'tata cliq','vijay sales','reliance digital','nubo','shade station','getuscart'];
-
-        const GNAMES = ['flash ai','compare prices','best price','product details','product information','specifications','description','overview','features'];
-
-        const productName = (() => {
-          for (const el of document.querySelectorAll('h1,h2,[class*="product-name"],[class*="productName"]')) {
-            const t = el.textContent.trim();
-            if (t && t.length > 5 && !GNAMES.some(g => t.toLowerCase().includes(g))) return t;
-          }
-          return document.title.replace(/\s*[-|]?\s*(Flash.*|Compare.*|Best Price.*)$/i,'').trim() || '';
-        })();
-
-        // Decode Flash CDN image URL to get actual product image
-        const productImage = (() => {
-          for (const img of document.querySelectorAll('img')) {
-            const src = img.src || '';
-            if (!src || src.includes('/merchants/') || src.includes('favicon')) continue;
-            if (src.includes('img.flash.co') && src.includes('/plain/')) {
-              try { return decodeURIComponent(src.split('/plain/')[1]); } catch { return src; }
+      // ── Step 6: Extract prices from DOM — multi-strategy ──
+      const extracted = await page.evaluate((genericNamesInner) => {
+        // ── Strategy A: Look for structured data / JSON in script tags ──
+        const jsonStores = [];
+        try {
+          for (const script of document.querySelectorAll('script')) {
+            const txt = script.textContent || '';
+            // Look for arrays of store price objects
+            const matches = txt.matchAll(/"storeName"\s*:\s*"([^"]+)"[^}]*"price"\s*:\s*(\d+)/g);
+            for (const m of matches) {
+              jsonStores.push({ name: m[1], price: parseInt(m[2]) });
             }
-            if (src.includes('media-amazon.com') || src.includes('_SL') || src.includes('flixcart') || src.includes('rukmini')) return src;
+            // Also look for price arrays like {name:"Amazon",price:499}
+            const matches2 = txt.matchAll(/"name"\s*:\s*"([^"]{2,40})"\s*,\s*"price"\s*:\s*(\d+)/g);
+            for (const m of matches2) {
+              const n = m[1].trim();
+              if (n.length > 1 && n.length < 40) jsonStores.push({ name: n, price: parseInt(m[2]) });
+            }
           }
-          let best = '', bestSize = 0;
-          for (const img of document.querySelectorAll('img')) {
-            if (!img.src || img.src.includes('/merchants/') || img.src.includes('favicon')) continue;
-            const sz = (img.naturalWidth||img.width||0)*(img.naturalHeight||img.height||0);
-            if (sz > bestSize) { bestSize = sz; best = img.src; }
-          }
-          return best;
-        })();
+        } catch(e) {}
+
+        // ── Strategy B: DOM tree walk — find price text nodes, search siblings/ancestors for store names ──
+        const KNOWN_STORES = [
+          'amazon','flipkart','myntra','ajio','nykaa','tatacliq','tata cliq','croma','snapdeal',
+          'meesho','jiomart','jio mart','bigbasket','big basket','zepto','blinkit','swiggy',
+          'instamart','zomato','firstcry','netmeds','lenskart','boat','mamaearth','purplle',
+          'bewakoof','decathlon','pepperfry','vijay sales','reliance digital','sangeetha',
+          'poorvika','pai international','apple','nubo','getuscart',
+        ];
+
+        function isUIJunk(t) {
+          const l = t.toLowerCase().trim();
+          return l.length < 2 || l.length > 80 ||
+            /^[\d\s%,₹\-\.]+$/.test(l) ||
+            ['wallet','visit','open','buy now','buy','new','deal','sponsored','pro','check','refresh',
+             'view all','show all','all stores','more stores','came from here','just saved','ai score',
+             'best price','loading','flash','compare'].some(w => l === w || l.startsWith(w + ' '));
+        }
 
         const storeLinks = {};
         document.querySelectorAll('a[href]').forEach(a => {
-          const href = a.href;
+          const href = (a.href || '').toLowerCase();
           if (!href || href.includes('flash.co') || href === '#') return;
-          for (const s of ['amazon','flipkart','myntra','ajio','nykaa','tatacliq','croma','snapdeal','meesho','jiomart','bigbasket','zepto','blinkit','swiggy','zomato']) {
-            if (href.toLowerCase().includes(s) && !storeLinks[s]) storeLinks[s] = href;
+          for (const s of KNOWN_STORES) {
+            if (href.includes(s.replace(/\s/g,'')) && !storeLinks[s]) storeLinks[s] = a.href;
           }
         });
 
+        // Walk all text nodes, collect ₹PRICE occurrences
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
         const priceNodes = [];
         let node;
         while ((node = walker.nextNode())) {
-          const m = node.textContent.trim().match(/^₹\s*([\d,]+)$/);
-          if (m) {
-            const price = parseInt(m[1].replace(/,/g,''));
-            if (price >= 100 && price <= 1000000) priceNodes.push({ node, price });
+          const raw = node.textContent.trim();
+          // Match ₹1,234 or ₹1234 or ₹ 1,234
+          const m = raw.match(/^₹\s*([\d,]+)$/) || raw.match(/^([\d,]+)$/) && raw.replace(/,/g,'').length >= 3 ? null : raw.match(/₹\s*([\d,]+)/);
+          const exactM = raw.match(/^₹\s*([\d,]+)$/);
+          if (exactM) {
+            const price = parseInt(exactM[1].replace(/,/g,''));
+            if (price >= 50 && price <= 2000000) priceNodes.push({ node, price });
           }
         }
 
-        const stores = [], seen = new Set();
+        const domStores = [], seen = new Set();
         for (const { node, price } of priceNodes) {
-          let container = node.parentElement, found = null;
-          for (let d = 0; d < 10 && container && !found; d++) {
+          let container = node.parentElement;
+          let found = null;
+          for (let depth = 0; depth < 12 && container && !found; depth++) {
+            // Collect all leaf text in this container
             const leaves = [];
-            container.querySelectorAll('*').forEach(el => { if (!el.children.length) { const t=(el.textContent||'').trim(); if(t) leaves.push(t); }});
-            for (const t of leaves) { if (KNOWN.some(s => t.toLowerCase()===s || t.toLowerCase().startsWith(s+' ')) && !seen.has(t) && !isUILabel(t)) { found=t; break; } }
-            if (!found) { for (const t of leaves) { if (!isUILabel(t)&&!/^₹/.test(t)&&!/^[\d,]+$/.test(t)&&!seen.has(t)) { found=t; break; } } }
+            container.querySelectorAll('*').forEach(el => {
+              if (!el.children.length) {
+                const t = (el.textContent || '').trim();
+                if (t) leaves.push(t);
+              }
+            });
+            // Also include direct text of container
+            leaves.push(container.textContent.trim());
+
+            // 1st pass — match against known store names exactly
+            for (const t of leaves) {
+              const l = t.toLowerCase().trim();
+              const match = KNOWN_STORES.find(s => l === s || l.startsWith(s + ' ') || (s.length > 4 && l.includes(s)));
+              if (match && !seen.has(l) && !isUIJunk(t)) { found = t; break; }
+            }
+            // 2nd pass — any non-junk label near a price
+            if (!found) {
+              for (const t of leaves) {
+                if (!isUIJunk(t) && !/^₹/.test(t) && !seen.has(t.toLowerCase())) { found = t; break; }
+              }
+            }
             container = container.parentElement;
           }
           if (found) {
-            seen.add(found);
-            const k = found.toLowerCase().replace(/\s+/g,'');
-            stores.push({ name:found, price, url:storeLinks[k]||storeLinks[found.toLowerCase()]||'' });
+            const key = found.toLowerCase().trim();
+            if (!seen.has(key)) {
+              seen.add(key);
+              const storeKey = KNOWN_STORES.find(s => key.includes(s)) || key.replace(/\s+/g,'');
+              domStores.push({ name: found.trim(), price, url: storeLinks[storeKey] || storeLinks[key] || '' });
+            }
           }
         }
-        return { productName, productImage, stores };
-      });
 
-      console.log('[Flash/Puppeteer] ✅ Extracted', extracted.stores.length, 'stores:', extracted.stores.map(s=>s.name+':₹'+s.price).join(' | '));
+        // ── Strategy C: Table/card based layout ──
+        // Flash may render a comparison table — try finding rows with store + price columns
+        const cardStores = [];
+        const priceRegex = /₹\s*([\d,]+)/;
+        document.querySelectorAll('[class*="store"], [class*="Store"], [class*="price"], [class*="Price"], [class*="card"], [class*="Card"], [class*="row"], [class*="Row"], li').forEach(el => {
+          const text = el.textContent || '';
+          const pm   = text.match(priceRegex);
+          if (!pm) return;
+          const price = parseInt(pm[1].replace(/,/g,''));
+          if (price < 50 || price > 2000000) return;
+          // Find store name: first substantial text child that isn't a price
+          for (const child of el.querySelectorAll('*')) {
+            if (child.children.length) continue;
+            const t = (child.textContent || '').trim();
+            const l = t.toLowerCase();
+            if (t.length < 2 || /^₹/.test(t) || /^[\d,]+$/.test(t)) continue;
+            const knownMatch = KNOWN_STORES.find(s => l === s || l.startsWith(s + ' '));
+            if (knownMatch) {
+              const key = l;
+              if (!cardStores.find(s => s.name.toLowerCase() === key)) {
+                cardStores.push({ name: t, price, url: storeLinks[knownMatch] || '' });
+              }
+              break;
+            }
+          }
+        });
+
+        // Product name — wait for a real name, not Flash generic placeholder
+        const productName = (() => {
+          for (const sel of ['h1', 'h2', '[class*="product-name"]', '[class*="productName"]', '[class*="product_name"]', '[class*="title"]']) {
+            for (const el of document.querySelectorAll(sel)) {
+              const t = el.textContent.trim();
+              if (t.length > 5 && !genericNamesInner.some(g => t.toLowerCase().includes(g))) return t;
+            }
+          }
+          return document.title.replace(/\s*[-|]?\s*(Flash.*|Compare.*|Best Price.*)$/i,'').trim() || '';
+        })();
+
+        // Product image — prefer product CDN images, not store logos
+        const productImage = (() => {
+          // Flash serves product images via img.flash.co/plain/<encoded-url>
+          for (const img of document.querySelectorAll('img')) {
+            const src = img.src || '';
+            if (!src) continue;
+            if (src.includes('img.flash.co') && src.includes('/plain/')) {
+              try { return decodeURIComponent(src.split('/plain/')[1].split('?')[0]); } catch { return src; }
+            }
+          }
+          // Amazon/Flipkart CDN image patterns
+          for (const img of document.querySelectorAll('img')) {
+            const src = img.src || '';
+            if (!src || src.includes('/merchants/') || src.includes('favicon') || src.includes('logo')) continue;
+            if (/media-amazon\.com|images-amazon\.com|_SL\d+_|rukmini|flixcart\.com|img\.flipkart/.test(src)) return src;
+          }
+          // Largest image on page as last resort
+          let best = '', bestPx = 0;
+          for (const img of document.querySelectorAll('img')) {
+            const src = img.src || '';
+            if (!src || src.includes('/merchants/') || src.includes('favicon') || src.length < 20) continue;
+            const px = (img.naturalWidth || img.width || 0) * (img.naturalHeight || img.height || 0);
+            if (px > bestPx && px > 400) { bestPx = px; best = src; }
+          }
+          return best;
+        })();
+
+        // ── Merge all strategies, deduplicate, pick best per store ──
+        const allFound = [...jsonStores, ...domStores, ...cardStores];
+        const merged = {};
+        for (const s of allFound) {
+          const key = s.name.toLowerCase().trim();
+          if (!key || key.length < 2 || s.price < 50) continue;
+          if (!merged[key] || s.price < merged[key].price) merged[key] = s;
+        }
+
+        return {
+          productName,
+          productImage,
+          stores: Object.values(merged),
+          debug: {
+            jsonCount: jsonStores.length,
+            domCount:  domStores.length,
+            cardCount: cardStores.length,
+            priceNodeCount: priceNodes.length,
+          },
+        };
+      }, genericNames);
+
+      console.log('[Flash/Puppeteer] Extraction debug:', JSON.stringify(extracted.debug));
+      console.log('[Flash/Puppeteer] Stores found:', extracted.stores.length,
+        extracted.stores.map(s => s.name + ':₹' + s.price).join(' | '));
 
       if (extracted.stores.length === 0) {
+        // Capture full HTML for debugging via /compare/debug
         const html = await page.content();
-        return { error: 'No prices found in DOM', pageHash, htmlSample: html.substring(500, 2500) };
+        console.log('[Flash/Puppeteer] ❌ No stores extracted. HTML sample:', html.substring(500, 2000));
+        return {
+          error:      'No prices found in DOM',
+          pageHash,
+          htmlSample: html.substring(0, 5000),
+          pageLogs,
+        };
       }
 
+      // Return in the shape compare/search expects
       return {
-        ok: true, pageHash,
+        ok: true,
+        pageHash,
         data: {
-          response: { feedbacks: [{ storePrices: extracted.stores.map(s=>({ storeName:s.name, price:s.price, url:s.url })) }] },
           productName:  extracted.productName,
           productImage: extracted.productImage,
+          response: {
+            feedbacks: [{
+              storePrices: extracted.stores.map(s => ({
+                storeName: s.name,
+                price:     s.price,
+                url:       s.url,
+              })),
+            }],
+          },
         },
         pollAttempt: 0,
+        debug: extracted.debug,
       };
 
-    } finally { await page.close().catch(()=>{}); }
+    } finally {
+      await page.close().catch(() => {});
+    }
   });
 }
 
@@ -1306,14 +1476,19 @@ const BHK_POS = {
 function isShortUrl(productUrl) {
   try {
     const host = new URL(productUrl).hostname.replace('www.', '');
-    return (
-      host === 'amzn.in'  || host === 'amzn.to' ||   // Amazon short links
-      host === 'dl.flipkart.com' ||                    // Flipkart deep-link short
-      host === 'fkrt.co'  ||                           // Flipkart native short
-      host === 'ajiio.co' ||                           // Ajio ExtraPe short
-      host === 'bilty.co' ||                           // Croma ExtraPe short
-      host === 'myntr.co'                              // Myntra ExtraPe short
-    );
+    if (host === 'amzn.in'  || host === 'amzn.to') return true;   // Amazon short links
+    if (host === 'fkrt.co')  return true;                           // Flipkart native short
+    if (host === 'ajiio.co') return true;                           // Ajio ExtraPe short
+    if (host === 'bilty.co') return true;                           // Croma ExtraPe short
+    if (host === 'myntr.co') return true;                           // Myntra ExtraPe short
+    // dl.flipkart.com: only treat as a short link if there's no /p/itm product path embedded
+    // URLs like /dl/slug/p/itmbff478... already contain the full product info — just rewrite domain
+    if (host === 'dl.flipkart.com') {
+      const pathname = new URL(productUrl).pathname;
+      const hasProductPath = /\/p\/itm[a-z0-9]+/i.test(pathname);
+      return !hasProductPath; // if it has the itm path, we can rewrite directly — not a "short" URL
+    }
+    return false;
   } catch(e) { return false; }
 }
 
@@ -2909,139 +3084,153 @@ app.get('/compare/search', async (req, res) => {
       try { url = await resolveRedirect(rawUrl); console.log('[Compare] Resolved', rawUrl.substring(0,50), '→', url.substring(0,70)); }
       catch(e) { console.log('[Compare] Short URL resolution failed:', e.message); }
     }
+
+    // dl.flipkart.com with full product path — just rewrite to www.flipkart.com
+    try {
+      const parsedU = new URL(url);
+      if (parsedU.hostname === 'dl.flipkart.com') {
+        parsedU.hostname = 'www.flipkart.com';
+        url = parsedU.toString();
+        console.log('[Compare] Rewrote dl.flipkart.com →', url.substring(0, 80));
+      }
+    } catch(e) {}
+
     console.log('[Compare/Flash] URL:', url);
 
     const srcHost  = (() => { try { return new URL(url).hostname.replace('www.',''); } catch { return ''; } })();
     const srcStore = normalizeStore(srcHost.split('.')[0]) || '';
 
-    // ── Run Flash search via Puppeteer (real Chrome browser, bypasses TLS fingerprint block) ──
-    if (!flashTokenCache.token) return res.status(503).json({ error: 'Flash token not set.', fix: 'Visit https://api.smartpickdeals.live/flash/token-page' });
-    const flashResult = await flashSearchPuppeteer(url);
+    // ── Try Flash first ──
+    let flashResult = null;
+    try {
+      flashResult = await flashSearchPuppeteer(url);
+    } catch(e) {
+      console.log('[Compare/Flash] Puppeteer threw:', e.message);
+    }
 
-    if (!flashResult) return res.status(500).json({ error: 'Puppeteer returned no result' });
-    if (flashResult.error === 'TOKEN_EXPIRED') {
+    const flashFailed = !flashResult
+      || flashResult.error === 'FLASH_NO_DATA'
+      || flashResult.error === 'TOKEN_EXPIRED'
+      || (flashResult.error && !flashResult.ok);
+
+    if (flashResult && flashResult.error === 'TOKEN_EXPIRED') {
       flashTokenCache.token = '';
-      return res.status(503).json({ error: 'Flash token expired.', fix: 'Visit https://api.smartpickdeals.live/flash/token-page and click the bookmarklet on flash.co' });
-    }
-    if (flashResult.error === 'FLASH_NO_DATA') {
-      const wasShort = isShortUrl(rawUrl);
-      const hint = wasShort
-        ? `Short link (${rawUrl}) was resolved to: ${url} — but Flash.co has no comparison data for this product. Please open the link in your browser, copy the full URL from the address bar, and try again.`
-        : 'Flash.co has no comparison data for this product. Try a popular product URL directly from Amazon, Flipkart, or Myntra.';
-      return res.status(404).json({ error: hint, resolvedUrl: url });
-    }
-    if (flashResult.error) return res.status(502).json({ error: flashResult.error, pageHash: flashResult.pageHash });
-
-    const rawPriceData = flashResult.data;
-    const pageHash     = flashResult.pageHash;
-
-
-    // ─────────────────────────────────────────────────────────────
-    // Step 3 — Parse Flash feedbacks into the standard store shape.
-    // Flash nests price data differently depending on product type.
-    // We use a deep recursive digger to find it regardless of depth.
-    // ─────────────────────────────────────────────────────────────
-    const feedbacks = rawPriceData?.response?.feedbacks || rawPriceData?.feedbacks || [];
-    const meta      = rawPriceData?.response?.productDetails
-                   || rawPriceData?.productDetails
-                   || rawPriceData?.response
-                   || {};
-
-    const productName  = meta.name || meta.productName || meta.title || ('Product from ' + srcStore);
-    const productImage = meta.imageUrl || meta.image || meta.thumbnail || '';
-
-    // ── Deep recursive price list finder ──
-    // Flash embeds prices under many different key names and nesting levels.
-    // We recursively walk the entire response and collect every array that
-    // looks like a list of store prices (has storeName/price fields).
-    function isStorePriceItem(obj) {
-      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
-      const hasStore = obj.storeName || obj.name || obj.store || obj.retailer || obj.source;
-      const hasPrice = obj.price !== undefined || obj.salePrice !== undefined || obj.amount !== undefined || obj.sellingPrice !== undefined;
-      return !!(hasStore && hasPrice);
+      console.log('[Compare] Flash token expired — falling back to Buyhatke');
     }
 
-    function deepFindPriceLists(obj, depth) {
-      if (!obj || typeof obj !== 'object' || depth > 12) return [];
-      if (Array.isArray(obj)) {
-        // If this array contains store price items, return it
-        const items = obj.filter(isStorePriceItem);
-        if (items.length > 0) return [items];
-        // Otherwise recurse into each element
-        return obj.flatMap(el => deepFindPriceLists(el, depth + 1));
+    if (!flashFailed) {
+      // Flash succeeded — parse and return
+      if (flashResult.error) return res.status(502).json({ error: flashResult.error, pageHash: flashResult.pageHash });
+
+      const rawPriceData = flashResult.data;
+      const pageHash     = flashResult.pageHash;
+
+      const feedbacks = rawPriceData?.response?.feedbacks || rawPriceData?.feedbacks || [];
+      const meta      = rawPriceData?.response?.productDetails
+                     || rawPriceData?.productDetails
+                     || rawPriceData?.response
+                     || {};
+
+      const productName  = meta.name || meta.productName || meta.title || rawPriceData?.productName || ('Product from ' + srcStore);
+      const productImage = meta.imageUrl || meta.image || meta.thumbnail || rawPriceData?.productImage || '';
+
+      function isStorePriceItem(obj) {
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
+        const hasStore = obj.storeName || obj.name || obj.store || obj.retailer || obj.source;
+        const hasPrice = obj.price !== undefined || obj.salePrice !== undefined || obj.amount !== undefined || obj.sellingPrice !== undefined;
+        return !!(hasStore && hasPrice);
       }
-      // It's a plain object — check known keys first for speed, then recurse
-      const knownKeys = ['storePrices','prices','stores','storeList','comparePrices','priceComparison','offers','listings','results','data','feedbacks','feedback','content','payload','response'];
-      const found = [];
-      for (const key of knownKeys) {
-        if (obj[key]) found.push(...deepFindPriceLists(obj[key], depth + 1));
+
+      function deepFindPriceLists(obj, depth) {
+        if (!obj || typeof obj !== 'object' || depth > 12) return [];
+        if (Array.isArray(obj)) {
+          const items = obj.filter(isStorePriceItem);
+          if (items.length > 0) return [items];
+          return obj.flatMap(el => deepFindPriceLists(el, depth + 1));
+        }
+        const knownKeys = ['storePrices','prices','stores','storeList','comparePrices','priceComparison','offers','listings','results','data','feedbacks','feedback','content','payload','response'];
+        const found = [];
+        for (const key of knownKeys) {
+          if (obj[key]) found.push(...deepFindPriceLists(obj[key], depth + 1));
+        }
+        for (const key of Object.keys(obj)) {
+          if (!knownKeys.includes(key) && obj[key] && typeof obj[key] === 'object') {
+            found.push(...deepFindPriceLists(obj[key], depth + 1));
+          }
+        }
+        return found;
       }
-      // Also recurse into all other keys
-      for (const key of Object.keys(obj)) {
-        if (!knownKeys.includes(key) && obj[key] && typeof obj[key] === 'object') {
-          found.push(...deepFindPriceLists(obj[key], depth + 1));
+
+      const allPriceLists = deepFindPriceLists(rawPriceData, 0);
+      allPriceLists.sort((a, b) => b.length - a.length);
+      const priceList = allPriceLists[0] || [];
+
+      console.log('[Compare/Flash] Found', allPriceLists.length, 'price list candidates, best has', priceList.length, 'items');
+
+      const storeMap = {};
+      for (const item of priceList) {
+        const rawName = item.storeName || item.name || item.store || item.retailer || item.source || '';
+        const name    = normalizeStore(rawName) || rawName.trim();
+        if (!name) continue;
+        const rawPrice = item.price ?? item.salePrice ?? item.sellingPrice ?? item.amount ?? 0;
+        const price    = parseInt(String(rawPrice).replace(/[^0-9]/g, '')) || 0;
+        if (price <= 0) continue;
+        const storeUrl = item.url || item.link || item.productUrl || item.deepLink || '';
+        if (!storeMap[name] || price < storeMap[name].price) {
+          storeMap[name] = { name, normalizedName: name, price, url: storeUrl };
         }
       }
-      return found;
-    }
 
-    // Find all candidate price lists; pick the longest (most stores)
-    const allPriceLists = deepFindPriceLists(rawPriceData, 0);
-    allPriceLists.sort((a, b) => b.length - a.length);
-    const priceList = allPriceLists[0] || [];
-
-    console.log('[Compare/Flash] Found', allPriceLists.length, 'price list candidates, best has', priceList.length, 'items');
-
-    const storeMap = {};
-    for (const item of priceList) {
-      const rawName = item.storeName || item.name || item.store || item.retailer || item.source || '';
-      const name    = normalizeStore(rawName) || rawName.trim();
-      if (!name) continue;
-      const rawPrice = item.price ?? item.salePrice ?? item.sellingPrice ?? item.amount ?? 0;
-      const price    = parseInt(String(rawPrice).replace(/[^0-9]/g, '')) || 0;
-      if (price <= 0) continue;
-      const storeUrl = item.url || item.link || item.productUrl || item.deepLink || '';
-      if (!storeMap[name] || price < storeMap[name].price) {
-        storeMap[name] = { name, normalizedName: name, price, url: storeUrl };
-      }
-    }
-
-    let stores = Object.values(storeMap).sort((a, b) => a.price - b.price);
-
-    stores = stores.map((s, i) => {
-      const n = s.normalizedName.toLowerCase();
-      const isSrc = srcStore && (n === srcStore.toLowerCase() || n.includes(srcStore.toLowerCase()) || srcStore.toLowerCase().includes(n));
-      return { ...s, isBest: i === 0, isSource: isSrc };
-    });
-
-    if (stores.length === 0) {
-      console.log('[Compare/Flash] Parser found no prices. feedbacks:', feedbacks.length,
-        '| rawPriceData keys:', Object.keys(rawPriceData),
-        '| sample:', JSON.stringify(rawPriceData).substring(0, 600));
-      return res.status(404).json({
-        error: 'Flash returned data but no parseable store prices.',
-        feedbackCount: feedbacks.length,
-        pageHash,
-        debug: 'Visit /compare/debug?url=YOUR_URL to inspect the raw Flash response',
+      let stores = Object.values(storeMap).sort((a, b) => a.price - b.price);
+      stores = stores.map((s, i) => {
+        const n = s.normalizedName.toLowerCase();
+        const isSrc = srcStore && (n === srcStore.toLowerCase() || n.includes(srcStore.toLowerCase()) || srcStore.toLowerCase().includes(n));
+        return { ...s, isBest: i === 0, isSource: isSrc };
       });
+
+      if (stores.length > 0) {
+        const srcEntry = stores.find(s => s.isSource);
+        const savings  = srcEntry && !srcEntry.isBest ? srcEntry.price - stores[0].price : 0;
+        console.log('[Compare/Flash] FINAL:', stores.map(s => s.name + ':₹' + s.price + (s.isSource ? '[src]' : '') + (s.isBest ? '[best]' : '')).join(' | '));
+        return res.json({ stores, productName, productImage, totalStores: stores.length, savings: savings > 0 ? savings : 0, dataSource: 'flash' });
+      }
+
+      // Flash returned data but no parseable prices — fall through to Buyhatke
+      console.log('[Compare/Flash] No prices parsed from Flash — falling back to Buyhatke');
+    } else {
+      console.log('[Compare] Flash failed/no data — falling back to Buyhatke. Reason:', flashResult?.error || 'null result');
     }
 
-    const srcEntry = stores.find(s => s.isSource);
-    const savings  = srcEntry && !srcEntry.isBest ? srcEntry.price - stores[0].price : 0;
+    // ── Buyhatke fallback ──
+    console.log('[Compare/BHK] Trying Buyhatke for:', url.substring(0, 80));
+    try {
+      const bhkData = await fetchBuyhatke(url);
+      const parsed  = parseBuyhatkeResponse(bhkData, url, srcStore);
+      if (parsed && parsed.stores && parsed.stores.length > 0) {
+        console.log('[Compare/BHK] ✅ Got', parsed.stores.length, 'stores from Buyhatke');
+        return res.json({
+          stores:      parsed.stores,
+          productName: bhkData.productName  || parsed.productName  || ('Product from ' + srcStore),
+          productImage:bhkData.productImage || parsed.productImage || '',
+          totalStores: parsed.stores.length,
+          savings:     parsed.savings || 0,
+          dataSource:  'buyhatke',
+        });
+      }
+      console.log('[Compare/BHK] Buyhatke also returned no stores');
+    } catch(bhkErr) {
+      console.log('[Compare/BHK] Buyhatke failed:', bhkErr.message);
+    }
 
-    console.log('[Compare/Flash] FINAL:', stores.map(s => s.name + ':₹' + s.price + (s.isSource ? '[src]' : '') + (s.isBest ? '[best]' : '')).join(' | '));
-
-    return res.json({
-      stores,
-      productName,
-      productImage,
-      totalStores: stores.length,
-      savings:     savings > 0 ? savings : 0,
-      dataSource:  'flash',
-    });
+    // Both Flash and Buyhatke failed
+    const wasShort = isShortUrl(rawUrl);
+    const hint = wasShort
+      ? `Short link was resolved to: ${url} — but no comparison data was found. Please open the link in your browser, copy the full URL from the address bar, and try again.`
+      : 'No price comparison data found for this product. Try pasting the product URL directly from Amazon, Flipkart, or Myntra.';
+    return res.status(404).json({ error: hint, resolvedUrl: url });
 
   } catch(e) {
-    console.error('[Compare/Flash] Unhandled error:', e.message);
+    console.error('[Compare] Unhandled error:', e.message);
     return res.status(500).json({ error: e.message });
   }
 });
