@@ -61,33 +61,6 @@
       z-index: 0;
     }
 
-    /* ── NAV ── */
-    nav.top-nav {
-      position: relative;
-      z-index: 10;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 14px 24px;
-      border-bottom: 1px solid var(--border);
-      background: rgba(10,10,15,.9);
-      backdrop-filter: blur(12px);
-      width: 100%;
-    }
-    .logo-text { font-size: 16px; font-weight: 800; color: var(--text); }
-    .logo-text span {
-      background: linear-gradient(135deg, var(--accent), var(--accent2));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-    .nav-btns { display: flex; gap: 8px; }
-    .nav-btn { font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 700; padding: 7px 14px; border-radius: 8px; text-decoration: none; transition: all .2s; }
-    .nb-out { color: var(--muted); border: 1px solid var(--border); background: transparent; }
-    .nb-out:hover { color: var(--text); }
-    .nb-fill { background: var(--accent); color: #fff; border: 1px solid transparent; }
-    .nb-fill:hover { background: var(--accent2); }
-
     /* ── HERO HEADER ── */
     header {
       position: relative;
@@ -431,7 +404,7 @@
       z-index: 1;
       width: 100%;
       max-width: 600px;
-      padding: 32px 20px 80px;
+      padding: 32px 20px 40px;
       box-sizing: border-box;
     }
 
@@ -531,35 +504,8 @@
       line-height: 1.8;
     }
 
-    /* ── BOTTOM NAV (mobile) ── */
-    .bottom-nav {
-      display: none;
-      position: fixed;
-      bottom: 0; left: 0; right: 0;
-      background: rgba(10,10,15,0.97);
-      border-top: 1px solid var(--border);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      z-index: 100;
-      padding: 8px 0 max(8px, env(safe-area-inset-bottom));
-    }
-    .bn-items { display: flex; justify-content: space-around; align-items: center; }
-    .bn-item {
-      display: flex; flex-direction: column; align-items: center; gap: 3px;
-      text-decoration: none; color: var(--muted);
-      font-size: 10px; font-weight: 600; padding: 6px 20px;
-      border-radius: 10px; transition: color .2s; min-width: 64px;
-      -webkit-tap-highlight-color: transparent; cursor: pointer; background: none; border: none;
-    }
-    .bn-item.active, .bn-item:hover { color: var(--accent2); }
-    .bn-item svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; }
-    .bn-item.active svg { stroke: var(--accent); }
-
     /* ── RESPONSIVE ── */
     @media (max-width: 768px) {
-      .bottom-nav { display: block; }
-      body { padding-bottom: 70px; }
-      .nav-btns { display: none; }
       button, a, input[type=text], input[type=url] { min-height: 44px; }
       * { -webkit-tap-highlight-color: rgba(255,107,43,0.1); }
       header { padding: 32px 16px 0; }
@@ -574,7 +520,7 @@
       button#shareBtn { font-size: 14px; padding: 12px 16px; }
       .result-actions-row button { min-height: 44px; font-size: 14px; }
       #compareLoading { padding: 0 14px 40px; }
-      #compareResults { padding: 24px 14px 80px; }
+      #compareResults { padding: 24px 14px 40px; }
       .prod-card { padding: 14px; gap: 14px; border-radius: 16px; }
       .prod-img-wrap { width: 80px; height: 80px; border-radius: 10px; }
       .prod-img-wrap img { width: 68px; height: 68px; }
@@ -604,15 +550,6 @@
   </style>
 </head>
 <body>
-
-<!-- TOP NAV -->
-<nav class="top-nav">
-  <span class="logo-text">Smart Pick <span>Deals</span></span>
-  <div class="nav-btns">
-    <button class="nav-btn nb-fill" onclick="switchMode('convert')" id="navConvertBtn">🔗 Convert</button>
-    <button class="nav-btn nb-out" onclick="switchMode('compare')" id="navCompareBtn">📊 Compare</button>
-  </div>
-</nav>
 
 <!-- HERO HEADER -->
 <header id="heroHeader">
@@ -786,20 +723,6 @@
 <a href="mailto:support@smartpickdeals.live" style="color:var(--muted);font-size:12px;text-decoration:none;display:inline-block;margin-top:5px;letter-spacing:.01em;transition:color .2s;" onmouseover="this.style.color='var(--accent2)'" onmouseout="this.style.color='var(--muted)'">✉ support@smartpickdeals.live</a>
 </footer>
 
-<!-- MOBILE BOTTOM NAV -->
-<nav class="bottom-nav">
-  <div class="bn-items">
-    <button class="bn-item active" id="bnConvert" onclick="switchMode('convert')">
-      <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-      Convert
-    </button>
-    <button class="bn-item" id="bnCompare" onclick="switchMode('compare')">
-      <svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
-      Compare
-    </button>
-  </div>
-</nav>
-
 <script>
 /* ══════════════════════════════════════════════════════════
    BACKEND / SHARED CONFIG
@@ -832,37 +755,9 @@ var currentMode = 'convert'; // default
 function switchMode(mode) {
   currentMode = mode;
 
-  // Update nav buttons
-  document.getElementById('navConvertBtn').className = 'nav-btn ' + (mode === 'convert' ? 'nb-fill' : 'nb-out');
-  document.getElementById('navCompareBtn').className = 'nav-btn ' + (mode === 'compare' ? 'nb-fill' : 'nb-out');
-
-  // Update bottom nav
-  document.getElementById('bnConvert').className = 'bn-item' + (mode === 'convert' ? ' active' : '');
-  document.getElementById('bnCompare').className = 'bn-item' + (mode === 'compare' ? ' active' : '');
-
-  // Update action buttons styling
+  // Update action buttons styling only
   document.getElementById('convertBtn').className = 'action-btn' + (mode === 'convert' ? ' active-mode' : '');
   document.getElementById('compareBtn').className = 'action-btn' + (mode === 'compare' ? ' active-mode' : '');
-
-  // Update hero copy
-  if (mode === 'compare') {
-    document.getElementById('heroTitle').innerHTML = 'Compare Prices.<br/><span id="heroAccent">Save More.</span>';
-    document.getElementById('heroSubtitle').textContent = 'Paste any product link. We compare prices across Amazon, Flipkart, Myntra, Croma and 200+ stores — with links ready to use.';
-    document.querySelector('.badge').textContent = '';
-    document.querySelector('.badge').innerHTML = '200+ Stores · Compare Prices';
-    document.getElementById('hiw1').textContent = 'Paste any product URL from your favourite store';
-    document.getElementById('hiw2').textContent = 'We compare prices across 200+ stores';
-    document.getElementById('hiw3').textContent = 'Pick the best deal and save instantly';
-    document.getElementById('productUrl').placeholder = 'Paste Amazon, Flipkart, Croma link...';
-  } else {
-    document.getElementById('heroTitle').innerHTML = 'Shop Smart.<br/><span id="heroAccent">Save Smarter.</span>';
-    document.getElementById('heroSubtitle').textContent = 'Paste any product link from your favourite store and get the best deal — instantly.';
-    document.querySelector('.badge').innerHTML = '200+ Stores · Best Deals Handpicked';
-    document.getElementById('hiw1').textContent = 'Paste any product URL from your favourite store';
-    document.getElementById('hiw2').textContent = 'Select your best deal from 200+ stores';
-    document.getElementById('hiw3').textContent = 'Copy and share to help your friends save money';
-    document.getElementById('productUrl').placeholder = 'https://www.flipkart.com/... or amazon.in/... or myntra.com/...';
-  }
 
   // Ensure we're back on the input card (hide compare states)
   showInputView();
@@ -974,12 +869,9 @@ document.getElementById('productUrl').addEventListener('input', function() {
   else { badge.style.display = 'none'; }
 });
 
-// Enter key support
+// Enter key always triggers compare
 document.getElementById('productUrl').addEventListener('keydown', function(e) {
-  if (e.key === 'Enter') {
-    if (currentMode === 'compare') triggerCompare();
-    else triggerConvert();
-  }
+  if (e.key === 'Enter') doCompare();
 });
 
 /* ══════════════════════════════════════════════════════════
@@ -998,12 +890,16 @@ function showError(msg) {
 }
 
 function triggerCompare() {
-  switchMode('compare');
-  setTimeout(doCompare, 50);
+  currentMode = 'compare';
+  document.getElementById('convertBtn').className = 'action-btn';
+  document.getElementById('compareBtn').className = 'action-btn active-mode';
+  doCompare();
 }
 
 function triggerConvert() {
-  if (currentMode !== 'convert') switchMode('convert');
+  currentMode = 'convert';
+  document.getElementById('convertBtn').className = 'action-btn active-mode';
+  document.getElementById('compareBtn').className = 'action-btn';
   doConvert();
 }
 
@@ -1531,8 +1427,9 @@ document.getElementById('viewMoreBtn').onclick = function() {
   if (svg) svg.style.transform = showOther ? 'rotate(180deg)' : '';
 };
 
-// Initial mode setup & tracking
-switchMode('convert');
+// Initial button states — Convert highlighted by default
+document.getElementById('convertBtn').className = 'action-btn active-mode';
+document.getElementById('compareBtn').className = 'action-btn';
 fetch(BACKEND_URL + '/track/visit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page: 'converter' }) }).catch(function(){});
 </script>
 </body>
