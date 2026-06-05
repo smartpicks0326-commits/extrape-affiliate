@@ -1145,8 +1145,12 @@ async function runCompareSearch(url) {
   var stepTimer = setInterval(nextStep, 1800);
 
   // Countdown
-  var secsLeft = 25;
-  function fmtCd(s){ return '00:' + String(Math.max(0,s)).padStart(2,'0'); }
+  var secsLeft = 120;
+  function fmtCd(s){
+    var m = Math.floor(s / 60);
+    var sec = s % 60;
+    return (m > 0 ? m + 'm ' : '') + String(sec).padStart(2,'0') + 's';
+  }
   var cdTimeEl = document.getElementById('cdTime');
   if (cdTimeEl) cdTimeEl.textContent = fmtCd(secsLeft);
   var cdTimer = setInterval(function() {
@@ -1211,23 +1215,13 @@ async function getAffiliateLink(url, store) {
 
 async function getCompareData(url) {
   try { await fetch(BACKEND + '/ping', { signal: AbortSignal.timeout(5000) }); } catch(e) {}
-  var tok = getCookie('flash_auth_token');
-  if (tok) {
-    try {
-      var fr = await callFlash(url, tok);
-      if (fr && fr.stores && fr.stores.length > 0) { fr.source = 'flash'; return fr; }
-    } catch(e) { console.log('[Flash] failed:', e.message); }
-  }
-  var r = await fetch(BACKEND + '/compare/search?url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(45000) });
+  // Puppeteer on the server can take 2+ minutes — use a long timeout
+  var r = await fetch(BACKEND + '/compare/search?url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(180000) });
   var body = await r.json().catch(function(){ return {}; });
   if (!r.ok) {
     var msg = body.error || ('Server error ' + r.status);
-    if (r.status === 404 || msg.includes('no comparison data') || msg.includes('no parseable') || msg.includes('FLASH_NO_DATA')) {
-      msg = 'No price comparison data found for this product. Try pasting the full product URL directly from Amazon or Flipkart instead of a short link.';
-    } else if (r.status === 503) {
-      msg = 'Comparison service is temporarily unavailable. Please try again in a moment.';
-    } else if (msg.includes('token expired') || msg.includes('TOKEN_EXPIRED')) {
-      msg = 'Comparison service token expired. Please contact support.';
+    if (r.status === 503) {
+      throw new Error('Comparison service is unavailable. Please try again in a moment.');
     }
     throw new Error(msg);
   }
@@ -1279,14 +1273,7 @@ function showCompareResults(storeName, url, affiliateLink, data, compareError) {
   var banner = document.getElementById('dealBanner');
   if (stores.length === 0) {
     banner.className = 'deal-banner banner-orange';
-    var errMsg = compareError || 'No prices found for this product. Try a full product URL from Amazon or Flipkart.';
-    // If it's a short link, add extra guidance
-    if (url.includes('amzn.in') || url.includes('amzn.to') || url.includes('fkrt.co') || url.includes('dl.flipkart.com')) {
-      errMsg = '⚠️ Short links may not have comparison data. Please open the link in your browser, copy the full URL from the address bar, and paste it here.';
-    } else {
-      errMsg = '⚠️ ' + errMsg;
-    }
-    banner.innerHTML = errMsg;
+    banner.innerHTML = '⚠️ ' + (compareError || 'No prices found for this product. Please try a different URL.');
     banner.style.display = 'flex';
   } else {
     banner.className = 'deal-banner banner-green';

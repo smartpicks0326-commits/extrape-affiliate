@@ -3074,160 +3074,124 @@ app.get('/compare/search', async (req, res) => {
   const { url: rawUrl } = req.query;
   if (!rawUrl) return res.status(400).json({ error: 'Pass ?url=' });
   if (!flashTokenCache.token) return res.status(503).json({
-    error: 'Flash token not set.',
-    fix: 'Visit https://api.smartpickdeals.live/flash/token-page and follow the bookmarklet setup.',
+    error: 'Flash token not set. Visit https://api.smartpickdeals.live/flash/token-page',
   });
 
   try {
     let url = rawUrl;
-    if (isShortUrl(rawUrl)) {
-      try { url = await resolveRedirect(rawUrl); console.log('[Compare] Resolved', rawUrl.substring(0,50), '→', url.substring(0,70)); }
-      catch(e) { console.log('[Compare] Short URL resolution failed:', e.message); }
-    }
 
-    // dl.flipkart.com with full product path — just rewrite to www.flipkart.com
+    // ── Step 1: Normalise dl.flipkart.com → www.flipkart.com FIRST ──
+    // dl.flipkart.com with a full product path (/p/itm...) is not a short URL —
+    // it just uses the deep-link domain. Rewrite before any short-URL logic.
     try {
-      const parsedU = new URL(url);
-      if (parsedU.hostname === 'dl.flipkart.com') {
-        parsedU.hostname = 'www.flipkart.com';
-        url = parsedU.toString();
-        console.log('[Compare] Rewrote dl.flipkart.com →', url.substring(0, 80));
+      const pu = new URL(url);
+      if (pu.hostname === 'dl.flipkart.com') {
+        pu.hostname = 'www.flipkart.com';
+        url = pu.toString();
+        console.log('[Compare] dl.flipkart.com rewritten →', url.substring(0, 80));
       }
     } catch(e) {}
 
-    console.log('[Compare/Flash] URL:', url);
+    // ── Step 2: Resolve genuine short URLs (amzn.in, fkrt.co, etc.) ──
+    if (isShortUrl(url)) {
+      console.log('[Compare] Resolving short URL:', url.substring(0, 60));
+      try {
+        const resolved = await resolveRedirect(url);
+        console.log('[Compare] Resolved →', resolved.substring(0, 80));
+        url = resolved;
+      } catch(e) {
+        console.log('[Compare] Short URL resolution failed:', e.message);
+        return res.status(400).json({
+          error: 'Could not resolve this short link. Please open it in your browser, copy the full URL from the address bar, and paste that instead.',
+          resolvedUrl: url,
+        });
+      }
+    }
+
+    console.log('[Compare/Flash] Final URL:', url.substring(0, 100));
 
     const srcHost  = (() => { try { return new URL(url).hostname.replace('www.',''); } catch { return ''; } })();
     const srcStore = normalizeStore(srcHost.split('.')[0]) || '';
 
-    // ── Try Flash first ──
-    let flashResult = null;
-    try {
-      flashResult = await flashSearchPuppeteer(url);
-    } catch(e) {
-      console.log('[Compare/Flash] Puppeteer threw:', e.message);
+    // ── Step 3: Flash only ──
+    const flashResult = await flashSearchPuppeteer(url);
+
+    if (!flashResult) {
+      return res.status(500).json({ error: 'Flash search returned no result. Please try again.' });
     }
 
-    const flashFailed = !flashResult
-      || flashResult.error === 'FLASH_NO_DATA'
-      || flashResult.error === 'TOKEN_EXPIRED'
-      || (flashResult.error && !flashResult.ok);
-
-    if (flashResult && flashResult.error === 'TOKEN_EXPIRED') {
+    if (flashResult.error === 'TOKEN_EXPIRED') {
       flashTokenCache.token = '';
-      console.log('[Compare] Flash token expired — falling back to Buyhatke');
+      return res.status(503).json({ error: 'Flash token has expired. Please renew it at https://api.smartpickdeals.live/flash/token-page' });
     }
 
-    if (!flashFailed) {
-      // Flash succeeded — parse and return
-      if (flashResult.error) return res.status(502).json({ error: flashResult.error, pageHash: flashResult.pageHash });
-
-      const rawPriceData = flashResult.data;
-      const pageHash     = flashResult.pageHash;
-
-      const feedbacks = rawPriceData?.response?.feedbacks || rawPriceData?.feedbacks || [];
-      const meta      = rawPriceData?.response?.productDetails
-                     || rawPriceData?.productDetails
-                     || rawPriceData?.response
-                     || {};
-
-      const productName  = meta.name || meta.productName || meta.title || rawPriceData?.productName || ('Product from ' + srcStore);
-      const productImage = meta.imageUrl || meta.image || meta.thumbnail || rawPriceData?.productImage || '';
-
-      function isStorePriceItem(obj) {
-        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
-        const hasStore = obj.storeName || obj.name || obj.store || obj.retailer || obj.source;
-        const hasPrice = obj.price !== undefined || obj.salePrice !== undefined || obj.amount !== undefined || obj.sellingPrice !== undefined;
-        return !!(hasStore && hasPrice);
-      }
-
-      function deepFindPriceLists(obj, depth) {
-        if (!obj || typeof obj !== 'object' || depth > 12) return [];
-        if (Array.isArray(obj)) {
-          const items = obj.filter(isStorePriceItem);
-          if (items.length > 0) return [items];
-          return obj.flatMap(el => deepFindPriceLists(el, depth + 1));
-        }
-        const knownKeys = ['storePrices','prices','stores','storeList','comparePrices','priceComparison','offers','listings','results','data','feedbacks','feedback','content','payload','response'];
-        const found = [];
-        for (const key of knownKeys) {
-          if (obj[key]) found.push(...deepFindPriceLists(obj[key], depth + 1));
-        }
-        for (const key of Object.keys(obj)) {
-          if (!knownKeys.includes(key) && obj[key] && typeof obj[key] === 'object') {
-            found.push(...deepFindPriceLists(obj[key], depth + 1));
-          }
-        }
-        return found;
-      }
-
-      const allPriceLists = deepFindPriceLists(rawPriceData, 0);
-      allPriceLists.sort((a, b) => b.length - a.length);
-      const priceList = allPriceLists[0] || [];
-
-      console.log('[Compare/Flash] Found', allPriceLists.length, 'price list candidates, best has', priceList.length, 'items');
-
-      const storeMap = {};
-      for (const item of priceList) {
-        const rawName = item.storeName || item.name || item.store || item.retailer || item.source || '';
-        const name    = normalizeStore(rawName) || rawName.trim();
-        if (!name) continue;
-        const rawPrice = item.price ?? item.salePrice ?? item.sellingPrice ?? item.amount ?? 0;
-        const price    = parseInt(String(rawPrice).replace(/[^0-9]/g, '')) || 0;
-        if (price <= 0) continue;
-        const storeUrl = item.url || item.link || item.productUrl || item.deepLink || '';
-        if (!storeMap[name] || price < storeMap[name].price) {
-          storeMap[name] = { name, normalizedName: name, price, url: storeUrl };
-        }
-      }
-
-      let stores = Object.values(storeMap).sort((a, b) => a.price - b.price);
-      stores = stores.map((s, i) => {
-        const n = s.normalizedName.toLowerCase();
-        const isSrc = srcStore && (n === srcStore.toLowerCase() || n.includes(srcStore.toLowerCase()) || srcStore.toLowerCase().includes(n));
-        return { ...s, isBest: i === 0, isSource: isSrc };
+    if (flashResult.error === 'FLASH_NO_DATA') {
+      return res.status(404).json({
+        error: 'Flash.co has no comparison data for this product. Try a different product URL.',
+        resolvedUrl: url,
       });
-
-      if (stores.length > 0) {
-        const srcEntry = stores.find(s => s.isSource);
-        const savings  = srcEntry && !srcEntry.isBest ? srcEntry.price - stores[0].price : 0;
-        console.log('[Compare/Flash] FINAL:', stores.map(s => s.name + ':₹' + s.price + (s.isSource ? '[src]' : '') + (s.isBest ? '[best]' : '')).join(' | '));
-        return res.json({ stores, productName, productImage, totalStores: stores.length, savings: savings > 0 ? savings : 0, dataSource: 'flash' });
-      }
-
-      // Flash returned data but no parseable prices — fall through to Buyhatke
-      console.log('[Compare/Flash] No prices parsed from Flash — falling back to Buyhatke');
-    } else {
-      console.log('[Compare] Flash failed/no data — falling back to Buyhatke. Reason:', flashResult?.error || 'null result');
     }
 
-    // ── Buyhatke fallback ──
-    console.log('[Compare/BHK] Trying Buyhatke for:', url.substring(0, 80));
-    try {
-      const bhkData = await fetchBuyhatke(url);
-      const parsed  = parseBuyhatkeResponse(bhkData, url, srcStore);
-      if (parsed && parsed.stores && parsed.stores.length > 0) {
-        console.log('[Compare/BHK] ✅ Got', parsed.stores.length, 'stores from Buyhatke');
-        return res.json({
-          stores:      parsed.stores,
-          productName: bhkData.productName  || parsed.productName  || ('Product from ' + srcStore),
-          productImage:bhkData.productImage || parsed.productImage || '',
-          totalStores: parsed.stores.length,
-          savings:     parsed.savings || 0,
-          dataSource:  'buyhatke',
-        });
-      }
-      console.log('[Compare/BHK] Buyhatke also returned no stores');
-    } catch(bhkErr) {
-      console.log('[Compare/BHK] Buyhatke failed:', bhkErr.message);
+    if (flashResult.error) {
+      return res.status(502).json({ error: flashResult.error, resolvedUrl: url });
     }
 
-    // Both Flash and Buyhatke failed
-    const wasShort = isShortUrl(rawUrl);
-    const hint = wasShort
-      ? `Short link was resolved to: ${url} — but no comparison data was found. Please open the link in your browser, copy the full URL from the address bar, and try again.`
-      : 'No price comparison data found for this product. Try pasting the product URL directly from Amazon, Flipkart, or Myntra.';
-    return res.status(404).json({ error: hint, resolvedUrl: url });
+    if (!flashResult.ok) {
+      return res.status(502).json({ error: 'Flash search did not complete successfully.', resolvedUrl: url });
+    }
+
+    // ── Step 4: Parse Flash DOM result ──
+    const rawData      = flashResult.data;
+    const productName  = rawData.productName  || ('Product from ' + srcStore);
+    const productImage = rawData.productImage || '';
+
+    // Stores come from DOM extraction (already parsed in flashSearchPuppeteer)
+    const storePrices = rawData?.response?.feedbacks?.[0]?.storePrices || [];
+
+    if (storePrices.length === 0) {
+      console.log('[Compare/Flash] ❌ storePrices empty after extraction');
+      return res.status(404).json({
+        error: 'Flash.co loaded the page but no store prices could be extracted. Try again in a moment.',
+        pageHash:   flashResult.pageHash,
+        resolvedUrl: url,
+        debug:       'Visit /compare/debug?url=' + encodeURIComponent(url) + ' to inspect',
+      });
+    }
+
+    // Normalise + deduplicate stores
+    const storeMap = {};
+    for (const item of storePrices) {
+      const rawName = item.storeName || item.name || '';
+      const name    = normalizeStore(rawName) || rawName.trim();
+      if (!name) continue;
+      const price = parseInt(String(item.price || 0).replace(/[^0-9]/g,'')) || 0;
+      if (price <= 0) continue;
+      if (!storeMap[name] || price < storeMap[name].price) {
+        storeMap[name] = { name, normalizedName: name, price, url: item.url || '' };
+      }
+    }
+
+    let stores = Object.values(storeMap).sort((a, b) => a.price - b.price);
+    stores = stores.map((s, i) => {
+      const n = s.normalizedName.toLowerCase();
+      const isSrc = srcStore && (n === srcStore.toLowerCase() || n.includes(srcStore.toLowerCase()) || srcStore.toLowerCase().includes(n));
+      return { ...s, isBest: i === 0, isSource: isSrc };
+    });
+
+    const srcEntry = stores.find(s => s.isSource);
+    const savings  = srcEntry && !srcEntry.isBest ? srcEntry.price - stores[0].price : 0;
+
+    console.log('[Compare/Flash] ✅', stores.length, 'stores:', stores.map(s => s.name + ':₹' + s.price + (s.isSource ? '[src]' : '') + (s.isBest ? '[best]' : '')).join(' | '));
+
+    return res.json({
+      stores,
+      productName,
+      productImage,
+      totalStores: stores.length,
+      savings:     savings > 0 ? savings : 0,
+      dataSource:  'flash',
+      resolvedUrl: url,
+    });
 
   } catch(e) {
     console.error('[Compare] Unhandled error:', e.message);
