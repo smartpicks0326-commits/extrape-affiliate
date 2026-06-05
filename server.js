@@ -638,16 +638,8 @@ async function flashSearchPuppeteer(productUrl) {
       await page.evaluate(() => window.scrollTo(0, 0));
       await new Promise(r => setTimeout(r, 800));
 
-      // ── Step 6: Extract prices from DOM — card-based approach ──
+      // ── Step 6: Extract prices + metadata from DOM ──
       const extracted = await page.evaluate((genericNamesInner) => {
-
-        const KNOWN_STORES = [
-          'amazon','flipkart','myntra','ajio','nykaa','tatacliq','tata cliq','croma','snapdeal',
-          'meesho','jiomart','jio mart','bigbasket','big basket','zepto','blinkit','swiggy',
-          'instamart','zomato','firstcry','netmeds','lenskart','boat','mamaearth','purplle',
-          'bewakoof','decathlon','pepperfry','vijay sales','reliance digital','sangeetha',
-          'poorvika','pai international','apple','nubo','getuscart','zebrs','shopclues',
-        ];
 
         function normalizeName(raw) {
           const l = (raw || '').toLowerCase().trim();
@@ -678,103 +670,165 @@ async function flashSearchPuppeteer(productUrl) {
           if (l.includes('sangeetha'))       return 'Sangeetha';
           if (l.includes('mamaearth'))       return 'Mamaearth';
           if (l.includes('purplle'))         return 'Purplle';
+          if (l.includes('fire-boltt') || l.includes('fireboltt')) return 'Fire-Boltt';
           return raw.trim();
         }
 
-        // Parse a standalone price string like "₹799" or "₹1,299" — NOT discount amounts
         function parseStandalonePrice(text) {
           const m = (text || '').trim().match(/^₹\s*([\d,]+)$/);
           if (!m) return 0;
-          const price = parseInt(m[1].replace(/,/g, ''));
-          return price >= 50 && price <= 5000000 ? price : 0;
+          const p = parseInt(m[1].replace(/,/g, ''));
+          return p >= 50 && p <= 5000000 ? p : 0;
         }
 
-        // Return true if this price-bearing element is inside a "savings/discount" context
-        function isDiscountContext(el) {
-          let p = el.parentElement;
-          for (let i = 0; i < 4 && p; i++) {
-            const t = (p.textContent || '').toLowerCase();
-            if (/\b(off|save|saved|discount|cashback|extra)\b/.test(t) && !/\b(price|buy|open)\b/.test(t)) return true;
-            p = p.parentElement;
+        const KNOWN_STORES = [
+          'amazon','flipkart','myntra','ajio','nykaa','tatacliq','tata cliq','croma','snapdeal',
+          'meesho','jiomart','jio mart','bigbasket','big basket','zepto','blinkit','swiggy',
+          'instamart','zomato','firstcry','netmeds','lenskart','boat','mamaearth','purplle',
+          'bewakoof','decathlon','pepperfry','vijay sales','reliance digital','sangeetha',
+          'poorvika','pai international','apple','nubo','getuscart','zebrs','shopclues',
+          'fire-boltt','fireboltt',
+        ];
+
+        // ── Detect source store from "You came from here" label ──
+        let sourceStore = '';
+        {
+          const allText = document.body.innerText || '';
+          const m = allText.match(/you came from here/i);
+          if (m) {
+            // Find the element containing that text and get the store name near it
+            for (const el of document.querySelectorAll('*')) {
+              if ((el.textContent || '').toLowerCase().includes('you came from here') &&
+                  !el.children.length && el.textContent.trim().length < 100) {
+                // Store name is likely in a sibling or parent
+                const parent = el.closest('[class]') || el.parentElement;
+                if (parent) {
+                  for (const child of parent.querySelectorAll('*')) {
+                    const t = (child.textContent || '').trim();
+                    const l = t.toLowerCase();
+                    if (t.length > 1 && t.length < 50 &&
+                        KNOWN_STORES.some(s => l === s || (s.length > 4 && l.includes(s)))) {
+                      sourceStore = normalizeName(t);
+                      break;
+                    }
+                  }
+                }
+                if (sourceStore) break;
+              }
+            }
           }
-          return false;
         }
+
+        // ── Extract each store card ──
+        // Flash.co renders a list of cards. Each card contains:
+        //   • Optional savings badge: "Save ₹200 over Flipkart!" / "LOWEST PRICE"
+        //   • Store logo (img with alt = store name)
+        //   • Store name text
+        //   • Price: ₹XXX
+        //   • Optional "Out of stock" text
+        //   • "Visit" button (a[href] pointing to store)
+        // Strategy: find the repeated container that holds store+price+visit
 
         const seen = new Set();
         const results = [];
 
-        // ── Strategy 1: Card/row selectors ──
+        function extractCard(card) {
+          // ── Price ──
+          let price = 0;
+          for (const el of card.querySelectorAll('*')) {
+            if (el.children.length > 0) continue;
+            const t = (el.textContent || '').trim();
+            const p = parseStandalonePrice(t);
+            if (p > 0) {
+              // Make sure this isn't inside a savings badge ("Save ₹200 over...")
+              const ancestor3 = [el.parentElement, el.parentElement?.parentElement, el.parentElement?.parentElement?.parentElement].filter(Boolean);
+              const inBadge = ancestor3.some(a => /save\s*₹|₹\d+\s*off|cashback/i.test(a.textContent || '') && (a.textContent || '').length < 60);
+              if (!inBadge) { price = p; break; }
+            }
+          }
+          if (!price) return null;
+
+          // ── Store name ── prefer img[alt], then text
+          let storeName = '';
+          for (const img of card.querySelectorAll('img')) {
+            const alt = (img.alt || '').trim();
+            if (alt.length > 1 && alt.length < 60 && !/logo|product|image/i.test(alt) && !/^\d/.test(alt)) {
+              // Verify it looks like a store name (contains a known store or is short enough)
+              if (KNOWN_STORES.some(s => alt.toLowerCase().includes(s)) || alt.length < 25) {
+                storeName = alt; break;
+              }
+            }
+          }
+          if (!storeName) {
+            for (const el of card.querySelectorAll('*')) {
+              if (el.children.length > 0) continue;
+              const t = (el.textContent || '').trim();
+              const l = t.toLowerCase();
+              if (t.length < 2 || t.length > 60 || /^₹/.test(t) || /^\d/.test(t)) continue;
+              if (KNOWN_STORES.some(s => l === s || (s.length > 4 && l.includes(s)))) {
+                storeName = t; break;
+              }
+            }
+          }
+          if (!storeName) return null;
+
+          const normalized = normalizeName(storeName);
+          const key = normalized.toLowerCase();
+          if (seen.has(key)) return null;
+
+          // ── Out of stock ──
+          const cardText = (card.textContent || '').toLowerCase();
+          const outOfStock = /out of stock|not available|unavailable|sold out/.test(cardText);
+
+          // ── Savings badge ──
+          let savingsBadge = '';
+          let lowestPrice = false;
+          for (const el of card.querySelectorAll('*')) {
+            const t = (el.textContent || '').trim();
+            if (/save\s*₹[\d,]+/i.test(t) && t.length < 60) { savingsBadge = t; }
+            if (/lowest\s*price/i.test(t) && t.length < 30) { lowestPrice = true; }
+          }
+
+          // ── Store URL ── first outbound link that isn't flash.co
+          let storeUrl = '';
+          for (const a of card.querySelectorAll('a[href]')) {
+            const href = a.href || '';
+            if (href && !href.includes('flash.co') && href.startsWith('http')) {
+              storeUrl = href; break;
+            }
+          }
+
+          seen.add(key);
+          return { name: normalized, price, url: storeUrl, outOfStock, savingsBadge, lowestPrice };
+        }
+
+        // Try card selectors from most specific to least
         const cardSelectors = [
           '[class*="store-card"]','[class*="storeCard"]','[class*="StoreCard"]',
           '[class*="price-card"]','[class*="priceCard"]','[class*="PriceCard"]',
           '[class*="store-item"]','[class*="storeItem"]','[class*="StoreItem"]',
-          '[class*="store-row"]','[class*="storeRow"]',
-          '[class*="retailer-item"]','[class*="retailerItem"]',
-          '[class*="merchant-item"]','[class*="merchantItem"]',
-          '[class*="offer-row"]','[class*="offerRow"]',
-          '[class*="compare-row"]','[class*="compareRow"]',
+          '[class*="store-row"]','[class*="storeRow"]','[class*="StoreRow"]',
+          '[class*="retailer"]','[class*="merchant-row"]','[class*="offer-row"]',
+          '[class*="compare-item"]','[class*="compareItem"]',
+          // Generic: look for repeated li or div siblings that all contain ₹
+          'li','[class*="item"]',
         ];
 
         for (const sel of cardSelectors) {
           const cards = document.querySelectorAll(sel);
           if (cards.length < 2) continue;
-
           const batch = [];
+          seen.clear(); // reset for each selector attempt
           for (const card of cards) {
-            // 1. Find price — must be a standalone ₹XXX, not in a discount context
-            let price = 0;
-            for (const el of card.querySelectorAll('*')) {
-              if (el.children.length > 0) continue;
-              const p = parseStandalonePrice(el.textContent);
-              if (p > 0 && !isDiscountContext(el)) { price = p; break; }
-            }
-            if (!price) continue;
-
-            // 2. Find store name — prefer img alt, then text matching known stores
-            let storeName = '';
-            for (const img of card.querySelectorAll('img')) {
-              const alt = (img.alt || '').trim();
-              if (alt.length > 1 && alt.length < 60 &&
-                  !alt.toLowerCase().includes('logo') && !/^\d/.test(alt)) {
-                storeName = alt; break;
-              }
-            }
-            if (!storeName) {
-              for (const el of card.querySelectorAll('*')) {
-                if (el.children.length > 0) continue;
-                const t = (el.textContent || '').trim();
-                const l = t.toLowerCase();
-                if (t.length < 2 || t.length > 60 || /^₹/.test(t) || /^\d/.test(t)) continue;
-                if (KNOWN_STORES.some(s => l === s || (s.length > 4 && l.includes(s)))) {
-                  storeName = t; break;
-                }
-              }
-            }
-            if (!storeName) continue;
-
-            const normalized = normalizeName(storeName);
-            const key = normalized.toLowerCase();
-            if (seen.has(key)) continue;
-
-            // 3. Find the store-specific outbound link
-            let storeUrl = '';
-            for (const a of card.querySelectorAll('a[href]')) {
-              const href = a.href || '';
-              if (href && !href.includes('flash.co') && href.startsWith('http')) {
-                storeUrl = href; break;
-              }
-            }
-
-            seen.add(key);
-            batch.push({ name: normalized, price, url: storeUrl });
+            const r = extractCard(card);
+            if (r) batch.push(r);
           }
-
           if (batch.length >= 2) { results.push(...batch); break; }
         }
 
-        // ── Strategy 2: Link-anchored extraction ──
-        // For each external <a> that points to a known store, find price in parent
+        // ── Fallback: link-anchored ──
         if (results.length < 2) {
+          seen.clear();
           document.querySelectorAll('a[href]').forEach(a => {
             const href = a.href || '';
             if (!href || href.includes('flash.co') || !href.startsWith('http')) return;
@@ -791,25 +845,28 @@ async function flashSearchPuppeteer(productUrl) {
               for (const el of container.querySelectorAll('*')) {
                 if (el.children.length > 0) continue;
                 const p = parseStandalonePrice(el.textContent);
-                if (p > 0 && !isDiscountContext(el)) { price = p; break; }
+                if (p > 0) { price = p; break; }
               }
               container = container.parentElement;
             }
             if (!price) return;
+
+            const outOfStock = /out of stock|unavailable/i.test((a.closest('[class]') || a.parentElement || document.body).textContent || '');
             seen.add(key);
-            results.push({ name: normalized, price, url: href });
+            results.push({ name: normalized, price, url: href, outOfStock, savingsBadge: '', lowestPrice: false });
           });
         }
 
         // ── Product name ──
         const productName = (() => {
           for (const sel of [
-            'h1[class*="product"]','h1[class*="title"]','[class*="product-name"]',
-            '[class*="productName"]','[class*="product_name"]','h1','h2',
+            'h1[class*="product"]','h1[class*="title"]',
+            '[class*="product-name"]','[class*="productName"]','[class*="product_name"]',
+            'h1','h2',
           ]) {
             for (const el of document.querySelectorAll(sel)) {
               const t = el.textContent.trim();
-              if (t.length > 8 && t.length < 300 &&
+              if (t.length > 8 && t.length < 400 &&
                   !genericNamesInner.some(g => t.toLowerCase().includes(g))) return t;
             }
           }
@@ -817,8 +874,9 @@ async function flashSearchPuppeteer(productUrl) {
         })();
 
         // ── Product image ──
+        // Flash proxy URL format: https://img.flash.co/unsafe/plain/<encoded-url>
         const productImage = (() => {
-          // Flash CDN proxy: img.flash.co/plain/<encoded-original-url>
+          // 1. Flash CDN proxy — decode to get original URL
           for (const img of document.querySelectorAll('img')) {
             const src = img.src || '';
             if (/img\.flash\.co.*\/plain\//.test(src)) {
@@ -826,31 +884,37 @@ async function flashSearchPuppeteer(productUrl) {
                 const part = src.split('/plain/')[1];
                 const decoded = decodeURIComponent(part.split('?')[0]);
                 if (decoded.startsWith('http')) return decoded;
+                return src; // use the flash CDN URL itself if decode fails
               } catch { return src; }
             }
           }
-          // Amazon / Flipkart CDN patterns
+          // 2. Known CDN patterns for Amazon / Flipkart product images
           for (const img of document.querySelectorAll('img')) {
             const src = img.src || '';
-            if (!src || src.includes('/merchants/') || src.includes('/favicon') || src.includes('logo')) continue;
+            if (!src) continue;
+            // Skip store logos and favicons
+            if (src.includes('/merchants/') || src.includes('/favicon') ||
+                /logo|icon/i.test(img.alt || '') || src.includes('logo')) continue;
             if (/media-amazon\.com|images-amazon\.com|_SL\d+_|_AC_|rukmini\d+\.flixcart|img\.flipkart/.test(src)) return src;
           }
-          // Largest square-ish image (product photos are ~square, banners are wide)
+          // 3. First large non-logo image
           let best = '', bestScore = 0;
           for (const img of document.querySelectorAll('img')) {
             const src = img.src || '';
-            if (!src || src.includes('/merchants/') || src.includes('/favicon') || src.includes('logo') || src.length < 30) continue;
+            if (!src || src.length < 30) continue;
+            if (src.includes('/merchants/') || src.includes('/favicon') ||
+                /logo|icon/i.test(img.alt || '') || src.includes('logo')) continue;
             const w = img.naturalWidth  || img.width  || 0;
             const h = img.naturalHeight || img.height || 0;
-            if (w < 50 || h < 50) continue;
-            const ratio = Math.max(w,h) / Math.min(w,h);
-            const score = w * h * (ratio < 1.5 ? 2 : ratio < 2.5 ? 1 : 0.3);
+            if (w < 60 || h < 60) continue;
+            const ratio = Math.max(w, h) / Math.min(w, h);
+            const score = w * h * (ratio < 1.5 ? 3 : ratio < 2.5 ? 1 : 0.2);
             if (score > bestScore) { bestScore = score; best = src; }
           }
           return best;
         })();
 
-        // Final dedup — lowest price per store
+        // Deduplicate — keep lowest price per store
         const finalMap = {};
         for (const s of results) {
           const key = s.name.toLowerCase();
@@ -860,10 +924,10 @@ async function flashSearchPuppeteer(productUrl) {
         return {
           productName,
           productImage,
+          sourceStore,
           stores: Object.values(finalMap),
           debug: {
-            strategy1Count: results.filter(s => s.url).length,
-            totalResults: results.length,
+            resultsCount: results.length,
             priceTagsOnPage: (document.body.innerText.match(/₹[\d,]+/g) || []).length,
           },
         };
@@ -3186,43 +3250,62 @@ app.get('/compare/search', async (req, res) => {
     const productName  = rawData.productName  || ('Product from ' + srcStore);
     const productImage = rawData.productImage || '';
 
-    // Stores come from DOM extraction (already parsed in flashSearchPuppeteer)
-    const storePrices = rawData?.response?.feedbacks?.[0]?.storePrices || [];
+    // New extraction returns stores directly in rawData.stores
+    // Each store: { name, price, url, outOfStock, savingsBadge, lowestPrice }
+    const extractedStores = rawData.stores || rawData?.response?.feedbacks?.[0]?.storePrices || [];
 
-    if (storePrices.length === 0) {
-      console.log('[Compare/Flash] ❌ storePrices empty after extraction');
+    if (extractedStores.length === 0) {
+      console.log('[Compare/Flash] ❌ No stores extracted');
       return res.status(404).json({
         error: 'Flash.co loaded the page but no store prices could be extracted. Try again in a moment.',
-        pageHash:   flashResult.pageHash,
+        pageHash:    flashResult.pageHash,
         resolvedUrl: url,
         debug:       'Visit /compare/debug?url=' + encodeURIComponent(url) + ' to inspect',
       });
     }
 
-    // Normalise + deduplicate stores
+    // Detect source store: use Flash DOM detection first, fallback to URL hostname
+    const flashSourceStore = rawData.sourceStore || '';
+    const effectiveSrcStore = flashSourceStore || srcStore;
+
+    // Build final store list preserving all metadata
     const storeMap = {};
-    for (const item of storePrices) {
-      const rawName = item.storeName || item.name || '';
-      const name    = normalizeStore(rawName) || rawName.trim();
+    for (const item of extractedStores) {
+      const name = item.name || item.storeName || normalizeStore(item.store || '') || '';
       if (!name) continue;
       const price = parseInt(String(item.price || 0).replace(/[^0-9]/g,'')) || 0;
       if (price <= 0) continue;
       if (!storeMap[name] || price < storeMap[name].price) {
-        storeMap[name] = { name, normalizedName: name, price, url: item.url || '' };
+        storeMap[name] = {
+          name,
+          normalizedName: name,
+          price,
+          url:          item.url    || '',
+          outOfStock:   item.outOfStock   || false,
+          savingsBadge: item.savingsBadge || '',
+          lowestPrice:  item.lowestPrice  || false,
+        };
       }
     }
 
     let stores = Object.values(storeMap).sort((a, b) => a.price - b.price);
     stores = stores.map((s, i) => {
-      const n = s.normalizedName.toLowerCase();
-      const isSrc = srcStore && (n === srcStore.toLowerCase() || n.includes(srcStore.toLowerCase()) || srcStore.toLowerCase().includes(n));
-      return { ...s, isBest: i === 0, isSource: isSrc };
+      const n = s.name.toLowerCase();
+      const isSrc = effectiveSrcStore &&
+        (n === effectiveSrcStore.toLowerCase() ||
+         n.includes(effectiveSrcStore.toLowerCase()) ||
+         effectiveSrcStore.toLowerCase().includes(n));
+      return { ...s, isBest: i === 0 && !s.outOfStock, isSource: isSrc };
     });
 
     const srcEntry = stores.find(s => s.isSource);
     const savings  = srcEntry && !srcEntry.isBest ? srcEntry.price - stores[0].price : 0;
 
-    console.log('[Compare/Flash] ✅', stores.length, 'stores:', stores.map(s => s.name + ':₹' + s.price + (s.isSource ? '[src]' : '') + (s.isBest ? '[best]' : '')).join(' | '));
+    console.log('[Compare/Flash] ✅', stores.length, 'stores:',
+      stores.map(s => s.name + ':₹' + s.price +
+        (s.isSource ? '[src]' : '') + (s.isBest ? '[best]' : '') +
+        (s.outOfStock ? '[OOS]' : '') + (s.lowestPrice ? '[LOW]' : '')
+      ).join(' | '));
 
     return res.json({
       stores,
