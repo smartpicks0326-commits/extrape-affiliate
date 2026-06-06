@@ -3228,147 +3228,194 @@ app.get('/test-link', async (req, res) => {
 app.get('/compare/search', async (req, res) => {
   const { url: rawUrl } = req.query;
   if (!rawUrl) return res.status(400).json({ error: 'Pass ?url=' });
-  if (!flashTokenCache.token) return res.status(503).json({
-    error: 'Flash token not set. Visit https://api.smartpickdeals.live/flash/token-page',
-  });
+
+  const token    = flashTokenCache.token || process.env.FLASH_AUTH_TOKEN || '';
+  const deviceId = flashTokenCache.deviceId || process.env.FLASH_DEVICE_ID || 'web-spd';
+  if (!token) return res.status(503).json({ error: 'Flash token not set. Visit https://api.smartpickdeals.live/flash/token-page' });
 
   try {
+    // ── URL normalisation ──
     let url = rawUrl;
-
-    // ── Step 1: Normalise dl.flipkart.com → www.flipkart.com FIRST ──
-    // dl.flipkart.com with a full product path (/p/itm...) is not a short URL —
-    // it just uses the deep-link domain. Rewrite before any short-URL logic.
     try {
       const pu = new URL(url);
-      if (pu.hostname === 'dl.flipkart.com') {
-        pu.hostname = 'www.flipkart.com';
-        url = pu.toString();
-        console.log('[Compare] dl.flipkart.com rewritten →', url.substring(0, 80));
-      }
+      if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; url = pu.toString(); }
     } catch(e) {}
 
-    // ── Step 2: Resolve genuine short URLs (amzn.in, fkrt.co, etc.) ──
     if (isShortUrl(url)) {
-      console.log('[Compare] Resolving short URL:', url.substring(0, 60));
-      try {
-        const resolved = await resolveRedirect(url);
-        console.log('[Compare] Resolved →', resolved.substring(0, 80));
-        url = resolved;
-      } catch(e) {
-        console.log('[Compare] Short URL resolution failed:', e.message);
-        return res.status(400).json({
-          error: 'Could not resolve this short link. Please open it in your browser, copy the full URL from the address bar, and paste that instead.',
-          resolvedUrl: url,
-        });
+      try { url = await resolveRedirect(url); }
+      catch(e) {
+        return res.status(400).json({ error: 'Could not resolve this short link. Open it in your browser, copy the full URL, and paste that instead.' });
       }
     }
-
-    console.log('[Compare/Flash] Final URL:', url.substring(0, 100));
+    console.log('[Compare] URL:', url.substring(0, 100));
 
     const srcHost  = (() => { try { return new URL(url).hostname.replace('www.',''); } catch { return ''; } })();
     const srcStore = normalizeStore(srcHost.split('.')[0]) || '';
 
-    // ── Step 3: Flash only ──
-    const flashResult = await flashSearchPuppeteer(url);
+    const flashHeaders = {
+      'Authorization':  'Bearer ' + token,
+      'Channel-Type':   'web',
+      'Content-Type':   'application/json',
+      'Origin':         'https://flash.co',
+      'Referer':        'https://flash.co/',
+      'User-Agent':     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'X-Country-Code': 'IN',
+      'X-Device-Id':    deviceId,
+      'X-Timezone':     'Asia/Calcutta',
+      'Accept':         'application/json, text/event-stream, */*',
+    };
 
-    if (!flashResult) {
-      return res.status(500).json({ error: 'Flash search returned no result. Please try again.' });
+    // ── Step 1: Call Flash stream API — get pageHash ──
+    console.log('[Compare] Calling Flash stream API...');
+    const streamParams = new URLSearchParams({ source:'APPEND', context:'HOME_URL_PASTE', device_type:'DESKTOP', country_code:'IN' });
+    const sr = await fetch('https://api.flash.co/agents/chat/stream?' + streamParams, {
+      method: 'POST',
+      headers: flashHeaders,
+      body: JSON.stringify({ query: url, context: 'HOME_URL_PASTE' }),
+      signal: AbortSignal.timeout(40000),
+    });
+
+    if (!sr.ok) {
+      const errText = await sr.text().catch(() => '');
+      if (sr.status === 401) {
+        flashTokenCache.token = '';
+        return res.status(503).json({ error: 'Flash token expired. Please renew it at https://api.smartpickdeals.live/flash/token-page' });
+      }
+      return res.status(502).json({ error: 'Flash stream returned ' + sr.status, detail: errText.substring(0, 100) });
     }
 
-    if (flashResult.error === 'TOKEN_EXPIRED') {
-      flashTokenCache.token = '';
-      return res.status(503).json({ error: 'Flash token has expired. Please renew it at https://api.smartpickdeals.live/flash/token-page' });
+    const streamText = await sr.text();
+    console.log('[Compare] Stream length:', streamText.length, 'sample:', streamText.substring(0, 200));
+
+    // Extract pageHash from SSE stream
+    let pageHash = null;
+    const hashPatterns = [
+      /price-compare\/\d+\/h\/([A-Za-z0-9_-]{4,})/,
+      /price-compare\/([A-Za-z0-9_-]{4,})/,
+      /product-details\/([A-Za-z0-9_-]{4,})/,
+      /\/h\/([A-Za-z0-9_-]{6,})/,
+    ];
+    for (const pat of hashPatterns) { const m = streamText.match(pat); if (m) { pageHash = m[1]; break; } }
+    if (!pageHash) {
+      for (const line of streamText.split('\n')) {
+        if (!line.startsWith('data:')) continue;
+        try {
+          const d = JSON.parse(line.slice(5).trim());
+          pageHash = d.pageHash || d.referenceId || d.hash || (d.data && (d.data.pageHash || d.data.referenceId)) || null;
+          if (pageHash) break;
+        } catch(e) {}
+      }
     }
 
-    if (flashResult.error === 'FLASH_NO_DATA') {
+    console.log('[Compare] pageHash:', pageHash);
+    if (!pageHash) {
       return res.status(404).json({
-        error: 'Flash.co has no comparison data for this product. Try a different product URL.',
-        resolvedUrl: url,
+        error: 'Flash.co has no comparison data for this product. Try a different URL.',
+        streamSample: streamText.substring(0, 400),
       });
     }
 
-    if (flashResult.error) {
-      return res.status(502).json({ error: flashResult.error, resolvedUrl: url });
+    // ── Step 2: Poll Flash feedback API for prices ──
+    const priceHeaders = { ...flashHeaders };
+    delete priceHeaders['Content-Type'];
+    const priceEndpoints = [
+      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=${pageHash}`,
+      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=${pageHash}`,
+    ];
+
+    let rawData = null;
+    // First attempt immediately
+    for (const ep of priceEndpoints) {
+      try {
+        const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(8000) });
+        if (!r.ok) continue;
+        const d = await r.json();
+        const feedbacks = d?.response?.feedbacks || d?.feedbacks || [];
+        if (feedbacks.length > 0) { rawData = d; console.log('[Compare] Got prices immediately from:', ep); break; }
+      } catch(e) {}
     }
 
-    if (!flashResult.ok) {
-      return res.status(502).json({ error: 'Flash search did not complete successfully.', resolvedUrl: url });
+    // Poll up to 10 times × 3s = 30s max
+    for (let attempt = 0; !rawData && attempt < 10; attempt++) {
+      await new Promise(r => setTimeout(r, 3000));
+      for (const ep of priceEndpoints) {
+        try {
+          const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(8000) });
+          if (!r.ok) continue;
+          const d = await r.json();
+          const feedbacks = d?.response?.feedbacks || d?.feedbacks || [];
+          if (feedbacks.length > 0) { rawData = d; console.log('[Compare] Got prices at attempt', attempt + 1); break; }
+        } catch(e) {}
+      }
     }
 
-    // ── Step 4: Parse Flash DOM result ──
-    const rawData      = flashResult.data;
-    const productName  = rawData.productName  || ('Product from ' + srcStore);
-    const productImage = rawData.productImage || '';
-
-    // New extraction returns stores directly in rawData.stores
-    // Each store: { name, price, url, outOfStock, savingsBadge, lowestPrice }
-    const extractedStores = rawData.stores || rawData?.response?.feedbacks?.[0]?.storePrices || [];
-
-    if (extractedStores.length === 0) {
-      console.log('[Compare/Flash] ❌ No stores extracted');
-      return res.status(404).json({
-        error: 'Flash.co loaded the page but no store prices could be extracted. Try again in a moment.',
-        pageHash:    flashResult.pageHash,
-        resolvedUrl: url,
-        debug:       'Visit /compare/debug?url=' + encodeURIComponent(url) + ' to inspect',
-      });
+    if (!rawData) {
+      return res.status(404).json({ error: 'Flash.co found no comparison data for this product.', pageHash });
     }
 
-    // Detect source store: use Flash DOM detection first, fallback to URL hostname
-    const flashSourceStore = rawData.sourceStore || '';
-    const effectiveSrcStore = flashSourceStore || srcStore;
+    // ── Step 3: Parse feedback response ──
+    const feedbacks    = rawData?.response?.feedbacks || rawData?.feedbacks || [];
+    const meta         = rawData?.response?.productDetails || rawData?.productDetails || rawData?.response || {};
+    const productName  = meta.name || meta.productName || meta.title || rawData?.productName || ('Product from ' + srcStore);
+    const productImage = meta.imageUrl || meta.image || meta.thumbnail || rawData?.productImage || '';
 
-    // Build final store list preserving all metadata
+    // Deep-find store price arrays
+    function isStorePriceItem(obj) {
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
+      return !!(obj.storeName || obj.name || obj.store || obj.retailer) &&
+             (obj.price !== undefined || obj.salePrice !== undefined || obj.amount !== undefined);
+    }
+    function deepFindPriceLists(obj, depth) {
+      if (!obj || typeof obj !== 'object' || depth > 10) return [];
+      if (Array.isArray(obj)) {
+        const items = obj.filter(isStorePriceItem);
+        if (items.length > 0) return [items];
+        return obj.flatMap(el => deepFindPriceLists(el, depth + 1));
+      }
+      const keys = ['storePrices','prices','stores','storeList','comparePrices','offers','listings','data','feedbacks','feedback','content','response'];
+      const found = [];
+      for (const k of keys) { if (obj[k]) found.push(...deepFindPriceLists(obj[k], depth + 1)); }
+      for (const k of Object.keys(obj)) { if (!keys.includes(k) && obj[k] && typeof obj[k] === 'object') found.push(...deepFindPriceLists(obj[k], depth + 1)); }
+      return found;
+    }
+    const allLists = deepFindPriceLists(rawData, 0);
+    allLists.sort((a, b) => b.length - a.length);
+    const priceList = allLists[0] || [];
+    console.log('[Compare] Price list candidates:', allLists.length, '| best:', priceList.length, 'items');
+
     const storeMap = {};
-    for (const item of extractedStores) {
-      const name = item.name || item.storeName || normalizeStore(item.store || '') || '';
+    for (const item of priceList) {
+      const rawName = item.storeName || item.name || item.store || item.retailer || '';
+      const name    = normalizeStore(rawName) || rawName.trim();
       if (!name) continue;
-      const price = parseInt(String(item.price || 0).replace(/[^0-9]/g,'')) || 0;
+      const price   = parseInt(String(item.price ?? item.salePrice ?? item.amount ?? 0).replace(/[^0-9]/g,'')) || 0;
       if (price <= 0) continue;
+      const storeUrl = item.url || item.link || item.deepLink || '';
       if (!storeMap[name] || price < storeMap[name].price) {
-        storeMap[name] = {
-          name,
-          normalizedName: name,
-          price,
-          url:          item.url    || '',
-          outOfStock:   item.outOfStock   || false,
-          savingsBadge: item.savingsBadge || '',
-          lowestPrice:  item.lowestPrice  || false,
-        };
+        storeMap[name] = { name, normalizedName: name, price, url: storeUrl, outOfStock: false, savingsBadge: '', lowestPrice: false };
       }
     }
 
     let stores = Object.values(storeMap).sort((a, b) => a.price - b.price);
     stores = stores.map((s, i) => {
       const n = s.name.toLowerCase();
-      const isSrc = effectiveSrcStore &&
-        (n === effectiveSrcStore.toLowerCase() ||
-         n.includes(effectiveSrcStore.toLowerCase()) ||
-         effectiveSrcStore.toLowerCase().includes(n));
-      return { ...s, isBest: i === 0 && !s.outOfStock, isSource: isSrc };
+      const isSrc = srcStore && (n === srcStore.toLowerCase() || n.includes(srcStore.toLowerCase()) || srcStore.toLowerCase().includes(n));
+      return { ...s, isBest: i === 0, isSource: isSrc };
     });
+
+    if (stores.length === 0) {
+      console.log('[Compare] ❌ No stores parsed. priceList sample:', JSON.stringify(priceList.slice(0,2)));
+      return res.status(404).json({ error: 'Prices found but could not be parsed. Try /compare/debug?url=' + encodeURIComponent(url), pageHash });
+    }
 
     const srcEntry = stores.find(s => s.isSource);
     const savings  = srcEntry && !srcEntry.isBest ? srcEntry.price - stores[0].price : 0;
+    console.log('[Compare] ✅', stores.length, 'stores:', stores.map(s => s.name + ':₹' + s.price + (s.isSource?'[src]':'') + (s.isBest?'[best]':'')).join(' | '));
 
-    console.log('[Compare/Flash] ✅', stores.length, 'stores:',
-      stores.map(s => s.name + ':₹' + s.price +
-        (s.isSource ? '[src]' : '') + (s.isBest ? '[best]' : '') +
-        (s.outOfStock ? '[OOS]' : '') + (s.lowestPrice ? '[LOW]' : '')
-      ).join(' | '));
-
-    return res.json({
-      stores,
-      productName,
-      productImage,
-      totalStores: stores.length,
-      savings:     savings > 0 ? savings : 0,
-      dataSource:  'flash',
-      resolvedUrl: url,
-    });
+    return res.json({ stores, productName, productImage, totalStores: stores.length, savings: savings > 0 ? savings : 0, dataSource: 'flash', resolvedUrl: url, pageHash });
 
   } catch(e) {
-    console.error('[Compare] Unhandled error:', e.message);
+    console.error('[Compare] Error:', e.message);
     return res.status(500).json({ error: e.message });
   }
 });
