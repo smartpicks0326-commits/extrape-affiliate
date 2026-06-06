@@ -3265,10 +3265,15 @@ app.get('/compare/search', async (req, res) => {
       'Accept':         'application/json, text/event-stream, */*',
     };
 
-    // ── Step 1: Call Flash stream API — get pageHash ──
+    // ── Step 1: Call Flash stream API — get pageHash + threadId + messageId ──
+    // IMPORTANT: use apiv3.flash.tech (not api.flash.co) — this is the working endpoint
     console.log('[Compare] Calling Flash stream API...');
-    const streamParams = new URLSearchParams({ source:'APPEND', context:'HOME_URL_PASTE', device_type:'DESKTOP', country_code:'IN' });
-    const sr = await fetch('https://api.flash.co/agents/chat/stream?' + streamParams, {
+    const streamParams = new URLSearchParams({
+      source: 'APPEND', context: 'HOME_URL_PASTE',
+      user_agent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+      device_type: 'DESKTOP', country_code: 'IN',
+    });
+    const sr = await fetch('https://apiv3.flash.tech/agents/chat/stream?' + streamParams, {
       method: 'POST',
       headers: flashHeaders,
       body: JSON.stringify({ query: url, context: 'HOME_URL_PASTE' }),
@@ -3285,72 +3290,119 @@ app.get('/compare/search', async (req, res) => {
     }
 
     const streamText = await sr.text();
-    console.log('[Compare] Stream length:', streamText.length, 'sample:', streamText.substring(0, 200));
+    console.log('[Compare] Stream length:', streamText.length, 'sample:', streamText.substring(0, 300));
 
-    // Extract pageHash from SSE stream
-    let pageHash = null;
+    // Extract pageHash, threadId, messageId from SSE stream
+    let pageHash  = null;
+    let threadId  = null;
+    let messageId = null;
+
+    // URL patterns in INT_NAVIGATION event
     const hashPatterns = [
       /price-compare\/\d+\/h\/([A-Za-z0-9_-]{4,})/,
-      /price-compare\/([A-Za-z0-9_-]{4,})/,
+      /item\/\d+\/h\/([A-Za-z0-9_-]{4,})/,
+      /product-search\/([A-Za-z0-9_-]{4,})/,
       /product-details\/([A-Za-z0-9_-]{4,})/,
       /\/h\/([A-Za-z0-9_-]{6,})/,
     ];
     for (const pat of hashPatterns) { const m = streamText.match(pat); if (m) { pageHash = m[1]; break; } }
-    if (!pageHash) {
-      for (const line of streamText.split('\n')) {
-        if (!line.startsWith('data:')) continue;
-        try {
-          const d = JSON.parse(line.slice(5).trim());
-          pageHash = d.pageHash || d.referenceId || d.hash || (d.data && (d.data.pageHash || d.data.referenceId)) || null;
-          if (pageHash) break;
-        } catch(e) {}
-      }
+
+    // Parse every SSE data line for all IDs
+    for (const line of streamText.split('\n')) {
+      if (!line.startsWith('data:')) continue;
+      try {
+        const d = JSON.parse(line.slice(5).trim());
+        if (d.data?.threadId)  threadId  = String(d.data.threadId);
+        if (d.data?.messageId) messageId = String(d.data.messageId);
+        if (d.threadId)        threadId  = String(d.threadId);
+        if (d.messageId)       messageId = String(d.messageId);
+        if (!pageHash) pageHash = d.pageHash || d.referenceId || d.hash || (d.data && (d.data.pageHash || d.data.referenceId)) || null;
+      } catch(e) {}
     }
 
-    console.log('[Compare] pageHash:', pageHash);
-    if (!pageHash) {
+    console.log('[Compare] pageHash:', pageHash, '| threadId:', threadId, '| messageId:', messageId);
+    if (!pageHash && !threadId) {
       return res.status(404).json({
         error: 'Flash.co has no comparison data for this product. Try a different URL.',
         streamSample: streamText.substring(0, 400),
       });
     }
 
-    // ── Step 2: Poll Flash feedback API for prices ──
+    // ── Step 2: Poll all known Flash endpoints for prices ──
     const priceHeaders = { ...flashHeaders };
     delete priceHeaders['Content-Type'];
-    const priceEndpoints = [
+
+    // Build all candidate endpoints — same set as original working flash/test route
+    const threadEndpoints = threadId ? [
+      `https://apiv3.flash.tech/api/v1/agents/chat/thread/${threadId}/messages`,
+      `https://apiv3.flash.tech/api/v2/agents/chat/thread/${threadId}/messages`,
+      `https://apiv3.flash.tech/api/v1/chat/thread/${threadId}/messages`,
+      `https://apiv3.flash.tech/api/v1/threads/${threadId}/messages`,
+      `https://apiv3.flash.tech/api/v1/threads/${threadId}`,
+    ] : [];
+
+    const messageEndpoints = messageId ? [
+      `https://apiv3.flash.tech/api/v1/agents/chat/message/${messageId}`,
+      `https://apiv3.flash.tech/api/v1/messages/${messageId}/products`,
+      `https://apiv3.flash.tech/api/v1/messages/${messageId}/price-compare`,
+    ] : [];
+
+    const feedbackEndpoints = pageHash ? [
       `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=${pageHash}`,
       `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=${pageHash}`,
-    ];
+      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_SEARCH&referenceId=${pageHash}`,
+    ] : [];
+
+    const allEndpoints = [...threadEndpoints, ...messageEndpoints, ...feedbackEndpoints];
+
+    function hasUsableData(d) {
+      const str = JSON.stringify(d);
+      const feedbacks = d?.response?.feedbacks || d?.feedbacks || [];
+      return feedbacks.length > 0 ||
+        d?.messages?.length > 0 ||
+        str.includes('"storeName"') ||
+        str.includes('"storeList"') ||
+        str.includes('"price"');
+    }
 
     let rawData = null;
-    // First attempt immediately
-    for (const ep of priceEndpoints) {
+
+    // Probe all endpoints immediately
+    for (const ep of allEndpoints) {
       try {
-        const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(8000) });
+        const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(6000) });
         if (!r.ok) continue;
         const d = await r.json();
-        const feedbacks = d?.response?.feedbacks || d?.feedbacks || [];
-        if (feedbacks.length > 0) { rawData = d; console.log('[Compare] Got prices immediately from:', ep); break; }
+        if (hasUsableData(d)) {
+          rawData = d;
+          console.log('[Compare] Got prices immediately from:', ep);
+          break;
+        }
       } catch(e) {}
     }
 
-    // Poll up to 10 times × 3s = 30s max
-    for (let attempt = 0; !rawData && attempt < 10; attempt++) {
+    // Poll feedback endpoints up to 8 times × 3s (original working strategy)
+    for (let attempt = 0; !rawData && attempt < 8; attempt++) {
       await new Promise(r => setTimeout(r, 3000));
-      for (const ep of priceEndpoints) {
+      for (const ep of feedbackEndpoints) {
         try {
-          const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(8000) });
+          const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(6000) });
           if (!r.ok) continue;
           const d = await r.json();
-          const feedbacks = d?.response?.feedbacks || d?.feedbacks || [];
-          if (feedbacks.length > 0) { rawData = d; console.log('[Compare] Got prices at attempt', attempt + 1); break; }
+          if (hasUsableData(d)) {
+            rawData = d;
+            console.log('[Compare] Got prices at poll attempt', attempt + 1, 'from:', ep);
+            break;
+          }
         } catch(e) {}
       }
     }
 
     if (!rawData) {
-      return res.status(404).json({ error: 'Flash.co found no comparison data for this product.', pageHash });
+      return res.status(404).json({
+        error: 'Flash.co found no comparison data for this product. The product may not be indexed yet.',
+        pageHash, threadId,
+      });
     }
 
     // ── Step 3: Parse feedback response ──
@@ -3474,126 +3526,124 @@ app.get('/compare/debug', async (req, res) => {
     'Accept':         'application/json, text/event-stream, */*',
   };
 
-  // ── Step 1: Stream API → pageHash + threadId + itemId ──
-  let pageHash = null;
-  let threadId = null;
-  let itemId   = null;
-  let fullStreamText = '';
-  try {
-    const streamParams = new URLSearchParams({ source:'APPEND', context:'HOME_URL_PASTE', device_type:'DESKTOP', country_code:'IN' });
-    const sr = await fetch('https://api.flash.co/agents/chat/stream?' + streamParams, {
-      method: 'POST', headers,
-      body: JSON.stringify({ query: url, context: 'HOME_URL_PASTE' }),
-      signal: AbortSignal.timeout(35000),
-    });
-    fullStreamText = await sr.text();
-    report.step1_stream.status = sr.status;
-    report.step1_stream.length = fullStreamText.length;
-    report.step1_stream.sample = fullStreamText.substring(0, 600);
+    // ── Step 1: Stream API → pageHash + threadId + messageId ──
+    // Use apiv3.flash.tech (confirmed working from original flash/test route)
+    let pageHash  = null;
+    let threadId  = null;
+    let messageId = null;
+    let fullStreamText = '';
+    try {
+      const streamParams = new URLSearchParams({
+        source: 'APPEND', context: 'HOME_URL_PASTE',
+        user_agent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+        device_type: 'DESKTOP', country_code: 'IN',
+      });
+      const sr = await fetch('https://apiv3.flash.tech/agents/chat/stream?' + streamParams, {
+        method: 'POST', headers,
+        body: JSON.stringify({ query: url, context: 'HOME_URL_PASTE' }),
+        signal: AbortSignal.timeout(35000),
+      });
+      fullStreamText = await sr.text();
+      report.step1_stream.status = sr.status;
+      report.step1_stream.length = fullStreamText.length;
+      report.step1_stream.sample = fullStreamText.substring(0, 600);
 
-    if (!sr.ok) {
-      report.step1_stream.error = 'HTTP ' + sr.status + (sr.status === 401 ? ' — Token expired. Run bookmarklet on flash.co.' : '');
-      report.conclusion = '❌ FAIL at Step 1: Flash stream returned ' + sr.status;
-      return res.json(report);
-    }
-
-    // Extract pageHash from URL patterns
-    const hashPats = [
-      /price-compare\/\d+\/h\/([A-Za-z0-9_-]{4,})/,
-      /item\/(\d+)\/h\/([A-Za-z0-9_-]{4,})/,      // webapp.flash.co/item/94870/h/5SjOFScR
-      /product-search\/([A-Za-z0-9_-]{4,})/,
-      /product-details\/([A-Za-z0-9_-]{4,})/,
-      /\/h\/([A-Za-z0-9_-]{6,})/,
-    ];
-    for (const pat of hashPats) {
-      const m = fullStreamText.match(pat);
-      if (m) {
-        // item pattern has 2 groups: itemId and hash
-        if (pat.toString().includes('item') && m[2]) { itemId = m[1]; pageHash = m[2]; }
-        else { pageHash = m[1]; }
-        break;
+      if (!sr.ok) {
+        report.step1_stream.error = 'HTTP ' + sr.status + (sr.status === 401 ? ' — Token expired. Run bookmarklet on flash.co.' : '');
+        report.conclusion = '❌ FAIL at Step 1: Flash stream returned ' + sr.status;
+        return res.json(report);
       }
-    }
 
-    // Parse every SSE data line for threadId, itemId, messageId
-    for (const line of fullStreamText.split('\n')) {
-      if (!line.startsWith('data:')) continue;
-      const raw = line.slice(5).trim();
-      // Check for quoted URL: "https://webapp.flash.co/item/94870/h/5SjOFScR"
-      const navM = raw.match(/item\/(\d+)\/h\/([A-Za-z0-9_-]{4,})/);
-      if (navM) { itemId = navM[1]; pageHash = pageHash || navM[2]; }
-      try {
-        const d = JSON.parse(raw);
-        if (d.data?.threadId) threadId = String(d.data.threadId);
-        if (d.threadId)       threadId = String(d.threadId);
-        if (d.data?.messageId) report.messageId = String(d.data.messageId);
-        pageHash = pageHash || d.pageHash || d.referenceId || d.hash ||
-          (d.data && (d.data.pageHash || d.data.referenceId)) || null;
-      } catch(e) {}
-    }
+      // Extract pageHash from URL patterns in INT_NAVIGATION
+      const hashPats = [
+        /price-compare\/\d+\/h\/([A-Za-z0-9_-]{4,})/,
+        /item\/(\d+)\/h\/([A-Za-z0-9_-]{4,})/,
+        /product-search\/([A-Za-z0-9_-]{4,})/,
+        /product-details\/([A-Za-z0-9_-]{4,})/,
+        /\/h\/([A-Za-z0-9_-]{6,})/,
+      ];
+      for (const pat of hashPats) {
+        const m = fullStreamText.match(pat);
+        if (m) { pageHash = m[2] || m[1]; break; }
+      }
 
-    report.step1_stream.ok       = true;
-    report.step1_stream.pageHash = pageHash;
-    report.step1_stream.threadId = threadId;
-    report.step1_stream.itemId   = itemId;
+      // Parse every SSE data line
+      for (const line of fullStreamText.split('\n')) {
+        if (!line.startsWith('data:')) continue;
+        const raw = line.slice(5).trim();
+        const navM = raw.match(/item\/(\d+)\/h\/([A-Za-z0-9_-]{4,})/);
+        if (navM) { pageHash = pageHash || navM[2]; }
+        try {
+          const d = JSON.parse(raw);
+          if (d.data?.threadId)  threadId  = String(d.data.threadId);
+          if (d.data?.messageId) messageId = String(d.data.messageId);
+          if (d.threadId)        threadId  = String(d.threadId);
+          if (d.messageId)       messageId = String(d.messageId);
+          if (!pageHash) pageHash = d.pageHash || d.referenceId || d.hash || (d.data && (d.data.pageHash || d.data.referenceId)) || null;
+        } catch(e) {}
+      }
 
-    if (!pageHash && !threadId && !itemId) {
-      report.conclusion = '❌ FAIL at Step 1: Stream 200 OK but no pageHash/threadId/itemId found. Product may not be indexed by Flash.co.';
+      report.step1_stream.ok       = true;
+      report.step1_stream.pageHash = pageHash;
+      report.step1_stream.threadId = threadId;
+      report.step1_stream.messageId = messageId;
+
+      if (!pageHash && !threadId) {
+        report.conclusion = '❌ FAIL at Step 1: Stream 200 OK but no pageHash/threadId found. Product may not be indexed by Flash.co.';
+        return res.json(report);
+      }
+    } catch(e) {
+      report.step1_stream.error = e.message;
+      report.conclusion = '❌ FAIL at Step 1: ' + e.message;
       return res.json(report);
     }
-  } catch(e) {
-    report.step1_stream.error = e.message;
-    report.conclusion = '❌ FAIL at Step 1: ' + e.message;
-    return res.json(report);
-  }
 
-  // ── Step 2: Fetch prices from webapp.flash.co (correct domain) ──
+  // ── Step 2: Fetch prices using all known Flash API endpoints (apiv3.flash.tech) ──
   const getHeaders = { ...headers };
   delete getHeaders['Content-Type'];
-  // Add webapp-specific headers
-  getHeaders['Referer'] = `https://webapp.flash.co/item/${itemId}/h/${pageHash}`;
 
-  // The stream navigates to webapp.flash.co/item/{itemId}/h/{hash}
-  // So prices are served from webapp.flash.co, not apiv3.flash.tech
-  const endpoints = [];
-  if (itemId && pageHash) {
-    endpoints.push(`https://webapp.flash.co/api/item/${itemId}/h/${pageHash}/prices`);
-    endpoints.push(`https://webapp.flash.co/api/item/${itemId}/prices`);
-    endpoints.push(`https://webapp.flash.co/api/item/${itemId}/compare`);
-    endpoints.push(`https://webapp.flash.co/item/${itemId}/h/${pageHash}/prices`);
-    endpoints.push(`https://webapp.flash.co/api/price-compare/${itemId}`);
-    endpoints.push(`https://webapp.flash.co/api/v1/item/${itemId}/prices`);
-    endpoints.push(`https://webapp.flash.co/api/v1/items/${itemId}`);
-  }
-  if (threadId) {
-    endpoints.push(`https://webapp.flash.co/api/thread/${threadId}/prices`);
-    endpoints.push(`https://webapp.flash.co/api/v1/thread/${threadId}`);
-  }
-  if (pageHash) {
-    endpoints.push(`https://webapp.flash.co/api/h/${pageHash}`);
-    endpoints.push(`https://webapp.flash.co/api/hash/${pageHash}/prices`);
-    // Also try apiv3 feedback as last resort
-    endpoints.push(`https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=${pageHash}`);
-    endpoints.push(`https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=${pageHash}`);
+  const threadEndpoints = threadId ? [
+    `https://apiv3.flash.tech/api/v1/agents/chat/thread/${threadId}/messages`,
+    `https://apiv3.flash.tech/api/v2/agents/chat/thread/${threadId}/messages`,
+    `https://apiv3.flash.tech/api/v1/chat/thread/${threadId}/messages`,
+    `https://apiv3.flash.tech/api/v1/threads/${threadId}/messages`,
+    `https://apiv3.flash.tech/api/v1/threads/${threadId}`,
+  ] : [];
+
+  const msgEndpoints = messageId ? [
+    `https://apiv3.flash.tech/api/v1/agents/chat/message/${messageId}`,
+    `https://apiv3.flash.tech/api/v1/messages/${messageId}/products`,
+    `https://apiv3.flash.tech/api/v1/messages/${messageId}/price-compare`,
+  ] : [];
+
+  const feedbackEndpoints = pageHash ? [
+    `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=${pageHash}`,
+    `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=${pageHash}`,
+    `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_SEARCH&referenceId=${pageHash}`,
+  ] : [];
+
+  const allEps = [...threadEndpoints, ...msgEndpoints, ...feedbackEndpoints];
+
+  function debugHasData(d) {
+    const str = JSON.stringify(d);
+    const feedbacks = d?.response?.feedbacks || d?.feedbacks || [];
+    return feedbacks.length > 0 || d?.messages?.length > 0 ||
+      str.includes('"storeName"') || str.includes('"storeList"');
   }
 
   let rawPriceData = null;
   const probeResults = [];
 
-  // Probe all endpoints immediately — log every response body so we can see what works
-  for (const ep of endpoints) {
+  // Probe all immediately
+  for (const ep of allEps) {
     try {
-      const r = await fetch(ep, { headers: getHeaders, signal: AbortSignal.timeout(8000) });
+      const r = await fetch(ep, { headers: getHeaders, signal: AbortSignal.timeout(6000) });
       const txt = await r.text();
-      probeResults.push({ ep, status: r.status, body: txt.substring(0, 400) });
-      if (r.ok && txt.length > 10) {
+      probeResults.push({ ep, status: r.status, body: txt.substring(0, 300) });
+      if (r.ok) {
         try {
           const d = JSON.parse(txt);
-          const str = JSON.stringify(d);
-          const hasPrices = (d?.response?.feedbacks?.length > 0) ||
-            str.includes('"storeName"') || str.includes('"storeList"') ||
-            str.includes('"stores"') || str.includes('"price"');
-          if (hasPrices) {
+          if (debugHasData(d)) {
             rawPriceData = d;
             report.step2_prices.endpoint = ep;
             report.step2_prices.ok = true;
@@ -3604,19 +3654,15 @@ app.get('/compare/debug', async (req, res) => {
     } catch(e) { probeResults.push({ ep, error: e.message }); }
   }
 
-  // Poll 6 × 3s if nothing found
-  for (let i = 0; !rawPriceData && i < 6; i++) {
+  // Poll feedback endpoints 8×3s
+  for (let i = 0; !rawPriceData && i < 8; i++) {
     await new Promise(r => setTimeout(r, 3000));
-    for (const ep of endpoints) {
+    for (const ep of feedbackEndpoints) {
       try {
-        const r = await fetch(ep, { headers: getHeaders, signal: AbortSignal.timeout(8000) });
+        const r = await fetch(ep, { headers: getHeaders, signal: AbortSignal.timeout(6000) });
         if (!r.ok) continue;
         const d = await r.json();
-        const str = JSON.stringify(d);
-        const feedbacks = d?.response?.feedbacks || d?.feedbacks || [];
-        const hasPrices = feedbacks.length > 0 || str.includes('"storeName"') ||
-          str.includes('"storeList"') || str.includes('"stores"');
-        if (hasPrices) {
+        if (debugHasData(d)) {
           rawPriceData = d;
           report.step2_prices.ok = true;
           report.step2_prices.endpoint = ep + ` (poll ${i+1})`;
@@ -3627,14 +3673,15 @@ app.get('/compare/debug', async (req, res) => {
   }
 
   report.step2_prices.feedbackCount = rawPriceData
-    ? (rawPriceData?.response?.feedbacks || rawPriceData?.feedbacks || rawPriceData?.stores || []).length : 0;
+    ? (rawPriceData?.response?.feedbacks || rawPriceData?.feedbacks || []).length : 0;
   report.step2_prices.sample = rawPriceData ? JSON.stringify(rawPriceData).substring(0, 1000) : null;
   report.step2_prices.probeResults = probeResults;
 
   if (!rawPriceData) {
-    report.conclusion = `❌ FAIL at Step 2: No price data. itemId=${itemId} threadId=${threadId} pageHash=${pageHash}. Check probeResults for response bodies — the correct endpoint will return JSON with price data.`;
+    report.conclusion = `❌ FAIL at Step 2: No price data after 24s. pageHash=${pageHash} threadId=${threadId} messageId=${messageId}. Check probeResults.`;
     return res.json(report);
   }
+
 
   // ── Step 3: Parse ──
   function dig(o, d, best) {
