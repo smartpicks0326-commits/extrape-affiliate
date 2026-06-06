@@ -3420,37 +3420,195 @@ app.get('/compare/search', async (req, res) => {
   }
 });
 
-// ── Compare debug — dumps raw Flash response so you can inspect the structure ──
-// Usage: https://api.smartpickdeals.live/compare/debug?url=https://amzn.in/d/00aqArIu
+// ── /compare/debug — step-by-step Flash API diagnostic ──
+// Run: curl "https://api.smartpickdeals.live/compare/debug?url=https://amzn.in/d/01tGuO9p"
 app.get('/compare/debug', async (req, res) => {
   const { url: rawUrl } = req.query;
-  if (!rawUrl) return res.json({ usage: 'Add ?url=YOUR_PRODUCT_URL', example: '/compare/debug?url=https://www.amazon.in/dp/B0CPXSRNC8' });
-  if (!flashTokenCache.token) return res.status(503).json({ error: 'No Flash token. Visit https://api.smartpickdeals.live/flash/token-page' });
+  if (!rawUrl) return res.json({
+    usage: 'GET /compare/debug?url=PRODUCT_URL',
+    example: 'curl "https://api.smartpickdeals.live/compare/debug?url=https://amzn.in/d/01tGuO9p"',
+  });
+
+  const report = {
+    input:        rawUrl,
+    resolvedUrl:  null,
+    token:        { set: false, preview: null, daysOld: null },
+    deviceId:     null,
+    step1_stream: { ok: false, status: null, length: null, pageHash: null, sample: null, error: null },
+    step2_prices: { ok: false, status: null, feedbackCount: null, sample: null, error: null, endpoint: null },
+    step3_parse:  { storeCount: 0, stores: [], productName: null, productImage: null },
+    conclusion:   null,
+  };
+
+  // ── Token check ──
+  const token    = flashTokenCache.token || process.env.FLASH_AUTH_TOKEN || '';
+  const deviceId = flashTokenCache.deviceId || process.env.FLASH_DEVICE_ID || 'web-spd';
+  report.token.set     = !!token;
+  report.token.preview = token ? token.substring(0, 20) + '...' : 'NOT SET';
+  report.token.daysOld = flashTokenCache.updatedAt ? Math.floor((Date.now() - new Date(flashTokenCache.updatedAt).getTime()) / 86400000) : null;
+  report.deviceId      = deviceId;
+
+  if (!token) {
+    report.conclusion = '❌ FAIL: No Flash token. Visit https://api.smartpickdeals.live/flash/token-page';
+    return res.json(report);
+  }
+
+  // ── URL normalisation ──
+  let url = rawUrl;
+  try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; url = pu.toString(); } } catch(e) {}
+  if (isShortUrl(url)) {
+    try { url = await resolveRedirect(url); } catch(e) { url = rawUrl; }
+  }
+  report.resolvedUrl = url;
+
+  const headers = {
+    'Authorization':  'Bearer ' + token,
+    'Channel-Type':   'web',
+    'Content-Type':   'application/json',
+    'Origin':         'https://flash.co',
+    'Referer':        'https://flash.co/',
+    'User-Agent':     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'X-Country-Code': 'IN',
+    'X-Device-Id':    deviceId,
+    'X-Timezone':     'Asia/Calcutta',
+    'Accept':         'application/json, text/event-stream, */*',
+  };
+
+  // ── Step 1: Stream API → pageHash ──
+  let pageHash = null;
   try {
-    let url = rawUrl;
-    try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; url = pu.toString(); } } catch(e) {}
-    if (isShortUrl(url)) { try { url = await resolveRedirect(url); } catch {} }
-    console.log('[Debug] Running Puppeteer for:', url);
-    const result = await flashSearchPuppeteer(url);
-    if (!result) return res.json({ error: 'No result from Puppeteer' });
-    if (result.error) return res.json({
-      error: result.error, resolvedUrl: url,
-      pageHash: result.pageHash,
-      htmlSample: result.htmlSample ? result.htmlSample.substring(0, 3000) : null,
-      pageLogs: result.pageLogs,
+    const streamParams = new URLSearchParams({ source:'APPEND', context:'HOME_URL_PASTE', device_type:'DESKTOP', country_code:'IN' });
+    const sr = await fetch('https://api.flash.co/agents/chat/stream?' + streamParams, {
+      method: 'POST', headers,
+      body: JSON.stringify({ query: url, context: 'HOME_URL_PASTE' }),
+      signal: AbortSignal.timeout(35000),
     });
-    const storePrices = result.data?.response?.feedbacks?.[0]?.storePrices || [];
-    return res.json({
-      resolvedUrl:   url,
-      pageHash:      result.pageHash,
-      productName:   result.data?.productName,
-      productImage:  result.data?.productImage,
-      extractedStores: storePrices,
-      storeCount:    storePrices.length,
-      debug:         result.debug,
-      summary:       storePrices.map(s => s.storeName + ':₹' + s.price).join(' | '),
-    });
-  } catch(e) { return res.status(500).json({ error: e.message }); }
+    const streamText = sr.ok ? await sr.text() : await sr.text();
+    report.step1_stream.status = sr.status;
+    report.step1_stream.length = streamText.length;
+    report.step1_stream.sample = streamText.substring(0, 500);
+
+    if (!sr.ok) {
+      report.step1_stream.error = 'HTTP ' + sr.status + (sr.status === 401 ? ' — Token invalid/expired. Update via bookmarklet.' : '');
+      report.conclusion = '❌ FAIL at Step 1: Flash stream returned ' + sr.status;
+      return res.json(report);
+    }
+
+    // Extract pageHash
+    const hashPats = [
+      /price-compare\/\d+\/h\/([A-Za-z0-9_-]{4,})/,
+      /product-search\/([A-Za-z0-9_-]{4,})/,
+      /product-details\/([A-Za-z0-9_-]{4,})/,
+      /\/h\/([A-Za-z0-9_-]{6,})/,
+    ];
+    for (const pat of hashPats) { const m = streamText.match(pat); if (m) { pageHash = m[1]; break; } }
+    if (!pageHash) {
+      for (const line of streamText.split('\n')) {
+        if (!line.startsWith('data:')) continue;
+        try {
+          const d = JSON.parse(line.slice(5).trim());
+          pageHash = d.pageHash || d.referenceId || d.hash || (d.data && (d.data.pageHash || d.data.referenceId)) || null;
+          if (pageHash) break;
+        } catch(e) {}
+      }
+    }
+
+    report.step1_stream.ok       = true;
+    report.step1_stream.pageHash = pageHash;
+
+    if (!pageHash) {
+      report.conclusion = '❌ FAIL at Step 1: Stream returned 200 but no pageHash found in response. Product may not be indexed by Flash.co.';
+      return res.json(report);
+    }
+  } catch(e) {
+    report.step1_stream.error = e.message;
+    report.conclusion = '❌ FAIL at Step 1: ' + e.message;
+    return res.json(report);
+  }
+
+  // ── Step 2: Feedback API → prices ──
+  const getHeaders = { ...headers };
+  delete getHeaders['Content-Type'];
+
+  const endpoints = [
+    `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=${pageHash}`,
+    `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=${pageHash}`,
+  ];
+
+  let rawPriceData = null;
+
+  // Try immediately first
+  for (const ep of endpoints) {
+    try {
+      const r = await fetch(ep, { headers: getHeaders, signal: AbortSignal.timeout(8000) });
+      report.step2_prices.status   = r.status;
+      report.step2_prices.endpoint = ep;
+      if (r.ok) {
+        const d = await r.json();
+        const feedbacks = d?.response?.feedbacks || d?.feedbacks || [];
+        report.step2_prices.feedbackCount = feedbacks.length;
+        report.step2_prices.sample = JSON.stringify(d).substring(0, 800);
+        if (feedbacks.length > 0) { rawPriceData = d; report.step2_prices.ok = true; break; }
+      }
+    } catch(e) { report.step2_prices.error = e.message; }
+  }
+
+  // Poll up to 5 times × 3s if empty
+  for (let i = 0; !rawPriceData && i < 5; i++) {
+    await new Promise(r => setTimeout(r, 3000));
+    for (const ep of endpoints) {
+      try {
+        const r = await fetch(ep, { headers: getHeaders, signal: AbortSignal.timeout(8000) });
+        if (!r.ok) continue;
+        const d = await r.json();
+        const feedbacks = d?.response?.feedbacks || d?.feedbacks || [];
+        if (feedbacks.length > 0) {
+          rawPriceData = d;
+          report.step2_prices.ok            = true;
+          report.step2_prices.feedbackCount = feedbacks.length;
+          report.step2_prices.sample        = JSON.stringify(d).substring(0, 800);
+          report.step2_prices.endpoint      = ep + ' (poll attempt ' + (i+1) + ')';
+          break;
+        }
+      } catch(e) {}
+    }
+  }
+
+  if (!rawPriceData) {
+    report.conclusion = '❌ FAIL at Step 2: pageHash=' + pageHash + ' but feedback API returned no data after 15s of polling.';
+    return res.json(report);
+  }
+
+  // ── Step 3: Parse ──
+  function dig(o, d, best) {
+    if (!o || d > 7 || typeof o !== 'object') return;
+    if (Array.isArray(o)) {
+      if (o.length > 0) { const f = o[0]; if (f && (f.price !== undefined || f.amount !== undefined || f.storeName || f.retailer)) best.push(o); }
+      o.forEach(x => dig(x, d+1, best));
+    } else { Object.values(o).forEach(v => dig(v, d+1, best)); }
+  }
+  const best = [];
+  dig(rawPriceData, 0, best);
+  best.sort((a, b) => b.length - a.length);
+  const priceList = best[0] || [];
+
+  const stores = priceList.map(s => ({
+    name:  s.storeName || s.name || s.store || s.retailer || '?',
+    price: parseInt(String(s.price || s.amount || s.salePrice || 0).replace(/[^0-9]/g,'')) || 0,
+    url:   (s.url || s.link || '').substring(0, 80),
+  })).filter(s => s.price > 0);
+
+  const meta = rawPriceData?.response?.productDetails || rawPriceData?.productDetails || {};
+  report.step3_parse.storeCount   = stores.length;
+  report.step3_parse.stores       = stores;
+  report.step3_parse.productName  = meta.name || meta.productName || rawPriceData?.productName || null;
+  report.step3_parse.productImage = meta.imageUrl || meta.image || rawPriceData?.productImage || null;
+
+  report.conclusion = stores.length > 0
+    ? '✅ SUCCESS: ' + stores.length + ' stores found → ' + stores.map(s => s.name + ':₹' + s.price).join(' | ')
+    : '⚠️ Step 2 returned data but Step 3 could not parse any store prices. Check step2_prices.sample for structure.';
+
+  return res.json(report);
 });
 // Buyhatke debug — shows full two-step diagnostic for any product URL
 // ── Buyhatke product info — step 1 only, for browser-side fetching ──
