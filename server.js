@@ -3474,8 +3474,11 @@ app.get('/compare/debug', async (req, res) => {
     'Accept':         'application/json, text/event-stream, */*',
   };
 
-  // ── Step 1: Stream API → pageHash ──
+  // ── Step 1: Stream API → pageHash + threadId + itemId ──
   let pageHash = null;
+  let threadId = null;
+  let itemId   = null;
+  let fullStreamText = '';
   try {
     const streamParams = new URLSearchParams({ source:'APPEND', context:'HOME_URL_PASTE', device_type:'DESKTOP', country_code:'IN' });
     const sr = await fetch('https://api.flash.co/agents/chat/stream?' + streamParams, {
@@ -3483,41 +3486,59 @@ app.get('/compare/debug', async (req, res) => {
       body: JSON.stringify({ query: url, context: 'HOME_URL_PASTE' }),
       signal: AbortSignal.timeout(35000),
     });
-    const streamText = sr.ok ? await sr.text() : await sr.text();
+    fullStreamText = await sr.text();
     report.step1_stream.status = sr.status;
-    report.step1_stream.length = streamText.length;
-    report.step1_stream.sample = streamText.substring(0, 500);
+    report.step1_stream.length = fullStreamText.length;
+    report.step1_stream.sample = fullStreamText.substring(0, 600);
 
     if (!sr.ok) {
-      report.step1_stream.error = 'HTTP ' + sr.status + (sr.status === 401 ? ' — Token invalid/expired. Update via bookmarklet.' : '');
+      report.step1_stream.error = 'HTTP ' + sr.status + (sr.status === 401 ? ' — Token expired. Run bookmarklet on flash.co.' : '');
       report.conclusion = '❌ FAIL at Step 1: Flash stream returned ' + sr.status;
       return res.json(report);
     }
 
-    // Extract pageHash
+    // Extract pageHash from URL patterns
     const hashPats = [
       /price-compare\/\d+\/h\/([A-Za-z0-9_-]{4,})/,
+      /item\/(\d+)\/h\/([A-Za-z0-9_-]{4,})/,      // webapp.flash.co/item/94870/h/5SjOFScR
       /product-search\/([A-Za-z0-9_-]{4,})/,
       /product-details\/([A-Za-z0-9_-]{4,})/,
       /\/h\/([A-Za-z0-9_-]{6,})/,
     ];
-    for (const pat of hashPats) { const m = streamText.match(pat); if (m) { pageHash = m[1]; break; } }
-    if (!pageHash) {
-      for (const line of streamText.split('\n')) {
-        if (!line.startsWith('data:')) continue;
-        try {
-          const d = JSON.parse(line.slice(5).trim());
-          pageHash = d.pageHash || d.referenceId || d.hash || (d.data && (d.data.pageHash || d.data.referenceId)) || null;
-          if (pageHash) break;
-        } catch(e) {}
+    for (const pat of hashPats) {
+      const m = fullStreamText.match(pat);
+      if (m) {
+        // item pattern has 2 groups: itemId and hash
+        if (pat.toString().includes('item') && m[2]) { itemId = m[1]; pageHash = m[2]; }
+        else { pageHash = m[1]; }
+        break;
       }
+    }
+
+    // Parse every SSE data line for threadId, itemId, messageId
+    for (const line of fullStreamText.split('\n')) {
+      if (!line.startsWith('data:')) continue;
+      const raw = line.slice(5).trim();
+      // Check for quoted URL: "https://webapp.flash.co/item/94870/h/5SjOFScR"
+      const navM = raw.match(/item\/(\d+)\/h\/([A-Za-z0-9_-]{4,})/);
+      if (navM) { itemId = navM[1]; pageHash = pageHash || navM[2]; }
+      try {
+        const d = JSON.parse(raw);
+        if (d.data?.threadId) threadId = String(d.data.threadId);
+        if (d.threadId)       threadId = String(d.threadId);
+        if (d.data?.messageId) report.messageId = String(d.data.messageId);
+        pageHash = pageHash || d.pageHash || d.referenceId || d.hash ||
+          (d.data && (d.data.pageHash || d.data.referenceId)) || null;
+      } catch(e) {}
     }
 
     report.step1_stream.ok       = true;
     report.step1_stream.pageHash = pageHash;
+    report.step1_stream.threadId = threadId;
+    report.step1_stream.itemId   = itemId;
 
-    if (!pageHash) {
-      report.conclusion = '❌ FAIL at Step 1: Stream returned 200 but no pageHash found in response. Product may not be indexed by Flash.co.';
+    if (!pageHash && !threadId && !itemId) {
+      report.conclusion = '❌ FAIL at Step 1: Stream 200 OK but no pageHash/threadId/itemId found. Product may not be indexed by Flash.co.';
       return res.json(report);
     }
   } catch(e) {
@@ -3526,56 +3547,76 @@ app.get('/compare/debug', async (req, res) => {
     return res.json(report);
   }
 
-  // ── Step 2: Feedback API → prices ──
+  // ── Step 2: Fetch prices using all known ID types ──
   const getHeaders = { ...headers };
   delete getHeaders['Content-Type'];
 
-  const endpoints = [
-    `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=${pageHash}`,
-    `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=${pageHash}`,
-  ];
+  // Build all candidate endpoints — itemId is the most reliable for this Flash URL format
+  const endpoints = [];
+  if (itemId) {
+    endpoints.push(`https://apiv3.flash.tech/api/v1/price-compare/item/${itemId}`);
+    endpoints.push(`https://apiv3.flash.tech/api/v1/items/${itemId}/price-compare`);
+    endpoints.push(`https://apiv3.flash.tech/api/v1/items/${itemId}/prices`);
+    endpoints.push(`https://apiv3.flash.tech/api/v1/product/${itemId}/stores`);
+  }
+  if (threadId) {
+    endpoints.push(`https://apiv3.flash.tech/api/v1/agents/chat/thread/${threadId}/messages`);
+    endpoints.push(`https://apiv3.flash.tech/api/v1/threads/${threadId}`);
+  }
+  if (pageHash) {
+    endpoints.push(`https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=${pageHash}`);
+    endpoints.push(`https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=${pageHash}`);
+  }
 
   let rawPriceData = null;
+  const probeResults = [];
 
-  // Try immediately first
+  // Probe all endpoints immediately
   for (const ep of endpoints) {
     try {
       const r = await fetch(ep, { headers: getHeaders, signal: AbortSignal.timeout(8000) });
-      report.step2_prices.status   = r.status;
-      report.step2_prices.endpoint = ep;
+      const txt = await r.text();
+      probeResults.push({ ep, status: r.status, body: txt.substring(0, 300) });
       if (r.ok) {
-        const d = await r.json();
-        const feedbacks = d?.response?.feedbacks || d?.feedbacks || [];
-        report.step2_prices.feedbackCount = feedbacks.length;
-        report.step2_prices.sample = JSON.stringify(d).substring(0, 800);
-        if (feedbacks.length > 0) { rawPriceData = d; report.step2_prices.ok = true; break; }
+        try {
+          const d = JSON.parse(txt);
+          const str = JSON.stringify(d);
+          const hasPrices = (d?.response?.feedbacks?.length > 0) ||
+            str.includes('"storeName"') || str.includes('"storeList"') ||
+            (d?.data && str.includes('"price"'));
+          if (hasPrices) { rawPriceData = d; report.step2_prices.endpoint = ep; report.step2_prices.ok = true; break; }
+        } catch(e) {}
       }
-    } catch(e) { report.step2_prices.error = e.message; }
+    } catch(e) { probeResults.push({ ep, error: e.message }); }
   }
 
-  // Poll up to 5 times × 3s if empty
-  for (let i = 0; !rawPriceData && i < 5; i++) {
+  // Poll with 3s delay × 6 attempts = 18s more if nothing found immediately
+  for (let i = 0; !rawPriceData && i < 6; i++) {
     await new Promise(r => setTimeout(r, 3000));
     for (const ep of endpoints) {
       try {
         const r = await fetch(ep, { headers: getHeaders, signal: AbortSignal.timeout(8000) });
         if (!r.ok) continue;
         const d = await r.json();
+        const str = JSON.stringify(d);
         const feedbacks = d?.response?.feedbacks || d?.feedbacks || [];
-        if (feedbacks.length > 0) {
+        const hasPrices = feedbacks.length > 0 || str.includes('"storeName"') || str.includes('"storeList"');
+        if (hasPrices) {
           rawPriceData = d;
-          report.step2_prices.ok            = true;
-          report.step2_prices.feedbackCount = feedbacks.length;
-          report.step2_prices.sample        = JSON.stringify(d).substring(0, 800);
-          report.step2_prices.endpoint      = ep + ' (poll attempt ' + (i+1) + ')';
+          report.step2_prices.ok       = true;
+          report.step2_prices.endpoint = ep + ' (poll ' + (i+1) + ')';
           break;
         }
       } catch(e) {}
     }
   }
 
+  report.step2_prices.feedbackCount = rawPriceData ? (rawPriceData?.response?.feedbacks || rawPriceData?.feedbacks || []).length : 0;
+  report.step2_prices.sample        = rawPriceData ? JSON.stringify(rawPriceData).substring(0, 1000) : null;
+  report.step2_prices.probeResults  = probeResults;
+
   if (!rawPriceData) {
-    report.conclusion = '❌ FAIL at Step 2: pageHash=' + pageHash + ' but feedback API returned no data after 15s of polling.';
+    report.conclusion = `❌ FAIL at Step 2: No price data found. itemId=${itemId} threadId=${threadId} pageHash=${pageHash}. See probeResults — share this output to diagnose correct endpoint.`;
     return res.json(report);
   }
 
