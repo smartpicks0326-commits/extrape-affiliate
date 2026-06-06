@@ -3547,23 +3547,32 @@ app.get('/compare/debug', async (req, res) => {
     return res.json(report);
   }
 
-  // ── Step 2: Fetch prices using all known ID types ──
+  // ── Step 2: Fetch prices from webapp.flash.co (correct domain) ──
   const getHeaders = { ...headers };
   delete getHeaders['Content-Type'];
+  // Add webapp-specific headers
+  getHeaders['Referer'] = `https://webapp.flash.co/item/${itemId}/h/${pageHash}`;
 
-  // Build all candidate endpoints — itemId is the most reliable for this Flash URL format
+  // The stream navigates to webapp.flash.co/item/{itemId}/h/{hash}
+  // So prices are served from webapp.flash.co, not apiv3.flash.tech
   const endpoints = [];
-  if (itemId) {
-    endpoints.push(`https://apiv3.flash.tech/api/v1/price-compare/item/${itemId}`);
-    endpoints.push(`https://apiv3.flash.tech/api/v1/items/${itemId}/price-compare`);
-    endpoints.push(`https://apiv3.flash.tech/api/v1/items/${itemId}/prices`);
-    endpoints.push(`https://apiv3.flash.tech/api/v1/product/${itemId}/stores`);
+  if (itemId && pageHash) {
+    endpoints.push(`https://webapp.flash.co/api/item/${itemId}/h/${pageHash}/prices`);
+    endpoints.push(`https://webapp.flash.co/api/item/${itemId}/prices`);
+    endpoints.push(`https://webapp.flash.co/api/item/${itemId}/compare`);
+    endpoints.push(`https://webapp.flash.co/item/${itemId}/h/${pageHash}/prices`);
+    endpoints.push(`https://webapp.flash.co/api/price-compare/${itemId}`);
+    endpoints.push(`https://webapp.flash.co/api/v1/item/${itemId}/prices`);
+    endpoints.push(`https://webapp.flash.co/api/v1/items/${itemId}`);
   }
   if (threadId) {
-    endpoints.push(`https://apiv3.flash.tech/api/v1/agents/chat/thread/${threadId}/messages`);
-    endpoints.push(`https://apiv3.flash.tech/api/v1/threads/${threadId}`);
+    endpoints.push(`https://webapp.flash.co/api/thread/${threadId}/prices`);
+    endpoints.push(`https://webapp.flash.co/api/v1/thread/${threadId}`);
   }
   if (pageHash) {
+    endpoints.push(`https://webapp.flash.co/api/h/${pageHash}`);
+    endpoints.push(`https://webapp.flash.co/api/hash/${pageHash}/prices`);
+    // Also try apiv3 feedback as last resort
     endpoints.push(`https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=${pageHash}`);
     endpoints.push(`https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=${pageHash}`);
   }
@@ -3571,26 +3580,31 @@ app.get('/compare/debug', async (req, res) => {
   let rawPriceData = null;
   const probeResults = [];
 
-  // Probe all endpoints immediately
+  // Probe all endpoints immediately — log every response body so we can see what works
   for (const ep of endpoints) {
     try {
       const r = await fetch(ep, { headers: getHeaders, signal: AbortSignal.timeout(8000) });
       const txt = await r.text();
-      probeResults.push({ ep, status: r.status, body: txt.substring(0, 300) });
-      if (r.ok) {
+      probeResults.push({ ep, status: r.status, body: txt.substring(0, 400) });
+      if (r.ok && txt.length > 10) {
         try {
           const d = JSON.parse(txt);
           const str = JSON.stringify(d);
           const hasPrices = (d?.response?.feedbacks?.length > 0) ||
             str.includes('"storeName"') || str.includes('"storeList"') ||
-            (d?.data && str.includes('"price"'));
-          if (hasPrices) { rawPriceData = d; report.step2_prices.endpoint = ep; report.step2_prices.ok = true; break; }
+            str.includes('"stores"') || str.includes('"price"');
+          if (hasPrices) {
+            rawPriceData = d;
+            report.step2_prices.endpoint = ep;
+            report.step2_prices.ok = true;
+            break;
+          }
         } catch(e) {}
       }
     } catch(e) { probeResults.push({ ep, error: e.message }); }
   }
 
-  // Poll with 3s delay × 6 attempts = 18s more if nothing found immediately
+  // Poll 6 × 3s if nothing found
   for (let i = 0; !rawPriceData && i < 6; i++) {
     await new Promise(r => setTimeout(r, 3000));
     for (const ep of endpoints) {
@@ -3600,23 +3614,25 @@ app.get('/compare/debug', async (req, res) => {
         const d = await r.json();
         const str = JSON.stringify(d);
         const feedbacks = d?.response?.feedbacks || d?.feedbacks || [];
-        const hasPrices = feedbacks.length > 0 || str.includes('"storeName"') || str.includes('"storeList"');
+        const hasPrices = feedbacks.length > 0 || str.includes('"storeName"') ||
+          str.includes('"storeList"') || str.includes('"stores"');
         if (hasPrices) {
           rawPriceData = d;
-          report.step2_prices.ok       = true;
-          report.step2_prices.endpoint = ep + ' (poll ' + (i+1) + ')';
+          report.step2_prices.ok = true;
+          report.step2_prices.endpoint = ep + ` (poll ${i+1})`;
           break;
         }
       } catch(e) {}
     }
   }
 
-  report.step2_prices.feedbackCount = rawPriceData ? (rawPriceData?.response?.feedbacks || rawPriceData?.feedbacks || []).length : 0;
-  report.step2_prices.sample        = rawPriceData ? JSON.stringify(rawPriceData).substring(0, 1000) : null;
-  report.step2_prices.probeResults  = probeResults;
+  report.step2_prices.feedbackCount = rawPriceData
+    ? (rawPriceData?.response?.feedbacks || rawPriceData?.feedbacks || rawPriceData?.stores || []).length : 0;
+  report.step2_prices.sample = rawPriceData ? JSON.stringify(rawPriceData).substring(0, 1000) : null;
+  report.step2_prices.probeResults = probeResults;
 
   if (!rawPriceData) {
-    report.conclusion = `❌ FAIL at Step 2: No price data found. itemId=${itemId} threadId=${threadId} pageHash=${pageHash}. See probeResults — share this output to diagnose correct endpoint.`;
+    report.conclusion = `❌ FAIL at Step 2: No price data. itemId=${itemId} threadId=${threadId} pageHash=${pageHash}. Check probeResults for response bodies — the correct endpoint will return JSON with price data.`;
     return res.json(report);
   }
 
