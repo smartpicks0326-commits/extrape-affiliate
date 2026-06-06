@@ -587,30 +587,55 @@ async function flashSearchPuppeteer(productUrl) {
 
       if (!pageHash) {
         const cur = page.url();
-        const m   = cur.match(/product-details\/([A-Za-z0-9_-]{4,})/) || cur.match(/\/h\/([A-Za-z0-9_-]{4,})/);
+        const m   = cur.match(/product-details\/([A-Za-z0-9_-]{4,})/) || cur.match(/\/h\/([A-Za-z0-9_-]{4,})/) || cur.match(/price-compare\/\d+\/h\/([A-Za-z0-9_-]{4,})/);
         pageHash  = m ? m[1] : 'unknown';
       }
       console.log('[Flash/Puppeteer] pageHash:', pageHash);
 
-      // ── Step 5: Wait for prices to load ──
+      // ── Step 5: Wait for prices AND product content to fully load ──
+      // Wait for at least 2 price tags (store comparison loaded)
       try {
         await page.waitForFunction(() => {
-          const prices = document.body.innerText.match(/₹[\s\d,]{2,}/g) || [];
+          const prices = document.body.innerText.match(/₹[\d,]{2,}/g) || [];
           return prices.length >= 2;
         }, { timeout: 65000 });
         console.log('[Flash/Puppeteer] Prices detected in DOM');
       } catch(e) {
-        console.log('[Flash/Puppeteer] Price wait timed out — will extract whatever is available');
+        console.log('[Flash/Puppeteer] Price wait timed out — extracting anyway');
       }
 
-      // Wait for product name (not a generic Flash placeholder)
-      const genericNames = ['flash ai','compare prices','best price','product details','product information','loading'];
+      // Wait for product name — must NOT be a Flash placeholder
+      const genericNames = [
+        'flash ai assistant', 'flash ai', 'compare prices', 'best price',
+        'product details', 'product information', 'loading', 'please wait',
+      ];
       try {
         await page.waitForFunction((generic) => {
-          const h = document.querySelector('h1, h2, [class*="product-name"], [class*="productName"], [class*="title"]');
-          return h && h.textContent.trim().length > 5 && !generic.some(g => h.textContent.toLowerCase().includes(g));
-        }, { timeout: 20000 }, genericNames);
-      } catch(e) {}
+          const candidates = document.querySelectorAll('h1, h2, [class*="product-name"], [class*="productName"], [class*="title"]');
+          for (const el of candidates) {
+            const t = el.textContent.trim().toLowerCase();
+            if (t.length > 5 && !generic.some(g => t.includes(g))) return true;
+          }
+          return false;
+        }, { timeout: 25000 }, genericNames);
+      } catch(e) {
+        console.log('[Flash/Puppeteer] Product name wait timed out');
+      }
+
+      // Wait for a real product image (not /merchants/ store logos)
+      try {
+        await page.waitForFunction(() => {
+          for (const img of document.querySelectorAll('img')) {
+            const src = img.src || '';
+            if (!src || src.includes('/merchants/') || src.includes('/favicon')) continue;
+            if (img.naturalWidth > 80 && img.naturalHeight > 80) return true;
+          }
+          return false;
+        }, { timeout: 15000 });
+        console.log('[Flash/Puppeteer] Product image detected in DOM');
+      } catch(e) {
+        console.log('[Flash/Puppeteer] Product image wait timed out — will extract best available');
+      }
 
       // Scroll to load lazy content + expand all stores
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
@@ -858,6 +883,12 @@ async function flashSearchPuppeteer(productUrl) {
         }
 
         // ── Product name ──
+        // Never show Flash branding — if we can't find the real name, return empty
+        const FLASH_JUNK = [
+          'flash ai assistant', 'flash ai', 'flash assistant', 'compare prices',
+          'best price', 'product details', 'product information', 'loading',
+          'please wait', 'price compare',
+        ];
         const productName = (() => {
           for (const sel of [
             'h1[class*="product"]','h1[class*="title"]',
@@ -866,49 +897,67 @@ async function flashSearchPuppeteer(productUrl) {
           ]) {
             for (const el of document.querySelectorAll(sel)) {
               const t = el.textContent.trim();
-              if (t.length > 8 && t.length < 400 &&
-                  !genericNamesInner.some(g => t.toLowerCase().includes(g))) return t;
+              const l = t.toLowerCase();
+              if (t.length > 8 && t.length < 400 && !FLASH_JUNK.some(j => l.includes(j))) return t;
             }
           }
-          return document.title.replace(/\s*[-|—]\s*(Flash.*|Compare.*|Best Price.*)$/i,'').trim() || '';
+          // Page title fallback — strip Flash suffix
+          const title = document.title.replace(/\s*[-|—]\s*(Flash.*|Compare.*|Best Price.*|Price Compare.*)$/i,'').trim();
+          if (title.length > 5 && !FLASH_JUNK.some(j => title.toLowerCase().includes(j))) return title;
+          return ''; // return empty — frontend will use "Product from <store>"
         })();
 
         // ── Product image ──
-        // Flash proxy URL format: https://img.flash.co/unsafe/plain/<encoded-url>
+        // Priority: Flash CDN proxy → Amazon/Flipkart CDN → largest square non-logo img
+        // NEVER return /merchants/ images (store logos) or /favicon images
         const productImage = (() => {
-          // 1. Flash CDN proxy — decode to get original URL
+          function isLogoOrIcon(src, alt) {
+            if (!src) return true;
+            if (src.includes('/merchants/')) return true;
+            if (src.includes('/favicon'))    return true;
+            if (src.includes('/icons/'))     return true;
+            if (/logo|icon/i.test(alt || '')) return true;
+            if (src.includes('logo'))        return true;
+            // Flash store merchant logos are typically very small square PNGs
+            return false;
+          }
+
+          // 1. Flash CDN proxy — always a real product image
           for (const img of document.querySelectorAll('img')) {
             const src = img.src || '';
             if (/img\.flash\.co.*\/plain\//.test(src)) {
               try {
                 const part = src.split('/plain/')[1];
                 const decoded = decodeURIComponent(part.split('?')[0]);
-                if (decoded.startsWith('http')) return decoded;
-                return src; // use the flash CDN URL itself if decode fails
-              } catch { return src; }
+                if (decoded.startsWith('http') && !isLogoOrIcon(decoded, img.alt)) return decoded;
+                if (!isLogoOrIcon(src, img.alt)) return src;
+              } catch { if (!isLogoOrIcon(src, img.alt)) return src; }
             }
           }
-          // 2. Known CDN patterns for Amazon / Flipkart product images
+
+          // 2. Known product CDN patterns (Amazon / Flipkart / Myntra)
           for (const img of document.querySelectorAll('img')) {
             const src = img.src || '';
-            if (!src) continue;
-            // Skip store logos and favicons
-            if (src.includes('/merchants/') || src.includes('/favicon') ||
-                /logo|icon/i.test(img.alt || '') || src.includes('logo')) continue;
-            if (/media-amazon\.com|images-amazon\.com|_SL\d+_|_AC_|rukmini\d+\.flixcart|img\.flipkart/.test(src)) return src;
+            if (isLogoOrIcon(src, img.alt)) continue;
+            if (/media-amazon\.com|images-amazon\.com|_SL\d+_|_AC_SL|rukmini\d+\.flixcart|img\.flipkart|assets\.myntassets/.test(src)) {
+              // Extra check: must be reasonably large
+              const w = img.naturalWidth || img.width || 0;
+              const h = img.naturalHeight || img.height || 0;
+              if (w >= 60 && h >= 60) return src;
+            }
           }
-          // 3. First large non-logo image
+
+          // 3. Largest square-ish image that isn't a logo
           let best = '', bestScore = 0;
           for (const img of document.querySelectorAll('img')) {
             const src = img.src || '';
-            if (!src || src.length < 30) continue;
-            if (src.includes('/merchants/') || src.includes('/favicon') ||
-                /logo|icon/i.test(img.alt || '') || src.includes('logo')) continue;
+            if (src.length < 20 || isLogoOrIcon(src, img.alt)) continue;
             const w = img.naturalWidth  || img.width  || 0;
             const h = img.naturalHeight || img.height || 0;
-            if (w < 60 || h < 60) continue;
+            if (w < 80 || h < 80) continue;           // skip tiny images
             const ratio = Math.max(w, h) / Math.min(w, h);
-            const score = w * h * (ratio < 1.5 ? 3 : ratio < 2.5 ? 1 : 0.2);
+            if (ratio > 4) continue;                   // skip banners/strips
+            const score = w * h * (ratio < 1.3 ? 4 : ratio < 2 ? 2 : 1);
             if (score > bestScore) { bestScore = score; best = src; }
           }
           return best;
@@ -934,13 +983,14 @@ async function flashSearchPuppeteer(productUrl) {
       }, genericNames);
 
       console.log('[Flash/Puppeteer] Extraction debug:', JSON.stringify(extracted.debug));
+      console.log('[Flash/Puppeteer] productName:', extracted.productName);
+      console.log('[Flash/Puppeteer] productImage:', extracted.productImage ? extracted.productImage.substring(0, 120) : 'NONE');
       console.log('[Flash/Puppeteer] Stores found:', extracted.stores.length,
-        extracted.stores.map(s => s.name + ':₹' + s.price).join(' | '));
+        extracted.stores.map(s => s.name + ':₹' + s.price + (s.outOfStock ? '[OOS]' : '')).join(' | '));
 
       if (extracted.stores.length === 0) {
-        // Capture full HTML for debugging via /compare/debug
         const html = await page.content();
-        console.log('[Flash/Puppeteer] ❌ No stores extracted. HTML sample:', html.substring(500, 2000));
+        console.log('[Flash/Puppeteer] ❌ No stores. HTML sample:', html.substring(500, 2000));
         return {
           error:      'No prices found in DOM',
           pageHash,
@@ -949,24 +999,15 @@ async function flashSearchPuppeteer(productUrl) {
         };
       }
 
-      // Return in the shape compare/search expects
       return {
         ok: true,
         pageHash,
         data: {
           productName:  extracted.productName,
           productImage: extracted.productImage,
-          response: {
-            feedbacks: [{
-              storePrices: extracted.stores.map(s => ({
-                storeName: s.name,
-                price:     s.price,
-                url:       s.url,
-              })),
-            }],
-          },
+          sourceStore:  extracted.sourceStore,
+          stores:       extracted.stores,   // direct array — compare/search reads rawData.stores
         },
-        pollAttempt: 0,
         debug: extracted.debug,
       };
 

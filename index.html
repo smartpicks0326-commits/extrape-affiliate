@@ -1082,7 +1082,6 @@ if (navigator.share) {
 /* ══════════════════════════════════════════════════════════
    COMPARE FLOW
 ══════════════════════════════════════════════════════════ */
-var EXTRAPE_OK = ['Amazon','Flipkart','Myntra','Ajio','Nykaa','TataCliq','Croma','Snapdeal','Netmeds','Lenskart'];
 var allStores  = [];
 var showOther  = false;
 
@@ -1122,11 +1121,11 @@ async function runCompareSearch(url) {
   var stepIds  = ['s1','s2','s3','s4','s5','s6'];
   var stepData = [
     { pct: 10, hint: 'Reading the link you shared...' },
-    { pct: 25, hint: 'Comparing prices across all stores...' },
-    { pct: 45, hint: 'Reading thousands of reviews...' },
-    { pct: 62, hint: 'Analysing pros and cons...' },
-    { pct: 78, hint: 'Generating affiliate links...' },
-    { pct: 92, hint: 'Building your personalised guide...' },
+    { pct: 28, hint: 'Comparing prices across all stores...' },
+    { pct: 48, hint: 'Finding best deals for you...' },
+    { pct: 65, hint: 'Verifying prices across stores...' },
+    { pct: 82, hint: 'Generating affiliate links...' },
+    { pct: 94, hint: 'Preparing your results...' },
   ];
   stepIds.forEach(function(id){ var el = document.getElementById(id); el.className = 'step-dot'; el.textContent = ''; });
 
@@ -1142,7 +1141,7 @@ async function runCompareSearch(url) {
     stepIdx++;
   }
   nextStep();
-  var stepTimer = setInterval(nextStep, 1800);
+  var stepTimer = setInterval(nextStep, 2200);
 
   // Countdown
   var secsLeft = 120;
@@ -1156,7 +1155,7 @@ async function runCompareSearch(url) {
   var cdTimer = setInterval(function() {
     secsLeft--;
     if (secsLeft <= 0) {
-      if (cdTimeEl) cdTimeEl.textContent = '00:00';
+      if (cdTimeEl) cdTimeEl.textContent = '00s';
       var cdEl = document.getElementById('countdown');
       if (cdEl) cdEl.innerHTML = 'Finalising results...';
       clearInterval(cdTimer); return;
@@ -1164,20 +1163,32 @@ async function runCompareSearch(url) {
     if (cdTimeEl) cdTimeEl.textContent = fmtCd(secsLeft);
   }, 1000);
 
+  var compareData  = null;
+  var compareError = null;
   var affiliateLink = url;
-  var compareData   = null;
-  var compareError  = null;
+
+  // ── Phase 1: Get price comparison data from backend (Flash/Puppeteer) ──
+  try {
+    compareData = await getCompareData(url);
+  } catch(e) {
+    compareError = e.message;
+    console.error('[Compare] getCompareData failed:', e.message);
+  }
+
+  // ── Phase 2: Generate affiliate link for source store ──
+  // Only show results after affiliate link is ready
+  document.getElementById('rpHint').textContent = 'Generating your affiliate link...';
+  document.getElementById('rpFill').style.width = '96%';
+  document.getElementById('rpNum').textContent = '96%';
 
   try {
-    var results = await Promise.allSettled([
-      getAffiliateLink(url, storeName),
-      getCompareData(url)
-    ]);
-    if (results[0].status === 'fulfilled') affiliateLink = results[0].value;
-    if (results[1].status === 'fulfilled') compareData   = results[1].value;
-    if (results[1].status === 'rejected')  compareError  = results[1].reason && results[1].reason.message;
-  } catch(e) { console.error('[Compare] error:', e); }
+    affiliateLink = await getAffiliateLink(url, storeName);
+  } catch(e) {
+    console.log('[Compare] Affiliate link failed — using original URL');
+    affiliateLink = url;
+  }
 
+  // ── Done ──
   clearInterval(stepTimer);
   clearInterval(cdTimer);
   var cdEl2 = document.getElementById('countdown');
@@ -1189,7 +1200,7 @@ async function runCompareSearch(url) {
 
   fetch(BACKEND + '/track/compare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: url, store: storeName }) }).catch(function(){});
 
-  await sleep(300);
+  await sleep(400);
   showCompareResults(storeName, url, affiliateLink, compareData, compareError);
 }
 
@@ -1220,37 +1231,21 @@ async function getCompareData(url) {
   var body = await r.json().catch(function(){ return {}; });
   if (!r.ok) {
     var msg = body.error || ('Server error ' + r.status);
-    if (r.status === 503) {
-      throw new Error('Comparison service is unavailable. Please try again in a moment.');
-    }
+    if (r.status === 503) throw new Error('Comparison service is unavailable. Please try again in a moment.');
     throw new Error(msg);
   }
   return body;
 }
 
-async function callFlash(productUrl, token) {
-  var h = { 'Authorization': 'Bearer ' + token, 'Channel-Type': 'web', 'Content-Type': 'application/json', 'Origin': 'https://flash.co', 'X-Country-Code': 'IN', 'X-Device-Id': getCookie('flash_device_id') || 'web-spd', 'X-Timezone': 'Asia/Calcutta' };
-  var sr = await fetch('https://apiv3.flash.tech/agents/chat/stream?source=APPEND&context=HOME_URL_PASTE&device_type=DESKTOP&country_code=IN', { method: 'POST', headers: h, body: JSON.stringify({ query: productUrl, context: 'HOME_URL_PASTE' }), signal: AbortSignal.timeout(30000) });
-  if (!sr.ok) throw new Error('Flash ' + sr.status);
-  var text = await sr.text();
-  var pageHash = null;
-  var m = text.match(/product-search\/([A-Za-z0-9_-]{4,})/) || text.match(/\/h\/([A-Za-z0-9_-]{4,})/);
-  if (m) pageHash = m[1];
-  if (!pageHash) throw new Error('No pageHash');
-  var pr = await fetch('https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash, { headers: h, signal: AbortSignal.timeout(12000) });
-  if (!pr.ok) throw new Error('Flash prices ' + pr.status);
-  var pd = await pr.json();
-  return { stores: parseFlash(pd), productName: pd.productName || pd.name || (pd.data && pd.data.name) || null, productImage: pd.imageUrl || pd.image || (pd.data && pd.data.imageUrl) || null };
-}
+var FLASH_BRAND_NAMES = ['flash ai assistant','flash ai','flash assistant','compare prices','best price','product details','loading','please wait','price compare'];
 
-function parseFlash(data) {
-  var best = [];
-  function dig(o,d){ if(!o||d>7||typeof o!=='object')return; if(Array.isArray(o)){ if(o.length>0){ var f=o[0]; if(f&&(f.price!==undefined||f.amount!==undefined||f.storeName||f.retailer))best.push(o); } o.forEach(function(x){dig(x,d+1);}); } else { Object.values(o).forEach(function(v){dig(v,d+1);}); } }
-  dig(data, 0); best.sort(function(a,b){ return b.length-a.length; });
-  return (best[0]||[]).map(function(s){ var raw=s.storeName||s.name||s.store||s.retailer||''; var n=normStore(raw)||raw; var price=parseInt(String(s.price||s.amount||s.salePrice||0).replace(/[^0-9]/g,''))||0; return {name:n,normalizedName:n,price:price,url:s.url||s.link||''}; }).filter(function(s){ return s.price>0&&s.name; });
+function sanitizeProductName(name, fallbackStore) {
+  if (!name) return 'Product from ' + fallbackStore;
+  var l = name.toLowerCase().trim();
+  if (FLASH_BRAND_NAMES.some(function(b){ return l.includes(b); })) return 'Product from ' + fallbackStore;
+  if (name.trim().length < 4) return 'Product from ' + fallbackStore;
+  return name.trim();
 }
-
-function normStore(s){ var l=(s||'').toLowerCase(); if(l.includes('amazon'))return 'Amazon'; if(l.includes('flipkart'))return 'Flipkart'; if(l.includes('myntra'))return 'Myntra'; if(l.includes('ajio'))return 'Ajio'; if(l.includes('nykaa'))return 'Nykaa'; if(l.includes('tatacliq'))return 'TataCliq'; if(l.includes('croma'))return 'Croma'; if(l.includes('snapdeal'))return 'Snapdeal'; if(l.includes('meesho'))return 'Meesho'; if(l.includes('jiomart'))return 'JioMart'; return ''; }
 
 function showCompareResults(storeName, url, affiliateLink, data, compareError) {
   document.getElementById('compareLoading').style.display = 'none';
@@ -1258,14 +1253,17 @@ function showCompareResults(storeName, url, affiliateLink, data, compareError) {
   window.scrollTo(0, 0);
 
   var stores       = (data && data.stores) ? data.stores : [];
-  var productName  = (data && data.productName) ? data.productName : ('Product from ' + storeName);
+  var rawName      = (data && data.productName) ? data.productName : '';
+  var productName  = sanitizeProductName(rawName, storeName);
   var productImage = (data && data.productImage) ? data.productImage : null;
 
   if (productImage) {
-    var img = new Image(); img.src = productImage;
-    img.style = 'width:82px;height:82px;object-fit:contain;border-radius:8px;';
-    img.onerror = function(){ document.getElementById('prodImg').innerHTML = '<span style="font-size:32px">📦</span>'; };
-    document.getElementById('prodImg').innerHTML = ''; document.getElementById('prodImg').appendChild(img);
+    var imgEl = new Image();
+    imgEl.src = productImage;
+    imgEl.style.cssText = 'width:82px;height:82px;object-fit:contain;border-radius:8px;';
+    imgEl.onerror = function(){ document.getElementById('prodImg').innerHTML = '<span style="font-size:32px">📦</span>'; };
+    document.getElementById('prodImg').innerHTML = '';
+    document.getElementById('prodImg').appendChild(imgEl);
   }
   document.getElementById('prodTitle').textContent = productName;
   document.getElementById('prodMeta').textContent = stores.length > 0 ? 'Found ' + stores.length + ' stores · Sorted lowest to highest' : 'Your affiliate link is ready';
@@ -1277,20 +1275,26 @@ function showCompareResults(storeName, url, affiliateLink, data, compareError) {
     banner.style.display = 'flex';
   } else {
     banner.className = 'deal-banner banner-green';
-    var src  = stores.find(function(s){ return s.isSource; });
-    var best = stores[0];
-    var save = (src && !src.isBest && src.price > best.price) ? src.price - best.price : 0;
-    if (src && src.isBest) banner.innerHTML = '✅ You already have the best deal!';
+    var srcStore = stores.find(function(s){ return s.isSource; });
+    var bestStore = stores.find(function(s){ return s.isBest; }) || stores[0];
+    var save = (srcStore && !srcStore.isBest && srcStore.price > bestStore.price) ? srcStore.price - bestStore.price : 0;
+    if (srcStore && srcStore.isBest) banner.innerHTML = '✅ You already have the best deal!';
     else if (save > 0) banner.innerHTML = '✅ Smart Pick Deals found you a saving of ₹' + save.toLocaleString('en-IN') + '!';
-    else banner.innerHTML = '✅ ' + (best.normalizedName || best.name) + ' has the best price!';
+    else banner.innerHTML = '✅ ' + (bestStore.name) + ' has the best price!';
     banner.style.display = 'flex';
   }
 
   var srcNorm = storeName.toLowerCase();
   allStores = stores.map(function(s) {
-    var n = (s.normalizedName || s.name || '').toLowerCase();
-    var isSrc = n === srcNorm || n.includes(srcNorm) || srcNorm.includes(n);
-    return Object.assign({}, s, { isSource: isSrc, displayLink: isSrc ? affiliateLink : (s.url || url), affiliateLink: null, affiliateLoading: isSrc ? false : EXTRAPE_OK.includes(s.normalizedName || s.name) });
+    var n = (s.name || '').toLowerCase();
+    var isSrc = s.isSource || n === srcNorm || n.includes(srcNorm) || srcNorm.includes(n);
+    return Object.assign({}, s, {
+      normalizedName: s.name,
+      isSource:       isSrc,
+      displayLink:    isSrc ? affiliateLink : (s.url || url),
+      affiliateLink:  null,
+      affiliateLoading: false,
+    });
   });
 
   var rec = allStores.slice(0, 8);
@@ -1302,30 +1306,33 @@ function showCompareResults(storeName, url, affiliateLink, data, compareError) {
 
   if (oth.length > 0) { document.getElementById('viewMoreBtn').style.display = 'flex'; document.getElementById('viewMoreTxt').textContent = 'View ' + oth.length + ' more stores'; }
   else { document.getElementById('viewMoreBtn').style.display = 'none'; }
-
-  generateAffiliateLinks();
 }
 
 function renderStoreList(id, stores) {
   var el = document.getElementById(id);
   if (!el) return;
   el.innerHTML = '';
-  var srcStore = allStores.find(function(s){ return s.isSource; });
 
   stores.forEach(function(s, idx) {
-    var name    = s.normalizedName || s.name;
-    var link    = s.displayLink || s.url || '#';
-    var save    = (srcStore && !s.isBest && srcStore.price > s.price) ? (srcStore.price - s.price) : 0;
-    var tags    = '';
-    if (s.isSource) tags += '<span class="tag tag-src">You came from here</span>';
-    if (s.isBest && !s.isSource) tags += '<span class="tag tag-best">🏆 Best Price</span>';
-    if (save > 0) tags += '<span class="tag tag-save">Save ₹' + save.toLocaleString('en-IN') + '</span>';
-    var priceStr  = s.price > 0 ? '₹' + Number(s.price).toLocaleString('en-IN') : '';
-    var cardClass = 'store-card' + (s.isBest ? ' best' : '') + (s.isSource ? ' source' : '');
-    var copyId    = 'copy-' + id + '-' + idx;
-    var shareId   = 'share-' + id + '-' + idx;
-    var visitId   = 'visit-' + id + '-' + idx;
-    var affId     = 'aff-' + id + '-' + idx;
+    var name     = s.name || s.normalizedName;
+    var link     = s.displayLink || s.url || '#';
+    var priceStr = s.price > 0 ? '₹' + Number(s.price).toLocaleString('en-IN') : '';
+
+    // Tags — use Flash's own badge data where available
+    var tags = '';
+    if (s.isSource)   tags += '<span class="tag tag-src">You came from here</span>';
+    if (s.isBest && !s.isSource && !s.outOfStock) tags += '<span class="tag tag-best">🏆 Best Price</span>';
+    if (s.lowestPrice && !s.isBest) tags += '<span class="tag tag-best">Lowest Price</span>';
+    // Use Flash's own savings badge if available, otherwise compute from source
+    if (s.savingsBadge && !s.isSource) {
+      tags += '<span class="tag tag-save">' + s.savingsBadge + '</span>';
+    }
+    if (s.outOfStock) tags += '<span class="tag" style="color:#ff4b6e;background:rgba(255,75,110,.1);border:1px solid rgba(255,75,110,.2);">Out of stock</span>';
+
+    var cardClass = 'store-card' + (s.isBest && !s.outOfStock ? ' best' : '') + (s.isSource ? ' source' : '');
+    var copyId  = 'copy-'  + id + '-' + idx;
+    var shareId = 'share-' + id + '-' + idx;
+    var visitId = 'visit-' + id + '-' + idx;
 
     var div = document.createElement('div');
     div.className = cardClass;
@@ -1334,15 +1341,14 @@ function renderStoreList(id, stores) {
       '<div class="store-main">' +
         '<div class="store-logo-wrap">' + logoHTML(name, 26) + '</div>' +
         '<div class="store-body"><div class="store-name">' + name + '</div><div class="store-tags">' + tags + '</div></div>' +
-        '<div class="store-price">' + priceStr + (s.affiliateLoading ? '<small>Getting link...</small>' : '') + '</div>' +
+        '<div class="store-price">' + priceStr + '</div>' +
       '</div>' +
-      (s.affiliateLoading ? '<div class="aff-status" id="' + affId + '">⏳ Generating affiliate link...</div>' : '') +
       '<div class="store-actions">' +
         '<div class="store-actions-top">' +
           '<button class="btn-copy" id="' + copyId + '">📋 Copy</button>' +
           '<button class="btn-share" id="' + shareId + '">↗ Share</button>' +
         '</div>' +
-        '<button class="btn-visit" id="' + visitId + '">Open ↗</button>' +
+        '<button class="btn-visit" id="' + visitId + '"' + (s.outOfStock ? ' style="opacity:.6;"' : '') + '>Open ↗</button>' +
       '</div>';
 
     el.appendChild(div);
@@ -1388,59 +1394,6 @@ function wireStoreButtons(copyId, shareId, visitId, link, name, storeObj) {
       window.open(l, '_blank');
     };
   }
-}
-
-async function generateAffiliateLinks() {
-  var tasks = allStores.map(function(s,idx){ return {s:s,idx:idx}; }).filter(function(t){
-    return !t.s.isSource && EXTRAPE_OK.includes(t.s.normalizedName || t.s.name) && t.s.url;
-  });
-  for (var i = 0; i < tasks.length; i += 3) {
-    var batch = tasks.slice(i, i+3);
-    await Promise.all(batch.map(async function(task) {
-      var s = task.s;
-      var name = s.normalizedName || s.name;
-      try {
-        var link = await getAffiliateLink(s.url, name);
-        if (link && link !== s.url) {
-          s.affiliateLink = link; s.displayLink = link;
-          allStores.forEach(function(as) {
-            if ((as.normalizedName || as.name) === name && !as.isSource) { as.affiliateLink = link; as.displayLink = link; }
-          });
-          updateStoreCard(name, link);
-        }
-      } catch(e) {}
-    }));
-  }
-}
-
-function updateStoreCard(name, link) {
-  document.querySelectorAll('.store-name').forEach(function(el) {
-    if (el.textContent === name) {
-      var card = el.closest('.store-card');
-      if (!card) return;
-      var affStatus = card.querySelector('.aff-status');
-      if (affStatus) affStatus.remove();
-      var priceEl = card.querySelector('.store-price small');
-      if (priceEl) priceEl.remove();
-      var storeObj = allStores.find(function(s){ return (s.normalizedName || s.name) === name && !s.isSource; });
-      var copyBtn  = card.querySelector('.btn-copy');
-      var visitBtn = card.querySelector('.btn-visit');
-      if (storeObj && copyBtn && visitBtn) {
-        copyBtn.onclick = function() {
-          navigator.clipboard.writeText(link).then(function() {
-            copyBtn.textContent = '✅ Copied!'; copyBtn.classList.add('ok');
-            setTimeout(function(){ copyBtn.textContent = 'Copy'; copyBtn.classList.remove('ok'); }, 2500);
-          });
-        };
-        visitBtn.onclick = function() {
-          fetch(BACKEND + '/track/click', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dest: link, store: name }) }).catch(function(){
-            fetch(BACKEND_FALLBACK + '/track/click', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dest: link, store: name }) }).catch(function(){});
-          });
-          window.open(link, '_blank');
-        };
-      }
-    }
-  });
 }
 
 // Back button & view more
