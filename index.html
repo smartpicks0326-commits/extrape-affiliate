@@ -1226,15 +1226,21 @@ async function getAffiliateLink(url, store) {
 
 async function getCompareData(url) {
   try { await fetch(BACKEND + '/ping', { signal: AbortSignal.timeout(5000) }); } catch(e) {}
-  // Puppeteer on the server can take 2+ minutes — use a long timeout
-  var r = await fetch(BACKEND + '/compare/search?url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(180000) });
-  var body = await r.json().catch(function(){ return {}; });
-  if (!r.ok) {
-    var msg = body.error || ('Server error ' + r.status);
-    if (r.status === 503) throw new Error('Comparison service is unavailable. Please try again in a moment.');
-    throw new Error(msg);
+  try {
+    var r = await fetch(BACKEND + '/compare/search?url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(200000) });
+    var body = await r.json().catch(function(){ return {}; });
+    if (!r.ok) {
+      var msg = body.error || ('Server error ' + r.status);
+      if (r.status === 503) throw new Error('Comparison service is unavailable. Please try again in a moment.');
+      throw new Error(msg);
+    }
+    return body;
+  } catch(e) {
+    if (e.name === 'AbortError' || e.message === 'Failed to fetch' || e.message.includes('signal')) {
+      throw new Error('Price comparison is taking longer than expected. Please try again — it usually works on the second attempt.');
+    }
+    throw e;
   }
-  return body;
 }
 
 var FLASH_BRAND_NAMES = ['flash ai assistant','flash ai','flash assistant','compare prices','best price','product details','loading','please wait','price compare'];
