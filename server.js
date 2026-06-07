@@ -3229,248 +3229,308 @@ app.get('/compare/search', async (req, res) => {
   const { url: rawUrl } = req.query;
   if (!rawUrl) return res.status(400).json({ error: 'Pass ?url=' });
 
-  const token    = flashTokenCache.token || process.env.FLASH_AUTH_TOKEN || '';
+  const token    = flashTokenCache.token || '';
   const deviceId = flashTokenCache.deviceId || process.env.FLASH_DEVICE_ID || 'web-spd';
   if (!token) return res.status(503).json({ error: 'Flash token not set. Visit https://api.smartpickdeals.live/flash/token-page' });
 
   try {
     // ── URL normalisation ──
     let url = rawUrl;
-    try {
-      const pu = new URL(url);
-      if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; url = pu.toString(); }
-    } catch(e) {}
-
+    try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; url = pu.toString(); } } catch(e) {}
     if (isShortUrl(url)) {
       try { url = await resolveRedirect(url); }
-      catch(e) {
-        return res.status(400).json({ error: 'Could not resolve this short link. Open it in your browser, copy the full URL, and paste that instead.' });
-      }
+      catch(e) { return res.status(400).json({ error: 'Could not resolve short link. Open it in your browser, copy the full URL, and paste that instead.' }); }
     }
     console.log('[Compare] URL:', url.substring(0, 100));
 
     const srcHost  = (() => { try { return new URL(url).hostname.replace('www.',''); } catch { return ''; } })();
     const srcStore = normalizeStore(srcHost.split('.')[0]) || '';
 
+    // ── Step 1: Stream API → itemId + pageHash ──
     const flashHeaders = {
       'Authorization':  'Bearer ' + token,
       'Channel-Type':   'web',
       'Content-Type':   'application/json',
       'Origin':         'https://flash.co',
       'Referer':        'https://flash.co/',
-      'User-Agent':     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'User-Agent':     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
       'X-Country-Code': 'IN',
       'X-Device-Id':    deviceId,
       'X-Timezone':     'Asia/Calcutta',
       'Accept':         'application/json, text/event-stream, */*',
     };
 
-    // ── Step 1: Call Flash stream API — get pageHash + threadId + messageId ──
-    // IMPORTANT: use apiv3.flash.tech (not api.flash.co) — this is the working endpoint
-    console.log('[Compare] Calling Flash stream API...');
     const streamParams = new URLSearchParams({
       source: 'APPEND', context: 'HOME_URL_PASTE',
       user_agent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
       device_type: 'DESKTOP', country_code: 'IN',
     });
+
+    console.log('[Compare] Calling Flash stream API...');
     const sr = await fetch('https://apiv3.flash.tech/agents/chat/stream?' + streamParams, {
-      method: 'POST',
-      headers: flashHeaders,
+      method: 'POST', headers: flashHeaders,
       body: JSON.stringify({ query: url, context: 'HOME_URL_PASTE' }),
       signal: AbortSignal.timeout(40000),
     });
 
     if (!sr.ok) {
-      const errText = await sr.text().catch(() => '');
-      if (sr.status === 401) {
-        flashTokenCache.token = '';
-        return res.status(503).json({ error: 'Flash token expired. Please renew it at https://api.smartpickdeals.live/flash/token-page' });
-      }
-      return res.status(502).json({ error: 'Flash stream returned ' + sr.status, detail: errText.substring(0, 100) });
+      if (sr.status === 401) { flashTokenCache.token = ''; return res.status(503).json({ error: 'Flash token expired. Renew at https://api.smartpickdeals.live/flash/token-page' }); }
+      return res.status(502).json({ error: 'Flash stream returned ' + sr.status });
     }
 
     const streamText = await sr.text();
-    console.log('[Compare] Stream length:', streamText.length, 'sample:', streamText.substring(0, 300));
+    console.log('[Compare] Stream sample:', streamText.substring(0, 300));
 
-    // Extract pageHash, threadId, messageId from SSE stream
-    let pageHash  = null;
-    let threadId  = null;
-    let messageId = null;
+    // Extract itemId and pageHash from INT_NAVIGATION event
+    // Format: "https://webapp.flash.co/item/94870/h/ce9vnppi"
+    let itemId   = null;
+    let pageHash = null;
+    const navMatch = streamText.match(/webapp\.flash\.co\/item\/(\d+)\/h\/([A-Za-z0-9_-]+)/);
+    if (navMatch) { itemId = navMatch[1]; pageHash = navMatch[2]; }
 
-    // URL patterns in INT_NAVIGATION event
-    const hashPatterns = [
-      /price-compare\/\d+\/h\/([A-Za-z0-9_-]{4,})/,
-      /item\/\d+\/h\/([A-Za-z0-9_-]{4,})/,
-      /product-search\/([A-Za-z0-9_-]{4,})/,
-      /product-details\/([A-Za-z0-9_-]{4,})/,
-      /\/h\/([A-Za-z0-9_-]{6,})/,
-    ];
-    for (const pat of hashPatterns) { const m = streamText.match(pat); if (m) { pageHash = m[1]; break; } }
+    // Fallback patterns
+    if (!pageHash) {
+      for (const pat of [/price-compare\/\d+\/h\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{6,})/]) {
+        const m = streamText.match(pat); if (m) { pageHash = m[1]; break; }
+      }
+    }
 
-    // Parse every SSE data line for all IDs
-    for (const line of streamText.split('\n')) {
-      if (!line.startsWith('data:')) continue;
+    console.log('[Compare] itemId:', itemId, '| pageHash:', pageHash);
+    if (!itemId && !pageHash) {
+      return res.status(404).json({ error: 'Flash.co has no comparison data for this product.', streamSample: streamText.substring(0, 300) });
+    }
+
+    // ── Step 2: Open webapp.flash.co in Puppeteer and extract prices from DOM ──
+    // The prices are rendered by Next.js client-side — no REST API returns them.
+    // We navigate directly to the item page (no homepage needed — faster).
+    const webappUrl = `https://webapp.flash.co/item/${itemId}/h/${pageHash}`;
+    console.log('[Compare] Opening in Puppeteer:', webappUrl);
+
+    const extracted = await withFlashBrowser(async () => {
+      const browser = await getFlashBrowser();
+      const page    = await browser.newPage();
+      await page.setViewport({ width: 1280, height: 900 });
+      await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+
       try {
-        const d = JSON.parse(line.slice(5).trim());
-        if (d.data?.threadId)  threadId  = String(d.data.threadId);
-        if (d.data?.messageId) messageId = String(d.data.messageId);
-        if (d.threadId)        threadId  = String(d.threadId);
-        if (d.messageId)       messageId = String(d.messageId);
-        if (!pageHash) pageHash = d.pageHash || d.referenceId || d.hash || (d.data && (d.data.pageHash || d.data.referenceId)) || null;
-      } catch(e) {}
-    }
+        // Inject auth token before navigating
+        await page.goto('https://webapp.flash.co', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+        await page.evaluate((tok) => {
+          try { localStorage.setItem('authToken',   tok); } catch(e) {}
+          try { localStorage.setItem('accessToken', tok); } catch(e) {}
+        }, token);
 
-    console.log('[Compare] pageHash:', pageHash, '| threadId:', threadId, '| messageId:', messageId);
-    if (!pageHash && !threadId) {
-      return res.status(404).json({
-        error: 'Flash.co has no comparison data for this product. Try a different URL.',
-        streamSample: streamText.substring(0, 400),
-      });
-    }
+        // Navigate directly to item page
+        await page.goto(webappUrl, { waitUntil: 'networkidle2', timeout: 40000 });
+        console.log('[Compare/Puppeteer] Loaded:', page.url());
 
-    // ── Step 2: Poll all known Flash endpoints for prices ──
-    const priceHeaders = { ...flashHeaders };
-    delete priceHeaders['Content-Type'];
-
-    // Build all candidate endpoints — same set as original working flash/test route
-    const threadEndpoints = threadId ? [
-      `https://apiv3.flash.tech/api/v1/agents/chat/thread/${threadId}/messages`,
-      `https://apiv3.flash.tech/api/v2/agents/chat/thread/${threadId}/messages`,
-      `https://apiv3.flash.tech/api/v1/chat/thread/${threadId}/messages`,
-      `https://apiv3.flash.tech/api/v1/threads/${threadId}/messages`,
-      `https://apiv3.flash.tech/api/v1/threads/${threadId}`,
-    ] : [];
-
-    const messageEndpoints = messageId ? [
-      `https://apiv3.flash.tech/api/v1/agents/chat/message/${messageId}`,
-      `https://apiv3.flash.tech/api/v1/messages/${messageId}/products`,
-      `https://apiv3.flash.tech/api/v1/messages/${messageId}/price-compare`,
-    ] : [];
-
-    const feedbackEndpoints = pageHash ? [
-      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=${pageHash}`,
-      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_DETAILS&referenceId=${pageHash}`,
-      `https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRODUCT_SEARCH&referenceId=${pageHash}`,
-    ] : [];
-
-    const allEndpoints = [...threadEndpoints, ...messageEndpoints, ...feedbackEndpoints];
-
-    function hasUsableData(d) {
-      const str = JSON.stringify(d);
-      const feedbacks = d?.response?.feedbacks || d?.feedbacks || [];
-      return feedbacks.length > 0 ||
-        d?.messages?.length > 0 ||
-        str.includes('"storeName"') ||
-        str.includes('"storeList"') ||
-        str.includes('"price"');
-    }
-
-    let rawData = null;
-
-    // Probe all endpoints immediately
-    for (const ep of allEndpoints) {
-      try {
-        const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(6000) });
-        if (!r.ok) continue;
-        const d = await r.json();
-        if (hasUsableData(d)) {
-          rawData = d;
-          console.log('[Compare] Got prices immediately from:', ep);
-          break;
-        }
-      } catch(e) {}
-    }
-
-    // Poll feedback endpoints up to 8 times × 3s (original working strategy)
-    for (let attempt = 0; !rawData && attempt < 8; attempt++) {
-      await new Promise(r => setTimeout(r, 3000));
-      for (const ep of feedbackEndpoints) {
+        // Wait for price data to appear
         try {
-          const r = await fetch(ep, { headers: priceHeaders, signal: AbortSignal.timeout(6000) });
-          if (!r.ok) continue;
-          const d = await r.json();
-          if (hasUsableData(d)) {
-            rawData = d;
-            console.log('[Compare] Got prices at poll attempt', attempt + 1, 'from:', ep);
-            break;
+          await page.waitForFunction(() => {
+            const text = document.body.innerText || '';
+            const prices = text.match(/₹[\d,]{2,}/g) || [];
+            return prices.length >= 2;
+          }, { timeout: 30000 });
+        } catch(e) { console.log('[Compare/Puppeteer] Price wait timed out — extracting anyway'); }
+
+        // Scroll to load all stores
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await new Promise(r => setTimeout(r, 2000));
+
+        // Click "View all" if present
+        await page.evaluate(() => {
+          for (const el of document.querySelectorAll('button, a, [role="button"]')) {
+            const t = (el.textContent || '').toLowerCase().trim();
+            if (/view all|show all|all stores|more stores/.test(t)) { el.click(); break; }
           }
-        } catch(e) {}
+        }).catch(() => {});
+        await new Promise(r => setTimeout(r, 1500));
+
+        // Extract prices + store names + links from DOM
+        return await page.evaluate(() => {
+          const KNOWN = ['amazon','flipkart','myntra','ajio','nykaa','tatacliq','croma','snapdeal',
+            'meesho','jiomart','bigbasket','zepto','blinkit','swiggy','zomato','firstcry',
+            'netmeds','lenskart','boat','mamaearth','purplle','bewakoof','decathlon',
+            'pepperfry','vijay sales','vijaysales','reliance','zebrs','shopclues'];
+
+          function normName(raw) {
+            const l = (raw||'').toLowerCase().trim();
+            if (l.includes('amazon'))    return 'Amazon';
+            if (l.includes('flipkart'))  return 'Flipkart';
+            if (l.includes('myntra'))    return 'Myntra';
+            if (l.includes('ajio'))      return 'Ajio';
+            if (l.includes('nykaa'))     return 'Nykaa';
+            if (l.includes('tatacliq') || l === 'tata cliq') return 'TataCliq';
+            if (l.includes('croma'))     return 'Croma';
+            if (l.includes('snapdeal'))  return 'Snapdeal';
+            if (l.includes('meesho'))    return 'Meesho';
+            if (l.includes('jiomart'))   return 'JioMart';
+            if (l.includes('bigbasket')) return 'BigBasket';
+            if (l.includes('zepto'))     return 'Zepto';
+            if (l.includes('blinkit'))   return 'Blinkit';
+            if (l.includes('swiggy'))    return 'Swiggy';
+            if (l.includes('zomato'))    return 'Zomato';
+            if (l.includes('firstcry'))  return 'FirstCry';
+            if (l.includes('netmeds'))   return 'Netmeds';
+            if (l.includes('lenskart'))  return 'Lenskart';
+            if (l.includes('boat'))      return 'Boat';
+            if (l.includes('zebrs'))     return 'Zebrs';
+            if (l.includes('reliance'))  return 'Reliance Digital';
+            if (l.includes('vijay'))     return 'Vijay Sales';
+            if (l.includes('fire-boltt') || l.includes('fireboltt')) return 'Fire-Boltt';
+            return raw.trim();
+          }
+
+          // Build store→link map from outbound links
+          const storeLinks = {};
+          document.querySelectorAll('a[href]').forEach(a => {
+            const href = a.href || '';
+            if (!href || href.includes('flash.co') || href.includes('webapp.flash') || href === '#') return;
+            const hl = href.toLowerCase();
+            for (const s of KNOWN) {
+              const key = normName(s);
+              if (hl.includes(s.replace(/\s/g,'')) && !storeLinks[key]) storeLinks[key] = href;
+            }
+          });
+
+          // Walk price text nodes — find standalone ₹XXX values
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+          const priceNodes = [];
+          let node;
+          while ((node = walker.nextNode())) {
+            const m = node.textContent.trim().match(/^₹\s*([\d,]+)$/);
+            if (!m) continue;
+            const price = parseInt(m[1].replace(/,/g,''));
+            if (price >= 50 && price <= 5000000) priceNodes.push({ node, price });
+          }
+
+          // For each price node, search nearby DOM for store name
+          const stores = [], seen = new Set();
+          for (const { node, price } of priceNodes) {
+            // Skip if this price is inside a "save/off" context
+            const nearText = (node.parentElement?.parentElement?.textContent || '').toLowerCase();
+            if (/\boff\b|\bsave\b|\bdiscount\b/.test(nearText) && nearText.length < 60) continue;
+
+            let storeName = null;
+            let container = node.parentElement;
+            for (let depth = 0; depth < 10 && container && !storeName; depth++) {
+              // Check img alt tags first
+              for (const img of container.querySelectorAll('img')) {
+                const alt = (img.alt || '').trim();
+                if (alt.length > 1 && alt.length < 50 && KNOWN.some(s => alt.toLowerCase().includes(s))) {
+                  storeName = alt; break;
+                }
+              }
+              // Then text nodes
+              if (!storeName) {
+                for (const el of container.querySelectorAll('*')) {
+                  if (el.children.length) continue;
+                  const t = (el.textContent || '').trim();
+                  const l = t.toLowerCase();
+                  if (t.length < 2 || t.length > 60 || /^₹/.test(t) || /^\d/.test(t)) continue;
+                  if (KNOWN.some(s => l === s || (s.length > 4 && l.includes(s)))) {
+                    storeName = t; break;
+                  }
+                }
+              }
+              container = container.parentElement;
+            }
+
+            if (!storeName) continue;
+            const normalized = normName(storeName);
+            const key = normalized.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            stores.push({ name: normalized, price, url: storeLinks[normalized] || '' });
+          }
+
+          // Product name
+          const JUNK = ['flash ai','compare prices','best price','product details','loading','please wait'];
+          let productName = '';
+          for (const sel of ['h1','h2','[class*="product-name"]','[class*="productName"]']) {
+            for (const el of document.querySelectorAll(sel)) {
+              const t = el.textContent.trim();
+              if (t.length > 8 && t.length < 400 && !JUNK.some(j => t.toLowerCase().includes(j))) {
+                productName = t; break;
+              }
+            }
+            if (productName) break;
+          }
+          if (!productName) productName = document.title.replace(/\s*[-|—]\s*(Flash.*|Compare.*|Best Price.*)$/i,'').trim();
+
+          // Product image
+          let productImage = '';
+          for (const img of document.querySelectorAll('img')) {
+            const src = img.src || '';
+            if (!src || src.includes('/merchants/') || src.includes('/favicon') || src.includes('logo')) continue;
+            if (/img\.flash\.co.*\/plain\//.test(src)) {
+              try { const d = decodeURIComponent(src.split('/plain/')[1].split('?')[0]); if (d.startsWith('http')) { productImage = d; break; } } catch { productImage = src; break; }
+            }
+            if (/media-amazon\.com|images-amazon\.com|_SL\d+_|rukmini\d+\.flixcart/.test(src)) { productImage = src; break; }
+          }
+          if (!productImage) {
+            let best = '', bestScore = 0;
+            for (const img of document.querySelectorAll('img')) {
+              const src = img.src || '';
+              if (!src || src.includes('/merchants/') || src.includes('/favicon') || src.includes('logo') || src.length < 30) continue;
+              const w = img.naturalWidth || img.width || 0, h = img.naturalHeight || img.height || 0;
+              if (w < 60 || h < 60) continue;
+              const ratio = Math.max(w,h)/Math.min(w,h);
+              const score = w * h * (ratio < 1.5 ? 3 : ratio < 3 ? 1 : 0.1);
+              if (score > bestScore) { bestScore = score; best = src; }
+            }
+            productImage = best;
+          }
+
+          return { stores, productName, productImage };
+        });
+
+      } finally {
+        await page.close().catch(() => {});
       }
-    }
-
-    if (!rawData) {
-      return res.status(404).json({
-        error: 'Flash.co found no comparison data for this product. The product may not be indexed yet.',
-        pageHash, threadId,
-      });
-    }
-
-    // ── Step 3: Parse feedback response ──
-    const feedbacks    = rawData?.response?.feedbacks || rawData?.feedbacks || [];
-    const meta         = rawData?.response?.productDetails || rawData?.productDetails || rawData?.response || {};
-    const productName  = meta.name || meta.productName || meta.title || rawData?.productName || ('Product from ' + srcStore);
-    const productImage = meta.imageUrl || meta.image || meta.thumbnail || rawData?.productImage || '';
-
-    // Deep-find store price arrays
-    function isStorePriceItem(obj) {
-      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
-      return !!(obj.storeName || obj.name || obj.store || obj.retailer) &&
-             (obj.price !== undefined || obj.salePrice !== undefined || obj.amount !== undefined);
-    }
-    function deepFindPriceLists(obj, depth) {
-      if (!obj || typeof obj !== 'object' || depth > 10) return [];
-      if (Array.isArray(obj)) {
-        const items = obj.filter(isStorePriceItem);
-        if (items.length > 0) return [items];
-        return obj.flatMap(el => deepFindPriceLists(el, depth + 1));
-      }
-      const keys = ['storePrices','prices','stores','storeList','comparePrices','offers','listings','data','feedbacks','feedback','content','response'];
-      const found = [];
-      for (const k of keys) { if (obj[k]) found.push(...deepFindPriceLists(obj[k], depth + 1)); }
-      for (const k of Object.keys(obj)) { if (!keys.includes(k) && obj[k] && typeof obj[k] === 'object') found.push(...deepFindPriceLists(obj[k], depth + 1)); }
-      return found;
-    }
-    const allLists = deepFindPriceLists(rawData, 0);
-    allLists.sort((a, b) => b.length - a.length);
-    const priceList = allLists[0] || [];
-    console.log('[Compare] Price list candidates:', allLists.length, '| best:', priceList.length, 'items');
-
-    const storeMap = {};
-    for (const item of priceList) {
-      const rawName = item.storeName || item.name || item.store || item.retailer || '';
-      const name    = normalizeStore(rawName) || rawName.trim();
-      if (!name) continue;
-      const price   = parseInt(String(item.price ?? item.salePrice ?? item.amount ?? 0).replace(/[^0-9]/g,'')) || 0;
-      if (price <= 0) continue;
-      const storeUrl = item.url || item.link || item.deepLink || '';
-      if (!storeMap[name] || price < storeMap[name].price) {
-        storeMap[name] = { name, normalizedName: name, price, url: storeUrl, outOfStock: false, savingsBadge: '', lowestPrice: false };
-      }
-    }
-
-    let stores = Object.values(storeMap).sort((a, b) => a.price - b.price);
-    stores = stores.map((s, i) => {
-      const n = s.name.toLowerCase();
-      const isSrc = srcStore && (n === srcStore.toLowerCase() || n.includes(srcStore.toLowerCase()) || srcStore.toLowerCase().includes(n));
-      return { ...s, isBest: i === 0, isSource: isSrc };
     });
 
-    if (stores.length === 0) {
-      console.log('[Compare] ❌ No stores parsed. priceList sample:', JSON.stringify(priceList.slice(0,2)));
-      return res.status(404).json({ error: 'Prices found but could not be parsed. Try /compare/debug?url=' + encodeURIComponent(url), pageHash });
+    console.log('[Compare] Extracted', extracted.stores.length, 'stores:',
+      extracted.stores.map(s => s.name + ':₹' + s.price).join(' | '));
+
+    if (extracted.stores.length === 0) {
+      return res.status(404).json({
+        error: 'Flash.co loaded the product page but no store prices were found. Try again.',
+        webappUrl,
+        hint: 'Visit /compare/debug?url=' + encodeURIComponent(url) + ' for diagnostics',
+      });
     }
+
+    // Sort + mark best/source
+    let stores = extracted.stores.sort((a, b) => a.price - b.price).map((s, i) => {
+      const n = s.name.toLowerCase();
+      const isSrc = srcStore && (n === srcStore.toLowerCase() || n.includes(srcStore.toLowerCase()) || srcStore.toLowerCase().includes(n));
+      return { ...s, normalizedName: s.name, isBest: i === 0, isSource: isSrc, outOfStock: false, savingsBadge: '', lowestPrice: i === 0 };
+    });
 
     const srcEntry = stores.find(s => s.isSource);
     const savings  = srcEntry && !srcEntry.isBest ? srcEntry.price - stores[0].price : 0;
-    console.log('[Compare] ✅', stores.length, 'stores:', stores.map(s => s.name + ':₹' + s.price + (s.isSource?'[src]':'') + (s.isBest?'[best]':'')).join(' | '));
+    const JUNK_NAMES = ['flash ai assistant','flash ai','flash assistant','compare prices'];
+    const productName = JUNK_NAMES.some(j => (extracted.productName||'').toLowerCase().includes(j)) ? ('Product from ' + srcStore) : (extracted.productName || ('Product from ' + srcStore));
 
-    return res.json({ stores, productName, productImage, totalStores: stores.length, savings: savings > 0 ? savings : 0, dataSource: 'flash', resolvedUrl: url, pageHash });
+    console.log('[Compare] ✅ FINAL:', stores.map(s => s.name + ':₹' + s.price + (s.isSource?'[src]':'') + (s.isBest?'[best]':'')).join(' | '));
+
+    return res.json({
+      stores, productName,
+      productImage: extracted.productImage || '',
+      totalStores:  stores.length,
+      savings:      savings > 0 ? savings : 0,
+      dataSource:   'flash',
+      resolvedUrl:  url,
+      webappUrl,
+    });
 
   } catch(e) {
     console.error('[Compare] Error:', e.message);
     return res.status(500).json({ error: e.message });
   }
 });
+
 
 // ── /compare/debug — step-by-step Flash API diagnostic ──
 // Run: curl "https://api.smartpickdeals.live/compare/debug?url=https://amzn.in/d/01tGuO9p"
