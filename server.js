@@ -3333,6 +3333,36 @@ app.get('/compare/search', async (req, res) => {
           }, { timeout: 30000 });
         } catch(e) { console.log('[Compare/Puppeteer] Price wait timed out — extracting anyway'); }
 
+        // Wait for product name to load (not a Flash placeholder or empty)
+        const JUNK_NAMES = ['flash ai','compare prices','best price','loading','please wait','price compare'];
+        try {
+          await page.waitForFunction((junk) => {
+            // Try h1, h2, and title
+            const candidates = [
+              ...document.querySelectorAll('h1, h2, [class*="product"], [class*="title"], [class*="name"]'),
+            ];
+            for (const el of candidates) {
+              const t = (el.textContent || '').trim();
+              if (t.length > 8 && t.length < 400 && !junk.some(j => t.toLowerCase().includes(j))) return true;
+            }
+            // Also check page title
+            const title = document.title || '';
+            return title.length > 8 && !junk.some(j => title.toLowerCase().includes(j));
+          }, { timeout: 15000 }, JUNK_NAMES);
+        } catch(e) { console.log('[Compare/Puppeteer] Product name wait timed out'); }
+
+        // Wait for a real product image (not store logos)
+        try {
+          await page.waitForFunction(() => {
+            for (const img of document.querySelectorAll('img')) {
+              const src = img.src || '';
+              if (!src || src.includes('/merchants/') || src.includes('/favicon') || src.includes('logo')) continue;
+              if ((img.naturalWidth || img.width || 0) > 80) return true;
+            }
+            return false;
+          }, { timeout: 10000 });
+        } catch(e) { console.log('[Compare/Puppeteer] Image wait timed out'); }
+
         // Scroll to load all stores
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
         await new Promise(r => setTimeout(r, 2000));
@@ -3345,6 +3375,11 @@ app.get('/compare/search', async (req, res) => {
           }
         }).catch(() => {});
         await new Promise(r => setTimeout(r, 1500));
+
+        // Log page title for debugging
+        const pageTitle = await page.title().catch(() => '');
+        console.log('[Compare/Puppeteer] Page title:', pageTitle);
+        console.log('[Compare/Puppeteer] URL after load:', page.url());
 
         // Extract prices + store names + links from DOM
         return await page.evaluate(() => {
@@ -3444,30 +3479,67 @@ app.get('/compare/search', async (req, res) => {
             stores.push({ name: normalized, price, url: storeLinks[normalized] || '' });
           }
 
-          // Product name
-          const JUNK = ['flash ai','compare prices','best price','product details','loading','please wait'];
+          // Product name — try multiple sources
+          const JUNK = ['flash ai','compare prices','best price','product details','loading','please wait','price compare'];
           let productName = '';
-          for (const sel of ['h1','h2','[class*="product-name"]','[class*="productName"]']) {
-            for (const el of document.querySelectorAll(sel)) {
-              const t = el.textContent.trim();
-              if (t.length > 8 && t.length < 400 && !JUNK.some(j => t.toLowerCase().includes(j))) {
-                productName = t; break;
+
+          // 1. og:title meta tag (most reliable on webapp.flash.co)
+          const ogTitle = document.querySelector('meta[property="og:title"]');
+          if (ogTitle) {
+            const t = (ogTitle.getAttribute('content') || '').trim();
+            if (t.length > 8 && !JUNK.some(j => t.toLowerCase().includes(j))) productName = t;
+          }
+
+          // 2. Headings and product-name elements
+          if (!productName) {
+            for (const sel of ['h1','h2','[class*="product-name"]','[class*="productName"]','[class*="product_name"]','[class*="ProductName"]','[class*="item-name"]','[class*="itemName"]']) {
+              for (const el of document.querySelectorAll(sel)) {
+                const t = el.textContent.trim();
+                if (t.length > 8 && t.length < 400 && !JUNK.some(j => t.toLowerCase().includes(j))) {
+                  productName = t; break;
+                }
+              }
+              if (productName) break;
+            }
+          }
+
+          // 3. Page title (strip Flash branding)
+          if (!productName) {
+            const title = document.title.replace(/\s*[-|—]\s*(Flash.*|Compare.*|Best Price.*|Price Compare.*)$/i,'').trim();
+            if (title.length > 8 && !JUNK.some(j => title.toLowerCase().includes(j))) productName = title;
+          }
+
+          // Product image — try multiple sources
+          let productImage = '';
+
+          // 1. og:image (most reliable)
+          const ogImg = document.querySelector('meta[property="og:image"]');
+          if (ogImg) {
+            const src = (ogImg.getAttribute('content') || '').trim();
+            if (src && src.startsWith('http') && !src.includes('/merchants/') && !src.includes('logo')) productImage = src;
+          }
+
+          // 2. Flash CDN proxy — img.flash.co/plain/<encoded-url>
+          if (!productImage) {
+            for (const img of document.querySelectorAll('img')) {
+              const src = img.src || '';
+              if (!src || src.includes('/merchants/') || src.includes('/favicon') || src.includes('logo')) continue;
+              if (/img\.flash\.co.*\/plain\//.test(src)) {
+                try { const d = decodeURIComponent(src.split('/plain/')[1].split('?')[0]); if (d.startsWith('http')) { productImage = d; break; } } catch { productImage = src; break; }
               }
             }
-            if (productName) break;
           }
-          if (!productName) productName = document.title.replace(/\s*[-|—]\s*(Flash.*|Compare.*|Best Price.*)$/i,'').trim();
 
-          // Product image
-          let productImage = '';
-          for (const img of document.querySelectorAll('img')) {
-            const src = img.src || '';
-            if (!src || src.includes('/merchants/') || src.includes('/favicon') || src.includes('logo')) continue;
-            if (/img\.flash\.co.*\/plain\//.test(src)) {
-              try { const d = decodeURIComponent(src.split('/plain/')[1].split('?')[0]); if (d.startsWith('http')) { productImage = d; break; } } catch { productImage = src; break; }
+          // 3. Amazon / Flipkart CDN patterns
+          if (!productImage) {
+            for (const img of document.querySelectorAll('img')) {
+              const src = img.src || '';
+              if (!src || src.includes('/merchants/') || src.includes('/favicon') || src.includes('logo')) continue;
+              if (/media-amazon\.com|images-amazon\.com|_SL\d+_|_AC_|rukmini\d+\.flixcart|img\.flipkart/.test(src)) { productImage = src; break; }
             }
-            if (/media-amazon\.com|images-amazon\.com|_SL\d+_|rukmini\d+\.flixcart/.test(src)) { productImage = src; break; }
           }
+
+          // 4. Largest square-ish non-logo image
           if (!productImage) {
             let best = '', bestScore = 0;
             for (const img of document.querySelectorAll('img')) {
