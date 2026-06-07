@@ -3497,16 +3497,51 @@ app.get('/compare/search', async (req, res) => {
             if (seen.has(key)) return null;
 
             // ── 3. Find the store-specific outbound link ──
-            // Must link to this store, not flash.co or another store
-            let storeUrl = '';
             const storeKey = normalized.toLowerCase().replace(/\s/g,'');
+            // Known domains for each store
+            const storeDomains = {
+              'amazon': ['amazon.in','amazon.com','amzn.in'],
+              'flipkart': ['flipkart.com','fkrt.co'],
+              'myntra': ['myntra.com'],
+              'ajio': ['ajio.com'],
+              'nykaa': ['nykaa.com','nykaafashion.com'],
+              'tatacliq': ['tatacliq.com'],
+              'croma': ['croma.com'],
+              'snapdeal': ['snapdeal.com'],
+              'meesho': ['meesho.com'],
+              'jiomart': ['jiomart.com'],
+              'bigbasket': ['bigbasket.com'],
+              'zepto': ['zeptonow.com','zepto.com'],
+              'blinkit': ['blinkit.com','grofers.com'],
+              'swiggy': ['swiggy.com'],
+              'firstcry': ['firstcry.com'],
+              'netmeds': ['netmeds.com'],
+              'lenskart': ['lenskart.com'],
+              'boat': ['boat-lifestyle.com'],
+              'reliancedigital': ['reliancedigital.in'],
+              'vijaysales': ['vijaysales.com'],
+              'zebrs': ['zebrs.com'],
+              'poorvika': ['poorvika.com'],
+              'sangeetha': ['sangeetha.com'],
+            };
+            const expectedDomains = storeDomains[storeKey] || [storeKey + '.com'];
+
+            let storeUrl = '';
+            // Pass 1: find link whose href (or embedded ulp param) matches store domain
             for (const a of card.querySelectorAll('a[href]')) {
               const href = a.href || '';
-              if (!href || href.includes('flash.co') || href.includes('webapp.flash') || href === '#') continue;
-              // Prefer link that matches this store's domain
-              if (href.toLowerCase().includes(storeKey)) { storeUrl = href; break; }
+              if (!href || href.includes('webapp.flash.co') || href === '#') continue;
+              // Unwrap redirect URLs that contain store URL as a param
+              let checkUrl = href;
+              try {
+                const u = new URL(href);
+                const ulp = u.searchParams.get('ulp') || u.searchParams.get('url') || u.searchParams.get('dest');
+                if (ulp) checkUrl = ulp;
+              } catch(e) {}
+              const checkL = checkUrl.toLowerCase();
+              if (expectedDomains.some(d => checkL.includes(d))) { storeUrl = href; break; }
             }
-            // Fallback: any outbound link in this card
+            // Pass 2: any outbound link in this card that isn't flash
             if (!storeUrl) {
               for (const a of card.querySelectorAll('a[href]')) {
                 const href = a.href || '';
@@ -3547,14 +3582,21 @@ app.get('/compare/search', async (req, res) => {
           }
 
           // ── Strategy 2: Fallback — link-anchored per-store extraction ──
-          // If no card selector worked, find each outbound store link and
-          // search its closest container for a price.
           if (stores.length < 2) {
             seen.clear();
             document.querySelectorAll('a[href]').forEach(a => {
               const href = a.href || '';
-              if (!href || href.includes('flash.co') || href.includes('webapp.flash')) return;
-              const hl = href.toLowerCase();
+              if (!href || href.includes('webapp.flash.co') || !href.startsWith('http')) return;
+
+              // Unwrap redirect URLs
+              let checkUrl = href;
+              try {
+                const u = new URL(href);
+                const ulp = u.searchParams.get('ulp') || u.searchParams.get('url') || u.searchParams.get('dest');
+                if (ulp) checkUrl = ulp;
+              } catch(e) {}
+              const hl = checkUrl.toLowerCase();
+
               const matchedStore = KNOWN_STORES.find(s => s.length > 3 && hl.includes(s));
               if (!matchedStore) return;
               const normalized = normName(matchedStore);
@@ -3578,8 +3620,8 @@ app.get('/compare/search', async (req, res) => {
               seen.add(normalized.toLowerCase());
               stores.push({
                 name: normalized, price, url: href,
-                outOfStock: /out of stock/i.test(cardText),
-                isSource:   /you came from here/i.test(cardText),
+                outOfStock:  /out of stock/i.test(cardText),
+                isSource:    /you came from here/i.test(cardText),
                 lowestPrice: /lowest price/i.test(cardText),
                 savingsBadge: '',
               });
@@ -3680,17 +3722,33 @@ app.get('/compare/search', async (req, res) => {
       });
     }
 
-    // Sort + mark best/source
-    let stores = extracted.stores.sort((a, b) => a.price - b.price).map((s, i) => {
-      const n = s.name.toLowerCase();
-      const isSrc = srcStore && (n === srcStore.toLowerCase() || n.includes(srcStore.toLowerCase()) || srcStore.toLowerCase().includes(n));
-      return { ...s, normalizedName: s.name, isBest: i === 0, isSource: isSrc, outOfStock: false, savingsBadge: '', lowestPrice: i === 0 };
-    });
+    // Sort + mark best/source using Flash's own DOM-detected flags
+    let stores = extracted.stores
+      .sort((a, b) => a.price - b.price)
+      .map((s, i) => {
+        // Use Flash's isSource flag if set, fallback to URL-based detection
+        const urlSrc = srcStore && s.name.toLowerCase().includes(srcStore.toLowerCase());
+        const isSrc  = s.isSource || urlSrc;
+        // Best = lowest price that isn't out of stock
+        const inStockStores = extracted.stores.filter(x => !x.outOfStock);
+        const bestPrice = inStockStores.length > 0 ? Math.min(...inStockStores.map(x => x.price)) : 0;
+        return {
+          ...s,
+          normalizedName: s.name,
+          isSource:   isSrc,
+          isBest:     !s.outOfStock && s.price === bestPrice,
+          lowestPrice: s.lowestPrice || (!s.outOfStock && s.price === bestPrice),
+        };
+      });
 
     const srcEntry = stores.find(s => s.isSource);
-    const savings  = srcEntry && !srcEntry.isBest ? srcEntry.price - stores[0].price : 0;
-    const JUNK_NAMES = ['flash ai assistant','flash ai','flash assistant','compare prices'];
-    const productName = JUNK_NAMES.some(j => (extracted.productName||'').toLowerCase().includes(j)) ? ('Product from ' + srcStore) : (extracted.productName || ('Product from ' + srcStore));
+    const bestEntry = stores.find(s => s.isBest);
+    const savings  = (srcEntry && bestEntry && !srcEntry.isBest)
+      ? srcEntry.price - bestEntry.price : 0;
+
+    const JUNK_NAMES = ['flash ai assistant','flash ai','flash assistant','compare prices','price compare'];
+    const productName = JUNK_NAMES.some(j => (extracted.productName||'').toLowerCase().includes(j))
+      ? ('Product from ' + srcStore) : (extracted.productName || ('Product from ' + srcStore));
 
     console.log('[Compare] ✅ FINAL:', stores.map(s => s.name + ':₹' + s.price + (s.isSource?'[src]':'') + (s.isBest?'[best]':'')).join(' | '));
 
