@@ -754,23 +754,12 @@
 ══════════════════════════════════════════════════════════ */
 var BACKEND_URL      = 'https://api.smartpickdeals.live';
 var BACKEND_PRIMARY  = 'https://api.smartpickdeals.live';
-var BACKEND_FALLBACK = 'https://extrape-affiliate.onrender.com';
 var BACKEND          = BACKEND_PRIMARY;
-var backendReady     = false;
+var backendReady     = true; // VPS is always primary, no fallback needed
 
 async function resolveBackend() {
-  if (backendReady) return BACKEND_URL;
-  try {
-    var r = await fetch(BACKEND_PRIMARY + '/ping', { signal: AbortSignal.timeout(2500) });
-    if (r.ok) { BACKEND_URL = BACKEND_PRIMARY; BACKEND = BACKEND_PRIMARY; }
-    else throw new Error();
-  } catch(e) {
-    BACKEND_URL = BACKEND_FALLBACK; BACKEND = BACKEND_FALLBACK;
-  }
-  backendReady = true;
   return BACKEND_URL;
 }
-resolveBackend(); // pre-warm
 
 /* ══════════════════════════════════════════════════════════
    MODE SWITCHING (Convert / Compare)
@@ -1225,9 +1214,26 @@ async function getAffiliateLink(url, store) {
 }
 
 async function getCompareData(url) {
+  // ── Strategy 1: Call Flash.co directly from browser using user's own token ──
+  // This is the fast path — no Puppeteer, no server round-trip for Flash auth.
+  // Requires user to be logged in to flash.co (token stored in cookie).
+  var flashTok = getCookie('flash_auth_token');
+  if (flashTok) {
+    try {
+      var fr = await callFlash(url, flashTok);
+      if (fr && fr.stores && fr.stores.length > 0) {
+        console.log('[Compare] Flash browser strategy got', fr.stores.length, 'stores');
+        return fr;
+      }
+    } catch(e) {
+      console.log('[Compare] Flash browser call failed:', e.message);
+    }
+  }
+
+  // ── Strategy 2: Server-side fallback (Buyhatke / server Flash token) ──
   try { await fetch(BACKEND + '/ping', { signal: AbortSignal.timeout(5000) }); } catch(e) {}
   try {
-    var r = await fetch(BACKEND + '/compare/search?url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(200000) });
+    var r = await fetch(BACKEND + '/compare/search?url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(90000) });
     var body = await r.json().catch(function(){ return {}; });
     if (!r.ok) {
       var msg = body.error || ('Server error ' + r.status);
@@ -1237,10 +1243,122 @@ async function getCompareData(url) {
     return body;
   } catch(e) {
     if (e.name === 'AbortError' || e.message === 'Failed to fetch' || e.message.includes('signal')) {
-      throw new Error('Price comparison is taking longer than expected. Please try again — it usually works on the second attempt.');
+      throw new Error('Price comparison timed out. Please try again.');
     }
     throw e;
   }
+}
+
+// ── Browser-side Flash call (original working strategy from compare.html) ──
+// Calls Flash.co API directly using the user's own session token from cookie.
+// No Puppeteer needed — works instantly.
+async function callFlash(productUrl, token) {
+  var h = {
+    'Authorization':  'Bearer ' + token,
+    'Channel-Type':   'web',
+    'Content-Type':   'application/json',
+    'Origin':         'https://flash.co',
+    'X-Country-Code': 'IN',
+    'X-Device-Id':    getCookie('flash_device_id') || 'web-spd',
+    'X-Timezone':     'Asia/Calcutta',
+  };
+
+  // Step 1: Get pageHash from stream
+  var sr = await fetch(
+    'https://apiv3.flash.tech/agents/chat/stream?source=APPEND&context=HOME_URL_PASTE&device_type=DESKTOP&country_code=IN',
+    { method: 'POST', headers: h, body: JSON.stringify({ query: productUrl, context: 'HOME_URL_PASTE' }), signal: AbortSignal.timeout(30000) }
+  );
+  if (!sr.ok) throw new Error('Flash stream ' + sr.status);
+  var text = await sr.text();
+
+  // Extract pageHash from SSE stream
+  var pageHash = null;
+  var patterns = [
+    /price-compare\/\d+\/h\/([A-Za-z0-9_-]{4,})/,
+    /product-search\/([A-Za-z0-9_-]{4,})/,
+    /\/h\/([A-Za-z0-9_-]{4,})/,
+  ];
+  for (var i = 0; i < patterns.length; i++) {
+    var m = text.match(patterns[i]);
+    if (m) { pageHash = m[1]; break; }
+  }
+  // Also try parsing SSE data lines
+  if (!pageHash) {
+    var lines = text.split('\n');
+    for (var j = 0; j < lines.length; j++) {
+      if (!lines[j].startsWith('data:')) continue;
+      try {
+        var d = JSON.parse(lines[j].slice(5).trim());
+        pageHash = d.pageHash || d.referenceId || d.hash || (d.data && (d.data.pageHash || d.data.referenceId)) || null;
+        if (pageHash) break;
+      } catch(e2) {}
+    }
+  }
+  if (!pageHash) throw new Error('No pageHash in Flash stream response');
+
+  console.log('[Flash] pageHash:', pageHash);
+
+  // Step 2: Fetch prices using pageHash
+  var hGet = { 'Authorization': h['Authorization'], 'Channel-Type': h['Channel-Type'], 'Origin': h['Origin'], 'X-Country-Code': h['X-Country-Code'], 'X-Device-Id': h['X-Device-Id'], 'X-Timezone': h['X-Timezone'] };
+  var pr = await fetch(
+    'https://apiv3.flash.tech/api/v1/customer/feedback/fetch?scope=PRICE_COMPARE&referenceId=' + pageHash,
+    { headers: hGet, signal: AbortSignal.timeout(15000) }
+  );
+  if (!pr.ok) throw new Error('Flash prices ' + pr.status);
+  var pd = await pr.json();
+
+  // Parse store prices using recursive dig (original parseFlash logic)
+  var stores = parseFlash(pd);
+  var productName  = pd.productName || pd.name || (pd.data && pd.data.name) || null;
+  var productImage = pd.imageUrl || pd.image || (pd.data && pd.data.imageUrl) || null;
+
+  return { stores: stores, productName: productName, productImage: productImage, dataSource: 'flash' };
+}
+
+// Recursive dig to find store price arrays in Flash response (original parseFlash)
+function parseFlash(data) {
+  var best = [];
+  function dig(o, d) {
+    if (!o || d > 7 || typeof o !== 'object') return;
+    if (Array.isArray(o)) {
+      if (o.length > 0) {
+        var f = o[0];
+        if (f && (f.price !== undefined || f.amount !== undefined || f.storeName || f.retailer)) best.push(o);
+      }
+      o.forEach(function(x){ dig(x, d+1); });
+    } else {
+      Object.values(o).forEach(function(v){ dig(v, d+1); });
+    }
+  }
+  dig(data, 0);
+  best.sort(function(a, b){ return b.length - a.length; });
+  return (best[0] || []).map(function(s) {
+    var raw   = s.storeName || s.name || s.store || s.retailer || '';
+    var name  = normStore(raw) || raw;
+    var price = parseInt(String(s.price || s.amount || s.salePrice || 0).replace(/[^0-9]/g,'')) || 0;
+    return { name: name, normalizedName: name, price: price, url: s.url || s.link || '' };
+  }).filter(function(s){ return s.price > 0 && s.name; });
+}
+
+function normStore(s) {
+  var l = (s || '').toLowerCase();
+  if (l.includes('amazon'))   return 'Amazon';
+  if (l.includes('flipkart')) return 'Flipkart';
+  if (l.includes('myntra'))   return 'Myntra';
+  if (l.includes('ajio'))     return 'Ajio';
+  if (l.includes('nykaa'))    return 'Nykaa';
+  if (l.includes('tatacliq')) return 'TataCliq';
+  if (l.includes('croma'))    return 'Croma';
+  if (l.includes('snapdeal')) return 'Snapdeal';
+  if (l.includes('meesho'))   return 'Meesho';
+  if (l.includes('jiomart'))  return 'JioMart';
+  if (l.includes('zepto'))    return 'Zepto';
+  if (l.includes('blinkit'))  return 'Blinkit';
+  if (l.includes('swiggy'))   return 'Swiggy';
+  if (l.includes('bigbasket'))return 'BigBasket';
+  if (l.includes('zebrs'))    return 'Zebrs';
+  if (l.includes('fire-boltt') || l.includes('fireboltt')) return 'Fire-Boltt';
+  return '';
 }
 
 var FLASH_BRAND_NAMES = ['flash ai assistant','flash ai','flash assistant','compare prices','best price','product details','loading','please wait','price compare'];
@@ -1394,9 +1512,7 @@ function wireStoreButtons(copyId, shareId, visitId, link, name, storeObj) {
   if (vBtn) {
     vBtn.onclick = function() {
       var l = storeObj.affiliateLink || storeObj.displayLink || link;
-      fetch(BACKEND + '/track/click', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dest: l, store: name }) }).catch(function(){
-        fetch(BACKEND_FALLBACK + '/track/click', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dest: l, store: name }) }).catch(function(){});
-      });
+      fetch(BACKEND + '/track/click', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dest: l, store: name }) }).catch(function(){});
       window.open(l, '_blank');
     };
   }

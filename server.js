@@ -1243,62 +1243,7 @@ connectDB();
 // ── Auto-sync Render in-memory data on every startup ──
 // Runs whenever this server starts (reboot, pm2 restart, or pm2 start)
 // If Render has no MONGO_URI, it stores data in-memory → pull it here
-async function syncFromRender() {
-  const RENDER = 'https://extrape-affiliate.onrender.com';
-  // Wait for DB to connect first
-  for (let i = 0; i < 10; i++) {
-    if (dbConnected) break;
-    await new Promise(r => setTimeout(r, 1500));
-  }
-  if (!dbConnected) return console.log('[Sync] Skipped — DB not connected');
-
-  try {
-    console.log('[Sync] Pulling Render data...');
-    const r = await fetch(
-      RENDER + '/dashboard/stats?from=2024-01-01T00:00:00.000Z&to=' + new Date().toISOString(),
-      { signal: AbortSignal.timeout(15000) }
-    );
-    if (!r.ok) return console.log('[Sync] Render returned', r.status);
-    const d = await r.json();
-
-    if (d.dbConnected) {
-      return console.log('[Sync] Render uses same MongoDB — no sync needed ✅');
-    }
-
-    // Only merge if Render has data worth syncing
-    const total = (d.pageVisits||0) + (d.conversions||0) + (d.clicks||0) + (d.compares||0);
-    if (total === 0) return console.log('[Sync] Render has no in-memory data to sync');
-
-    // Merge counters
-    await Counter.updateOne({ _id: 'main' }, {
-      $inc: {
-        pageVisits:  d.pageVisits  || 0,
-        conversions: d.conversions || 0,
-        clicks:      d.clicks      || 0,
-        compares:    d.compares    || 0,
-      }
-    });
-
-    // Save recent events (avoid duplicates by checking ts + dest)
-    const events = [
-      ...(d.recentVisits      || []).map(e => ({ type:'visit',      url:e.url||'',  ts:new Date(e.ts) })),
-      ...(d.recentConversions || []).map(e => ({ type:'conversion',  url:e.url||'',  store:e.store||'', state:e.state||'', ts:new Date(e.ts) })),
-      ...(d.recentClicks      || []).map(e => ({ type:'click', dest:e.dest||'', store:e.store||detectStoreFromUrl(e.dest||''), ts:new Date(e.ts) })),
-    ].filter(e => e.ts && !isNaN(e.ts.getTime()));
-
-    if (events.length > 0) {
-      await Event.insertMany(events, { ordered: false }).catch(() => {});
-    }
-
-    console.log('[Sync] ✅ Merged from Render — visits:' + (d.pageVisits||0) +
-      ' conversions:' + (d.conversions||0) + ' clicks:' + (d.clicks||0) +
-      ' events saved:' + events.length);
-  } catch(e) {
-    console.log('[Sync] Failed to reach Render:', e.message);
-  }
-}
-// Run sync 5 seconds after startup (gives DB time to connect)
-setTimeout(syncFromRender, 5000);
+// Render sync removed — VPS is the only backend now
 
 // Backfill ALL click events with store names (runs after DB connects)
 async function backfillStoresOnStart() {
@@ -3455,6 +3400,48 @@ app.get('/compare/search', async (req, res) => {
           const seen = new Set();
           const stores = [];
 
+          // ═══════════════════════════════════════════════════
+          // STRATEGY 0: __NEXT_DATA__ — most reliable source
+          // webapp.flash.co is Next.js — all data is in the
+          // <script id="__NEXT_DATA__"> tag as serialised JSON.
+          // Prices here are exact and per-store.
+          // ═══════════════════════════════════════════════════
+          (() => {
+            const el = document.getElementById('__NEXT_DATA__');
+            if (!el) return;
+            try {
+              const nd = JSON.parse(el.textContent);
+              function dig(o, d, acc) {
+                if (!o || d > 12 || typeof o !== 'object') return;
+                if (Array.isArray(o)) {
+                  const items = o.filter(x => x && typeof x === 'object' &&
+                    (x.storeName || x.store_name || x.name || x.merchant || x.retailer) &&
+                    (x.price !== undefined || x.salePrice !== undefined || x.sellingPrice !== undefined || x.amount !== undefined));
+                  if (items.length >= 2) { acc.push(items); return; }
+                  o.forEach(x => dig(x, d+1, acc));
+                } else { Object.values(o).forEach(v => dig(v, d+1, acc)); }
+              }
+              const lists = []; dig(nd, 0, lists);
+              lists.sort((a,b) => b.length - a.length);
+              const best = lists[0] || [];
+              for (const item of best) {
+                const rawName = item.storeName || item.store_name || item.name || item.merchant || item.retailer || '';
+                const name = normName(rawName);
+                if (!name || seen.has(name.toLowerCase())) continue;
+                const rawPrice = item.price ?? item.salePrice ?? item.sellingPrice ?? item.amount ?? 0;
+                const price = parseInt(String(rawPrice).replace(/[^0-9]/g,'')) || 0;
+                if (price <= 0) continue;
+                // Unwrap redirect URLs
+                let url = item.url || item.link || item.deepLink || item.productUrl || '';
+                try { const u = new URL(url); const ulp = u.searchParams.get('ulp')||u.searchParams.get('url')||u.searchParams.get('dest'); if(ulp) url=ulp; } catch(e) {}
+                const outOfStock = !!(item.outOfStock || item.oos || item.out_of_stock);
+                seen.add(name.toLowerCase());
+                stores.push({ name, price, url, outOfStock, isSource: false, lowestPrice: false, savingsBadge: '', _src: 'next' });
+              }
+              if (stores.length >= 2) return; // Strategy 0 succeeded — skip DOM strategies
+            } catch(e) {}
+          })();
+
           function extractCard(card) {
             // ── 1. Find the main price (the actual selling price, not discount) ──
             // Collect ALL price text nodes in this card, pick the LARGEST valid one
@@ -3568,7 +3555,8 @@ app.get('/compare/search', async (req, res) => {
                      outOfStock, isSource, lowestPrice: isLowest, savingsBadge };
           }
 
-          // Try each card selector
+          // Try each card selector — only if Strategy 0 didn't find stores
+          if (stores.length < 2) {
           for (const sel of cardSelectors) {
             const cards = document.querySelectorAll(sel);
             if (cards.length < 2) continue;
@@ -3580,6 +3568,7 @@ app.get('/compare/search', async (req, res) => {
             }
             if (batch.length >= 2) { stores.push(...batch); break; }
           }
+          } // end Strategy 1 guard
 
           // ── Strategy 2: Fallback — link-anchored per-store extraction ──
           if (stores.length < 2) {
@@ -3628,7 +3617,24 @@ app.get('/compare/search', async (req, res) => {
             });
           }
 
-          // Product name — try multiple sources
+          // For stores from Strategy 0 (__NEXT_DATA__), enrich with DOM badges
+          // "You came from here" / savings badge / out of stock come from the rendered page
+          if (stores.length > 0 && stores[0]._src === 'next') {
+            stores.forEach(s => {
+              // Find the store's card in the DOM by name
+              for (const el of document.querySelectorAll('*')) {
+                const t = (el.textContent || '');
+                if (!t.includes(s.name)) continue;
+                const tl = t.toLowerCase();
+                if (/you came from here/i.test(t) && t.length < 500) { s.isSource = true; }
+                if (/out of stock|unavailable/i.test(t) && t.length < 500) { s.outOfStock = true; }
+                if (/lowest price|best price/i.test(t) && t.length < 200) { s.lowestPrice = true; }
+                const saveM = t.match(/save\s*₹[\d,]+[^.!\n]{0,40}/i);
+                if (saveM && !s.savingsBadge) s.savingsBadge = saveM[0].trim().substring(0, 50);
+                break;
+              }
+            });
+          }
           const JUNK = ['flash ai','compare prices','best price','product details','loading','please wait','price compare'];
           let productName = '';
 
@@ -3703,7 +3709,9 @@ app.get('/compare/search', async (req, res) => {
             productImage = best;
           }
 
-          return { stores, productName, productImage };
+          return { stores, productName, productImage,
+            debug: { cardCount: stores.filter(s=>s._src==='card').length, linkCount: stores.filter(s=>s._src==='link').length, nextCount: 0 }
+          };
         });
 
       } finally {
