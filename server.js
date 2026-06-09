@@ -3876,6 +3876,96 @@ app.get('/compare/rawdata', async (req, res) => {
   } catch(e) { return res.status(500).json({ error: e.message }); }
 });
 
+// ── /compare/dump — extract raw __NEXT_DATA__ from webapp.flash.co to diagnose price structure ──
+app.get('/compare/dump', async (req, res) => {
+  const { url: rawUrl } = req.query;
+  if (!rawUrl) return res.json({ usage: 'GET /compare/dump?url=PRODUCT_URL' });
+  const token = flashTokenCache.token || '';
+  if (!token) return res.status(503).json({ error: 'No Flash token' });
+
+  try {
+    let url = rawUrl;
+    try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; url = pu.toString(); } } catch(e) {}
+    if (isShortUrl(url)) { try { url = await resolveRedirect(url); } catch(e) {} }
+
+    // Step 1: Get itemId + pageHash from stream
+    const headers = {
+      'Authorization': 'Bearer ' + token, 'Channel-Type': 'web', 'Content-Type': 'application/json',
+      'Origin': 'https://flash.co', 'Referer': 'https://flash.co/',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36',
+      'X-Country-Code': 'IN', 'X-Device-Id': flashTokenCache.deviceId || 'web-spd', 'X-Timezone': 'Asia/Calcutta',
+    };
+    const streamParams = new URLSearchParams({ source:'APPEND', context:'HOME_URL_PASTE', device_type:'DESKTOP', country_code:'IN' });
+    const sr = await fetch('https://apiv3.flash.tech/agents/chat/stream?' + streamParams, {
+      method:'POST', headers, body: JSON.stringify({ query: url, context:'HOME_URL_PASTE' }), signal: AbortSignal.timeout(35000),
+    });
+    const streamText = await sr.text();
+    const navMatch = streamText.match(/webapp\.flash\.co\/item\/(\d+)\/h\/([A-Za-z0-9_-]+)/);
+    if (!navMatch) return res.json({ error: 'No item URL in stream', streamSample: streamText.substring(0, 300) });
+
+    const itemId = navMatch[1], pageHash = navMatch[2];
+    const webappUrl = `https://webapp.flash.co/item/${itemId}/h/${pageHash}`;
+
+    // Step 2: Open in Puppeteer and dump __NEXT_DATA__ + all price text
+    const dump = await withFlashBrowser(async () => {
+      const browser = await getFlashBrowser();
+      const page = await browser.newPage();
+      await page.setViewport({ width: 1280, height: 900 });
+      await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36');
+      try {
+        await page.goto('https://webapp.flash.co', { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+        await page.evaluate((tok) => { try { localStorage.setItem('authToken', tok); } catch(e) {} }, token);
+        await page.goto(webappUrl, { waitUntil: 'networkidle2', timeout: 40000 });
+
+        // Wait for prices
+        await page.waitForFunction(() => (document.body.innerText.match(/₹[\d,]+/g)||[]).length >= 2, { timeout: 30000 }).catch(() => {});
+        await new Promise(r => setTimeout(r, 3000));
+
+        return await page.evaluate(() => {
+          // 1. Raw __NEXT_DATA__
+          const el = document.getElementById('__NEXT_DATA__');
+          const nextDataRaw = el ? el.textContent : 'NOT FOUND';
+
+          // 2. All price text nodes on the page
+          const priceTexts = [];
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+          let node;
+          while ((node = walker.nextNode())) {
+            const t = node.textContent.trim();
+            if (/^₹[\d,]+$/.test(t)) {
+              const container = node.parentElement?.parentElement?.textContent?.trim().substring(0, 80) || '';
+              priceTexts.push({ price: t, context: container });
+            }
+          }
+
+          // 3. All outbound links
+          const links = [];
+          document.querySelectorAll('a[href]').forEach(a => {
+            if (a.href && !a.href.includes('flash.co') && a.href.startsWith('http'))
+              links.push(a.href.substring(0, 120));
+          });
+
+          // 4. Count store names visible on page
+          const bodyText = document.body.innerText;
+          const storeMatches = bodyText.match(/(Amazon|Flipkart|Myntra|Ajio|Nykaa|TataCliq|Croma|Zepto|Blinkit|JioMart|Meesho|Reliance)/g) || [];
+          const uniqueStores = [...new Set(storeMatches)];
+
+          return {
+            pageTitle: document.title,
+            nextDataLength: nextDataRaw.length,
+            nextDataSample: nextDataRaw.substring(0, 3000),
+            priceTexts: priceTexts.slice(0, 20),
+            outboundLinks: [...new Set(links)].slice(0, 15),
+            storesVisibleOnPage: uniqueStores,
+          };
+        });
+      } finally { await page.close().catch(() => {}); }
+    });
+
+    return res.json({ resolvedUrl: url, webappUrl, ...dump });
+  } catch(e) { return res.status(500).json({ error: e.message }); }
+});
+
 app.get('/compare/debug', async (req, res) => {
   const { url: rawUrl } = req.query;
   if (!rawUrl) return res.json({
