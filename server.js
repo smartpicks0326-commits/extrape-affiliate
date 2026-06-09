@@ -3257,8 +3257,27 @@ app.get('/compare/search', async (req, res) => {
       await page.setViewport({ width: 1280, height: 900 });
       await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
 
+      // Intercept Flash's client-side API responses to capture store prices directly
+      const interceptedData = [];
+      await page.setRequestInterception(true);
+      page.on('request', req => req.continue());
+      page.on('response', async resp => {
+        const url = resp.url();
+        // Capture any Flash API response that might contain store prices
+        if ((url.includes('apiv3.flash.tech') || url.includes('api.flash.co') || url.includes('webapp.flash.co')) &&
+            !url.includes('/stream')) {
+          try {
+            const ct = resp.headers()['content-type'] || '';
+            if (ct.includes('json')) {
+              const json = await resp.json().catch(() => null);
+              if (json) interceptedData.push({ url: url.substring(0, 100), data: json });
+            }
+          } catch(e) {}
+        }
+      });
+
       try {
-        // Inject auth token before navigating
+        // Inject auth token
         await page.goto('https://webapp.flash.co', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
         await page.evaluate((tok) => {
           try { localStorage.setItem('authToken',   tok); } catch(e) {}
@@ -3269,22 +3288,286 @@ app.get('/compare/search', async (req, res) => {
         await page.goto(webappUrl, { waitUntil: 'networkidle2', timeout: 40000 });
         console.log('[Compare/Puppeteer] Loaded:', page.url());
 
-        // Wait for price data to appear — wait until 3+ stores visible or timeout
+        // Wait until we see at least 3 distinct ₹ prices (all stores loaded)
         try {
           await page.waitForFunction(() => {
-            // Count distinct ₹ price blocks — when we have 3+ the comparison is loaded
-            const priceEls = document.querySelectorAll('*');
-            let count = 0;
-            priceEls.forEach(el => {
-              if (el.children.length === 0 && /^₹[\d,]+$/.test((el.textContent||'').trim())) count++;
-            });
-            return count >= 3;
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+            const prices = new Set();
+            let node;
+            while ((node = walker.nextNode())) {
+              const t = node.textContent.trim();
+              if (/^₹[\d,]+$/.test(t)) prices.add(t);
+            }
+            return prices.size >= 3;
           }, { timeout: 35000 });
-          console.log('[Compare/Puppeteer] 3+ prices detected — page fully loaded');
-        } catch(e) { console.log('[Compare/Puppeteer] Price wait timed out — extracting with what we have'); }
+          console.log('[Compare/Puppeteer] 3+ distinct prices detected');
+        } catch(e) { console.log('[Compare/Puppeteer] Price wait timed out'); }
 
-        // Extra wait for Next.js to finish hydrating and rendering all store cards
+        // Wait for all store cards to render (outbound links present)
+        try {
+          await page.waitForFunction(() => {
+            const links = document.querySelectorAll('a[href]');
+            let outbound = 0;
+            links.forEach(a => { if (a.href && !a.href.includes('flash.co') && a.href.startsWith('http')) outbound++; });
+            return outbound >= 3;
+          }, { timeout: 20000 });
+          console.log('[Compare/Puppeteer] 3+ outbound links detected');
+        } catch(e) { console.log('[Compare/Puppeteer] Link wait timed out'); }
+
+        // Extra settle time for all dynamic content
+        await new Promise(r => setTimeout(r, 4000));
+
+        // Scroll to trigger lazy-loaded stores
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await new Promise(r => setTimeout(r, 2000));
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await new Promise(r => setTimeout(r, 1000));
+
+        // Log page title and intercepted API calls
+        const pageTitle = await page.title().catch(() => '');
+        console.log('[Compare/Puppeteer] Page title:', pageTitle);
+        console.log('[Compare/Puppeteer] Intercepted API calls:', interceptedData.length,
+          interceptedData.map(d => d.url).join(' | ').substring(0, 200));
+
+        // Check intercepted data for store prices first
+        let interceptedStores = [];
+        for (const { url: apiUrl, data } of interceptedData) {
+          function digIntercepted(o, d, acc) {
+            if (!o || d > 10 || typeof o !== 'object') return;
+            if (Array.isArray(o)) {
+              const items = o.filter(x => x && typeof x === 'object' &&
+                (x.storeName || x.store_name || x.name || x.merchant || x.retailer) &&
+                (x.price !== undefined || x.salePrice !== undefined || x.amount !== undefined));
+              if (items.length >= 2) { acc.push(...items); return; }
+              o.forEach(x => digIntercepted(x, d+1, acc));
+            } else { Object.values(o).forEach(v => digIntercepted(v, d+1, acc)); }
+          }
+          const items = []; digIntercepted(data, 0, items);
+          if (items.length > interceptedStores.length) interceptedStores = items;
+        }
+        console.log('[Compare/Puppeteer] Intercepted stores:', interceptedStores.length);
+
+        // Extract from DOM
+        return await page.evaluate((intercepted) => {
+
+        // Wait for 3+ price nodes — page is loading store data via client-side API
+        try {
+          await page.waitForFunction(() =>
+            (document.body.innerText.match(/₹[\d,]{3,}/g) || []).length >= 3,
+            { timeout: 35000 }
+          );
+          console.log('[Compare/Puppeteer] Prices detected');
+        } catch(e) { console.log('[Compare/Puppeteer] Price wait timed out'); }
+
+        // Wait for multiple outbound store links (at least 3 = stores have rendered their buttons)
+        try {
+          await page.waitForFunction(() => {
+            const links = [...document.querySelectorAll('a[href]')]
+              .filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http'));
+            return links.length >= 3;
+          }, { timeout: 25000 });
+          console.log('[Compare/Puppeteer] Store links detected');
+        } catch(e) { console.log('[Compare/Puppeteer] Store links wait timed out'); }
+
+        // Scroll to trigger lazy loading of remaining store cards
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
         await new Promise(r => setTimeout(r, 3000));
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await new Promise(r => setTimeout(r, 1000));
+
+        // Click "View all stores" if present to expand the full list
+        const clicked = await page.evaluate(() => {
+          for (const el of document.querySelectorAll('button, a, [role="button"], span, div')) {
+            const t = (el.textContent || '').toLowerCase().trim();
+            if (/view all|show all|all stores|more stores|view \d+ store/.test(t)) {
+              el.click(); return true;
+            }
+          }
+          return false;
+        }).catch(() => false);
+        if (clicked) {
+          await new Promise(r => setTimeout(r, 3000));
+          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+          await new Promise(r => setTimeout(r, 2000));
+        }
+
+        const pageTitle = await page.title().catch(() => '');
+        const pageUrl = page.url();
+        console.log('[Compare/Puppeteer] Title:', pageTitle, '| URL:', pageUrl.substring(0, 80));
+
+        // Count outbound links for debugging
+        const linkCount = await page.evaluate(() =>
+          [...document.querySelectorAll('a[href]')].filter(a => a.href && !a.href.includes('flash.co')).length
+        ).catch(() => 0);
+        console.log('[Compare/Puppeteer] Outbound links visible:', linkCount);
+
+        // ── DOM Extraction ──
+        // webapp.flash.co is pure client-side React — no __NEXT_DATA__.
+        // Strategy: find every outbound store link, then find the price in
+        // the same card container. Also try finding store logos (img alt)
+        // near price nodes as a fallback.
+        return await page.evaluate(() => {
+          function normName(raw) {
+            const l = (raw||'').toLowerCase().trim();
+            if (l.includes('amazon'))    return 'Amazon';
+            if (l.includes('flipkart'))  return 'Flipkart';
+            if (l.includes('myntra'))    return 'Myntra';
+            if (l.includes('ajio'))      return 'Ajio';
+            if (l.includes('nykaa'))     return 'Nykaa';
+            if (l.includes('tatacliq') || l === 'tata cliq') return 'TataCliq';
+            if (l.includes('croma'))     return 'Croma';
+            if (l.includes('snapdeal'))  return 'Snapdeal';
+            if (l.includes('meesho'))    return 'Meesho';
+            if (l.includes('jiomart'))   return 'JioMart';
+            if (l.includes('bigbasket')) return 'BigBasket';
+            if (l.includes('zepto'))     return 'Zepto';
+            if (l.includes('blinkit'))   return 'Blinkit';
+            if (l.includes('swiggy'))    return 'Swiggy';
+            if (l.includes('firstcry'))  return 'FirstCry';
+            if (l.includes('netmeds'))   return 'Netmeds';
+            if (l.includes('lenskart'))  return 'Lenskart';
+            if (l.includes('boat'))      return 'Boat';
+            if (l.includes('zebrs'))     return 'Zebrs';
+            if (l.includes('reliance'))  return 'Reliance Digital';
+            if (l.includes('vijay'))     return 'Vijay Sales';
+            if (l.includes('fire-boltt') || l.includes('fireboltt')) return 'Fire-Boltt';
+            if (l.includes('poorvika'))  return 'Poorvika';
+            if (l.includes('sangeetha')) return 'Sangeetha';
+            return '';
+          }
+
+          function parsePrice(text) {
+            const m = (text||'').trim().match(/^₹\s*([\d,]+)$/);
+            if (!m) return 0;
+            const p = parseInt(m[1].replace(/,/g,''));
+            return (p >= 100 && p <= 10000000) ? p : 0;
+          }
+
+          function isDiscountContext(el) {
+            for (let p = el.parentElement, i = 0; p && i < 4; p = p.parentElement, i++) {
+              const t = (p.textContent||'').toLowerCase();
+              if (t.length < 80 && /\b(off|save|saved|cashback|extra)\b/.test(t)) return true;
+            }
+            return false;
+          }
+
+          const STORE_DOMAINS = {
+            'amazon': 'Amazon', 'flipkart': 'Flipkart', 'myntra': 'Myntra',
+            'ajio': 'Ajio', 'nykaa': 'Nykaa', 'tatacliq': 'TataCliq',
+            'croma': 'Croma', 'snapdeal': 'Snapdeal', 'meesho': 'Meesho',
+            'jiomart': 'JioMart', 'bigbasket': 'BigBasket', 'zepto': 'Zepto',
+            'blinkit': 'Blinkit', 'swiggy': 'Swiggy', 'firstcry': 'FirstCry',
+            'netmeds': 'Netmeds', 'lenskart': 'Lenskart',
+            'boat-lifestyle': 'Boat', 'gonoise': 'Noise', 'zebrs': 'Zebrs',
+            'reliancedigital': 'Reliance Digital', 'vijaysales': 'Vijay Sales',
+            'linksredirect.com': null, // redirect wrapper — check ulp param
+            'tjzuh.com': null,         // redirect wrapper — check ulp param
+          };
+
+          function storeFromUrl(href) {
+            try {
+              const u = new URL(href);
+              // Unwrap redirect params
+              const ulp = u.searchParams.get('ulp') || u.searchParams.get('url') || u.searchParams.get('dest');
+              const checkUrl = ulp || href;
+              const hl = checkUrl.toLowerCase();
+              for (const [domain, name] of Object.entries(STORE_DOMAINS)) {
+                if (name && hl.includes(domain)) return { name, url: href };
+              }
+              // Generic hostname match
+              const host = new URL(checkUrl).hostname.replace('www.','');
+              const n = normName(host.split('.')[0]);
+              return n ? { name: n, url: href } : null;
+            } catch(e) { return null; }
+          }
+
+          function findPriceInCard(container) {
+            // Walk all leaf text nodes in this container, find a valid price
+            // that is NOT in a discount context
+            let best = 0;
+            const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+            let node;
+            while ((node = walker.nextNode())) {
+              const p = parsePrice(node.textContent);
+              if (p > 0 && !isDiscountContext(node.parentElement)) {
+                if (p > best) best = p; // take the highest non-discount price in the card
+              }
+            }
+            return best;
+          }
+
+          const seen = new Set();
+          const stores = [];
+
+          // ── Strategy A: Link-first extraction ──
+          // Find every outbound link, identify its store, then find the price
+          // in the same card by walking up the DOM tree
+          document.querySelectorAll('a[href]').forEach(a => {
+            const href = a.href || '';
+            if (!href || href.includes('flash.co') || href.includes('webapp.flash') || href === '#') return;
+            if (!href.startsWith('http')) return;
+
+            const storeInfo = storeFromUrl(href);
+            if (!storeInfo) return;
+            const { name } = storeInfo;
+            if (seen.has(name.toLowerCase())) return;
+
+            // Walk up from the link to find a container with a price
+            let price = 0;
+            let container = a.parentElement;
+            for (let depth = 0; depth < 10 && container && !price; depth++) {
+              price = findPriceInCard(container);
+              container = container.parentElement;
+            }
+            if (!price) return;
+
+            // Get card context for metadata
+            const cardEl = a.closest('[class]') || a.parentElement;
+            const cardText = (cardEl ? cardEl.textContent : '').toLowerCase();
+            const isSource   = /you came from here/i.test(cardText);
+            const outOfStock = /out of stock|unavailable|sold out/i.test(cardText);
+            const lowestPrc  = /lowest price|best price/i.test(cardText);
+            const saveM      = cardText.match(/save\s*₹[\d,]+/i);
+
+            seen.add(name.toLowerCase());
+            stores.push({
+              name, price, url: href,
+              outOfStock, isSource, lowestPrice: lowestPrc,
+              savingsBadge: saveM ? saveM[0].trim() : '',
+            });
+          });
+
+          // ── Strategy B: Image alt + price proximity ──
+          // For store logos with alt text, find the nearest price node
+          if (stores.length < 2) {
+            document.querySelectorAll('img[alt]').forEach(img => {
+              const alt = (img.alt || '').trim();
+              const name = normName(alt);
+              if (!name || seen.has(name.toLowerCase())) return;
+
+              let price = 0;
+              let container = img.parentElement;
+              for (let depth = 0; depth < 10 && container && !price; depth++) {
+                price = findPriceInCard(container);
+                container = container.parentElement;
+              }
+              if (!price) return;
+
+              // Find the store link from nearby anchors
+              let url = '';
+              const cardEl = img.closest('[class]') || img.parentElement;
+              if (cardEl) {
+                for (const a of cardEl.querySelectorAll('a[href]')) {
+                  if (a.href && !a.href.includes('flash.co') && a.href.startsWith('http')) {
+                    url = a.href; break;
+                  }
+                }
+              }
+
+              seen.add(name.toLowerCase());
+              stores.push({ name, price, url, outOfStock: false, isSource: false, lowestPrice: false, savingsBadge: '' });
+            });
+          }
 
         // Wait for product name to load (not a Flash placeholder or empty)
         const JUNK_NAMES = ['flash ai','compare prices','best price','loading','please wait','price compare'];
