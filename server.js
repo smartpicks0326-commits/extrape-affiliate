@@ -3269,14 +3269,22 @@ app.get('/compare/search', async (req, res) => {
         await page.goto(webappUrl, { waitUntil: 'networkidle2', timeout: 40000 });
         console.log('[Compare/Puppeteer] Loaded:', page.url());
 
-        // Wait for price data to appear
+        // Wait for price data to appear — wait until 3+ stores visible or timeout
         try {
           await page.waitForFunction(() => {
-            const text = document.body.innerText || '';
-            const prices = text.match(/₹[\d,]{2,}/g) || [];
-            return prices.length >= 2;
-          }, { timeout: 30000 });
-        } catch(e) { console.log('[Compare/Puppeteer] Price wait timed out — extracting anyway'); }
+            // Count distinct ₹ price blocks — when we have 3+ the comparison is loaded
+            const priceEls = document.querySelectorAll('*');
+            let count = 0;
+            priceEls.forEach(el => {
+              if (el.children.length === 0 && /^₹[\d,]+$/.test((el.textContent||'').trim())) count++;
+            });
+            return count >= 3;
+          }, { timeout: 35000 });
+          console.log('[Compare/Puppeteer] 3+ prices detected — page fully loaded');
+        } catch(e) { console.log('[Compare/Puppeteer] Price wait timed out — extracting with what we have'); }
+
+        // Extra wait for Next.js to finish hydrating and rendering all store cards
+        await new Promise(r => setTimeout(r, 3000));
 
         // Wait for product name to load (not a Flash placeholder or empty)
         const JUNK_NAMES = ['flash ai','compare prices','best price','loading','please wait','price compare'];
@@ -3411,19 +3419,26 @@ app.get('/compare/search', async (req, res) => {
             if (!el) return;
             try {
               const nd = JSON.parse(el.textContent);
+
+              // Collect ALL price arrays — keep recursing even after finding one
+              // so we don't miss the main store list which may be deeper in the tree
               function dig(o, d, acc) {
-                if (!o || d > 12 || typeof o !== 'object') return;
+                if (!o || d > 15 || typeof o !== 'object') return;
                 if (Array.isArray(o)) {
                   const items = o.filter(x => x && typeof x === 'object' &&
                     (x.storeName || x.store_name || x.name || x.merchant || x.retailer) &&
                     (x.price !== undefined || x.salePrice !== undefined || x.sellingPrice !== undefined || x.amount !== undefined));
-                  if (items.length >= 2) { acc.push(items); return; }
-                  o.forEach(x => dig(x, d+1, acc));
+                  if (items.length >= 1) acc.push(items); // collect it BUT keep recursing
+                  o.forEach(x => dig(x, d+1, acc));       // always continue
                 } else { Object.values(o).forEach(v => dig(v, d+1, acc)); }
               }
+
               const lists = []; dig(nd, 0, lists);
+              // Pick the array with the MOST stores (most complete price list)
               lists.sort((a,b) => b.length - a.length);
+              console.log('[__NEXT_DATA__] Found', lists.length, 'price arrays, sizes:', lists.slice(0,6).map(l=>l.length).join(','));
               const best = lists[0] || [];
+
               for (const item of best) {
                 const rawName = item.storeName || item.store_name || item.name || item.merchant || item.retailer || '';
                 const name = normName(rawName);
@@ -3431,15 +3446,14 @@ app.get('/compare/search', async (req, res) => {
                 const rawPrice = item.price ?? item.salePrice ?? item.sellingPrice ?? item.amount ?? 0;
                 const price = parseInt(String(rawPrice).replace(/[^0-9]/g,'')) || 0;
                 if (price <= 0) continue;
-                // Unwrap redirect URLs
                 let url = item.url || item.link || item.deepLink || item.productUrl || '';
                 try { const u = new URL(url); const ulp = u.searchParams.get('ulp')||u.searchParams.get('url')||u.searchParams.get('dest'); if(ulp) url=ulp; } catch(e) {}
                 const outOfStock = !!(item.outOfStock || item.oos || item.out_of_stock);
                 seen.add(name.toLowerCase());
                 stores.push({ name, price, url, outOfStock, isSource: false, lowestPrice: false, savingsBadge: '', _src: 'next' });
               }
-              if (stores.length >= 2) return; // Strategy 0 succeeded — skip DOM strategies
-            } catch(e) {}
+              console.log('[__NEXT_DATA__] Extracted', stores.length, 'stores from best list of', best.length);
+            } catch(e) { console.log('[__NEXT_DATA__] parse error:', e.message); }
           })();
 
           function extractCard(card) {
