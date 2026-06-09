@@ -3793,6 +3793,89 @@ app.get('/compare/search', async (req, res) => {
 
 // ── /compare/debug — step-by-step Flash API diagnostic ──
 // Run: curl "https://api.smartpickdeals.live/compare/debug?url=https://amzn.in/d/01tGuO9p"
+// ── /compare/rawdata — dumps raw __NEXT_DATA__ from webapp.flash.co ──
+// Use this to inspect what Next.js embeds in the page for any product
+app.get('/compare/rawdata', async (req, res) => {
+  const { url: rawUrl } = req.query;
+  if (!rawUrl) return res.json({ usage: 'GET /compare/rawdata?url=PRODUCT_URL' });
+  const token = flashTokenCache.token || '';
+  if (!token) return res.status(503).json({ error: 'No Flash token' });
+
+  try {
+    let url = rawUrl;
+    try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; url = pu.toString(); } } catch(e) {}
+    if (isShortUrl(url)) { try { url = await resolveRedirect(url); } catch(e) {} }
+
+    // Get stream to find itemId + pageHash
+    const flashHeaders = {
+      'Authorization': 'Bearer ' + token, 'Channel-Type': 'web',
+      'Content-Type': 'application/json', 'Origin': 'https://flash.co',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+      'X-Country-Code': 'IN', 'X-Device-Id': flashTokenCache.deviceId || 'web-spd', 'X-Timezone': 'Asia/Calcutta',
+    };
+    const streamParams = new URLSearchParams({ source:'APPEND', context:'HOME_URL_PASTE', device_type:'DESKTOP', country_code:'IN' });
+    const sr = await fetch('https://apiv3.flash.tech/agents/chat/stream?' + streamParams, {
+      method: 'POST', headers: flashHeaders, body: JSON.stringify({ query: url, context: 'HOME_URL_PASTE' }),
+      signal: AbortSignal.timeout(35000),
+    });
+    const streamText = await sr.text();
+    const navMatch = streamText.match(/webapp\.flash\.co\/item\/(\d+)\/h\/([A-Za-z0-9_-]+)/);
+    if (!navMatch) return res.json({ error: 'No itemId/pageHash in stream', streamSample: streamText.substring(0, 300) });
+    const itemId = navMatch[1], pageHash = navMatch[2];
+    const webappUrl = `https://webapp.flash.co/item/${itemId}/h/${pageHash}`;
+
+    // Open in Puppeteer and dump __NEXT_DATA__
+    const rawData = await withFlashBrowser(async () => {
+      const browser = await getFlashBrowser();
+      const page = await browser.newPage();
+      await page.setViewport({ width: 1280, height: 900 });
+      await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36');
+      try {
+        await page.goto('https://webapp.flash.co', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+        await page.evaluate((tok) => { try { localStorage.setItem('authToken', tok); } catch(e) {} }, token);
+        await page.goto(webappUrl, { waitUntil: 'networkidle2', timeout: 40000 });
+
+        // Wait for prices
+        try { await page.waitForFunction(() => (document.body.innerText.match(/₹[\d,]+/g)||[]).length >= 2, { timeout: 25000 }); } catch(e) {}
+        await new Promise(r => setTimeout(r, 3000));
+
+        return await page.evaluate(() => {
+          const el = document.getElementById('__NEXT_DATA__');
+          const nd = el ? JSON.parse(el.textContent) : null;
+
+          // Find all arrays with price-like objects
+          const found = [];
+          function dig(o, path, d) {
+            if (!o || d > 15 || typeof o !== 'object') return;
+            if (Array.isArray(o)) {
+              const priceItems = o.filter(x => x && typeof x === 'object' &&
+                (x.storeName || x.store_name || x.name || x.merchant) &&
+                (x.price !== undefined || x.salePrice !== undefined || x.amount !== undefined));
+              if (priceItems.length > 0) {
+                found.push({ path, count: priceItems.length, sample: priceItems.slice(0,3).map(x => ({ name: x.storeName||x.store_name||x.name||x.merchant, price: x.price||x.salePrice||x.amount, url: (x.url||x.link||'').substring(0,60) })) });
+              }
+              o.forEach((x, i) => dig(x, path + '[' + i + ']', d+1));
+            } else {
+              Object.entries(o).forEach(([k, v]) => dig(v, path + '.' + k, d+1));
+            }
+          }
+          if (nd) dig(nd, 'root', 0);
+          return {
+            hasNextData: !!el,
+            nextDataSize: el ? el.textContent.length : 0,
+            priceArraysFound: found,
+            pageTitle: document.title,
+            priceCount: (document.body.innerText.match(/₹[\d,]+/g)||[]).length,
+            rawSample: nd ? JSON.stringify(nd).substring(0, 1500) : null,
+          };
+        });
+      } finally { await page.close().catch(() => {}); }
+    });
+
+    return res.json({ resolvedUrl: url, webappUrl, ...rawData });
+  } catch(e) { return res.status(500).json({ error: e.message }); }
+});
+
 app.get('/compare/debug', async (req, res) => {
   const { url: rawUrl } = req.query;
   if (!rawUrl) return res.json({
