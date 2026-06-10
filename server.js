@@ -3322,6 +3322,27 @@ app.get('/compare/search', async (req, res) => {
           console.log('[Compare/Puppeteer] 3+ store links visible');
         } catch(e) { console.log('[Compare/Puppeteer] Link wait timed out'); }
 
+        // Wait for og:title to populate (product name)
+        try {
+          await page.waitForFunction(() => {
+            const og = document.querySelector('meta[property="og:title"]');
+            const t = og?.getAttribute('content') || '';
+            return t.length > 8 && !t.toLowerCase().includes('flash') && !t.toLowerCase().includes('price compare');
+          }, { timeout: 12000 });
+        } catch(e) {}
+
+        // Wait for og:image or a real product image
+        try {
+          await page.waitForFunction(() => {
+            const og = document.querySelector('meta[property="og:image"]');
+            if (og?.getAttribute('content')?.startsWith('http')) return true;
+            return [...document.querySelectorAll('img')].some(img =>
+              img.src && !img.src.includes('/merchants/') && !img.src.includes('favicon') &&
+              (img.naturalWidth || img.width || 0) > 80
+            );
+          }, { timeout: 10000 });
+        } catch(e) {}
+
         // Settle + scroll to load lazy cards
         await new Promise(r => setTimeout(r, 3000));
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
