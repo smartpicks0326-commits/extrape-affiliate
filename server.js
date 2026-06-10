@@ -3238,6 +3238,21 @@ app.get('/compare/search', async (req, res) => {
     console.log('[Compare] itemId:', itemId, '| pageHash:', pageHash);
     if (!itemId && !pageHash) return res.status(404).json({ error: 'Flash.co has no data for this product.', streamSample: streamText.substring(0, 300) });
 
+    // Extract product name/image from stream SSE data lines
+    let streamProductName = '', streamProductImage = '';
+    for (const line of streamText.split('\n')) {
+      if (!line.startsWith('data:')) continue;
+      try {
+        const d = JSON.parse(line.slice(5).trim());
+        const str = JSON.stringify(d);
+        const nm = str.match(/"(?:productName|title|name)"\s*:\s*"([^"]{8,200})"/);
+        if (nm && !nm[1].toLowerCase().includes('flash') && !nm[1].toLowerCase().includes('compare')) streamProductName = streamProductName || nm[1];
+        const im = str.match(/"(?:imageUrl|image|thumbnail|productImage)"\s*:\s*"(https?:[^"]{10,})"/);
+        if (im) streamProductImage = streamProductImage || im[1];
+      } catch(e) {}
+    }
+    console.log('[Compare] Stream name:', streamProductName || 'none', '| image:', streamProductImage ? 'found' : 'none');
+
     const webappUrl = `https://webapp.flash.co/item/${itemId}/h/${pageHash}`;
     console.log('[Compare] Opening Puppeteer:', webappUrl);
 
@@ -3548,14 +3563,16 @@ app.get('/compare/search', async (req, res) => {
     const bestEntry = stores.find(s => s.isBest);
     const savings   = (srcEntry && bestEntry && !srcEntry.isBest) ? srcEntry.price - bestEntry.price : 0;
     const JUNK_N    = ['flash ai','compare prices','price compare'];
-    const productName = JUNK_N.some(j => (extracted.productName||'').toLowerCase().includes(j))
-      ? ('Product from ' + srcStore) : (extracted.productName || ('Product from ' + srcStore));
+    const productName = (extracted.productName && !JUNK_N.some(j => extracted.productName.toLowerCase().includes(j)))
+      ? extracted.productName
+      : (streamProductName || ('Product from ' + srcStore));
+    const productImage = extracted.productImage || streamProductImage || '';
 
     console.log('[Compare] ✅', stores.length, 'stores:', stores.map(s=>s.name+':₹'+s.price+(s.isSource?'[src]':'')+(s.isBest?'[best]':'')).join(' | '));
 
     return res.json({
       stores, productName,
-      productImage: extracted.productImage || '',
+      productImage,
       totalStores:  stores.length,
       savings:      savings > 0 ? savings : 0,
       dataSource:   'flash',
