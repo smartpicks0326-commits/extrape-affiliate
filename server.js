@@ -3250,27 +3250,32 @@ app.get('/compare/search', async (req, res) => {
 
       // Intercept Flash client-side API calls to capture store prices directly
       const interceptedStores = [];
+      const interceptedLog = [];
       await page.setRequestInterception(true);
       page.on('request', req => req.continue());
       page.on('response', async resp => {
         const respUrl = resp.url();
-        if (!respUrl.includes('apiv3.flash.tech') && !respUrl.includes('api.flash.co')) return;
+        // Capture ALL flash-related API JSON responses (not HTML pages)
+        if (!respUrl.includes('flash')) return;
         if (respUrl.includes('/stream')) return;
         try {
           const ct = resp.headers()['content-type'] || '';
           if (!ct.includes('json')) return;
           const json = await resp.json().catch(() => null);
           if (!json) return;
+          const jsonStr = JSON.stringify(json);
+          interceptedLog.push({ url: respUrl.substring(0, 120), len: jsonStr.length });
           // Deep search for store price arrays
           const search = (o, d) => {
             if (!o || d > 10 || typeof o !== 'object') return;
             if (Array.isArray(o)) {
               const items = o.filter(x => x && typeof x === 'object' &&
-                (x.storeName || x.store_name || x.name || x.merchant) &&
+                (x.storeName || x.store_name || x.name || x.merchant || x.retailer) &&
                 (x.price !== undefined || x.salePrice !== undefined || x.amount !== undefined));
               if (items.length >= 2 && items.length > interceptedStores.length) {
                 interceptedStores.length = 0;
                 interceptedStores.push(...items);
+                console.log('[Intercept] Got', items.length, 'stores from:', respUrl.substring(0, 80));
               }
               o.forEach(x => search(x, d+1));
             } else { Object.values(o).forEach(v => search(v, d+1)); }
@@ -3331,6 +3336,7 @@ app.get('/compare/search', async (req, res) => {
         await page.evaluate(() => window.scrollTo(0, 0));
 
         console.log('[Compare/Puppeteer] Title:', await page.title().catch(() => ''));
+        console.log('[Compare/Puppeteer] Intercepted API calls:', interceptedLog.length, interceptedLog.map(l=>l.url).join(' | ').substring(0,300));
         console.log('[Compare/Puppeteer] Intercepted stores from API:', interceptedStores.length);
 
         // ── Extract from DOM ──
