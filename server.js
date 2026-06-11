@@ -3444,6 +3444,26 @@ app.get('/compare/search', async (req, res) => {
           const stores = [];
 
           // ── Strategy A: find each outbound store link, extract price from same card ──
+          // Prices are isolated nodes — find the price closest to the store link in DOM order
+          const allPriceNodes = [];
+          {
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+            let n;
+            while ((n = walker.nextNode())) {
+              const t = n.textContent.trim();
+              const m = t.match(/^₹\s*([\d,]+)$/);
+              if (!m) continue;
+              const price = parseInt(m[1].replace(/,/g,''));
+              if (price >= 100 && price <= 5000000) {
+                allPriceNodes.push({ node: n, price, el: n.parentElement });
+              }
+            }
+          }
+
+          // Get DOM position of each element
+          const allEls = [...document.querySelectorAll('*')];
+          function domIndex(el) { return allEls.indexOf(el); }
+
           document.querySelectorAll('a[href]').forEach(a => {
             const href = a.href || '';
             if (!href || href.includes('webapp.flash.co') || !href.startsWith('http')) return;
@@ -3453,35 +3473,28 @@ app.get('/compare/search', async (req, res) => {
             try { const u = new URL(href); const ulp = u.searchParams.get('ulp')||u.searchParams.get('url')||u.searchParams.get('dest'); if(ulp) checkUrl=ulp; } catch(e) {}
             const cl = checkUrl.toLowerCase();
 
-            // Match to known store
             const storeKey = Object.keys(KNOWN_DOMAINS).find(k => KNOWN_DOMAINS[k].some(d => cl.includes(d)));
             if (!storeKey) return;
             const name = normName(storeKey);
             if (seen.has(name.toLowerCase())) return;
 
-            // Find price — walk up from link, look in parent containers
-            let price = 0;
-            let container = a.parentElement;
-            for (let d = 0; d < 8 && container && !price; d++) {
-              container.querySelectorAll('*').forEach(el => {
-                if (el.children.length > 0 || price) return;
-                const p = parsePrice(el.textContent);
-                if (p >= 100 && p <= 5000000) {
-                  // Reject if this is inside a "save/off" context
-                  const pText = (el.parentElement?.textContent||'').toLowerCase();
-                  if (!/\boff\b|\bsave\b/.test(pText) || pText.length > 80) price = p;
-                }
-              });
-              container = container.parentElement;
+            // Find the price node with the smallest DOM distance to this link
+            const linkIdx = domIndex(a);
+            let bestPrice = 0, bestDist = Infinity;
+            for (const { el, price } of allPriceNodes) {
+              const dist = Math.abs(domIndex(el) - linkIdx);
+              // Reject if clearly a savings/discount amount (small number near "save" text)
+              const nearText = (el?.parentElement?.textContent || '').toLowerCase();
+              if (price < 500 && /save|off|discount/.test(nearText)) continue;
+              if (dist < bestDist) { bestDist = dist; bestPrice = price; }
             }
-            if (!price) return;
+            if (!bestPrice) return;
 
-            // Get store metadata from card
             const card = a.closest('[class]') || a.parentElement;
-            const cardText = (card||document.body).textContent || '';
+            const cardText = (card || document.body).textContent || '';
             seen.add(name.toLowerCase());
             stores.push({
-              name, price, url: href,
+              name, price: bestPrice, url: href,
               isSource:    /you came from here/i.test(cardText),
               outOfStock:  /out of stock|unavailable/i.test(cardText),
               lowestPrice: /lowest price/i.test(cardText),
