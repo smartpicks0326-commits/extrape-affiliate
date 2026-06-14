@@ -3482,15 +3482,16 @@ app.get('/compare/search', async (req, res) => {
           }
 
           function findPriceInCard(container) {
-            // Walk all leaf text nodes in this container, find a valid price
-            // that is NOT in a discount context
+            // Only search within containers that aren't too large (avoid getting page-level prices)
+            // If the container has too much text, it's too broad
+            if ((container.textContent || '').length > 1000) return 0;
             let best = 0;
             const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
             let node;
             while ((node = walker.nextNode())) {
               const p = parsePrice(node.textContent);
               if (p > 0 && !isDiscountContext(node.parentElement)) {
-                if (p > best) best = p; // take the highest non-discount price in the card
+                if (p > best) best = p;
               }
             }
             return best;
