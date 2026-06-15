@@ -3181,7 +3181,7 @@ app.get('/compare/search', async (req, res) => {
   try {
     // ── URL normalisation ──
     let url = rawUrl;
-    try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; url = pu.toString(); } } catch(e) {}
+    try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; pu.pathname = pu.pathname.replace(/^\/dl\//, '/'); url = pu.toString(); } } catch(e) {}
     if (isShortUrl(url)) {
       try { url = await resolveRedirect(url); }
       catch(e) { return res.status(400).json({ error: 'Could not resolve short link. Open it in your browser, copy the full URL, and paste that instead.' }); }
@@ -4049,7 +4049,7 @@ app.get('/compare/rawdata', async (req, res) => {
 
   try {
     let url = rawUrl;
-    try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; url = pu.toString(); } } catch(e) {}
+    try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; pu.pathname = pu.pathname.replace(/^\/dl\//, '/'); url = pu.toString(); } } catch(e) {}
     if (isShortUrl(url)) { try { url = await resolveRedirect(url); } catch(e) {} }
 
     // Get stream to find itemId + pageHash
@@ -4131,7 +4131,7 @@ app.get('/compare/dump', async (req, res) => {
 
   try {
     let url = rawUrl;
-    try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; url = pu.toString(); } } catch(e) {}
+    try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; pu.pathname = pu.pathname.replace(/^\/dl\//, '/'); url = pu.toString(); } } catch(e) {}
     if (isShortUrl(url)) { try { url = await resolveRedirect(url); } catch(e) {} }
 
     // Step 1: Get itemId + pageHash from stream
@@ -4245,7 +4245,7 @@ app.get('/compare/debug', async (req, res) => {
 
   // ── URL normalisation ──
   let url = rawUrl;
-  try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; url = pu.toString(); } } catch(e) {}
+  try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; pu.pathname = pu.pathname.replace(/^\/dl\//, '/'); url = pu.toString(); } } catch(e) {}
   if (isShortUrl(url)) {
     try { url = await resolveRedirect(url); } catch(e) { url = rawUrl; }
   }
