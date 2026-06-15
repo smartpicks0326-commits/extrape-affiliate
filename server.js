@@ -3347,9 +3347,7 @@ app.get('/compare/search', async (req, res) => {
         }
         console.log('[Compare/Puppeteer] Intercepted stores:', interceptedStores.length);
 
-        // Extract from DOM
-        return await page.evaluate((intercepted) => {
-
+        // ── Extra wait + scroll + expand after intercepted-data check ──
         // Wait for 3+ price nodes — page is loading store data via client-side API
         try {
           await page.waitForFunction(() =>
@@ -3376,7 +3374,7 @@ app.get('/compare/search', async (req, res) => {
         await new Promise(r => setTimeout(r, 1000));
 
         // Click "View all stores" if present to expand the full list
-        const clicked = await page.evaluate(() => {
+        const clicked2 = await page.evaluate(() => {
           for (const el of document.querySelectorAll('button, a, [role="button"], span, div')) {
             const t = (el.textContent || '').toLowerCase().trim();
             if (/view all|show all|all stores|more stores|view \d+ store/.test(t)) {
@@ -3385,28 +3383,25 @@ app.get('/compare/search', async (req, res) => {
           }
           return false;
         }).catch(() => false);
-        if (clicked) {
+        if (clicked2) {
           await new Promise(r => setTimeout(r, 3000));
           await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
           await new Promise(r => setTimeout(r, 2000));
         }
 
-        const pageTitle = await page.title().catch(() => '');
-        const pageUrl = page.url();
-        console.log('[Compare/Puppeteer] Title:', pageTitle, '| URL:', pageUrl.substring(0, 80));
+        const pageTitle2 = await page.title().catch(() => '');
+        const pageUrl2 = page.url();
+        console.log('[Compare/Puppeteer] Title:', pageTitle2, '| URL:', pageUrl2.substring(0, 80));
 
         // Count outbound links for debugging
-        const linkCount = await page.evaluate(() =>
+        const linkCount2 = await page.evaluate(() =>
           [...document.querySelectorAll('a[href]')].filter(a => a.href && !a.href.includes('flash.co')).length
         ).catch(() => 0);
-        console.log('[Compare/Puppeteer] Outbound links visible:', linkCount);
+        console.log('[Compare/Puppeteer] Outbound links visible:', linkCount2);
 
-        // ── DOM Extraction ──
-        // webapp.flash.co is pure client-side React — no __NEXT_DATA__.
-        // Strategy: find every outbound store link, then find the price in
-        // the same card container. Also try finding store logos (img alt)
-        // near price nodes as a fallback.
-        return await page.evaluate(() => {
+        // ── DOM Extraction Strategy A/B: link-first + img-alt fallback ──
+        // Run first to collect any quick wins; results merged below.
+        const strategyABStores = await page.evaluate((intercepted) => {
           function normName(raw) {
             const l = (raw||'').toLowerCase().trim();
             if (l.includes('amazon'))    return 'Amazon';
@@ -3444,9 +3439,13 @@ app.get('/compare/search', async (req, res) => {
           }
 
           function isDiscountContext(el) {
+            // Check the element's own text first (catches self-contained badge elements)
+            const own = (el.textContent || '').toLowerCase();
+            if (/\b(off|save|saved|cashback|extra|discount)\b/.test(own)) return true;
+            // Walk up parents
             for (let p = el.parentElement, i = 0; p && i < 4; p = p.parentElement, i++) {
-              const t = (p.textContent||'').toLowerCase();
-              if (t.length < 80 && /\b(off|save|saved|cashback|extra)\b/.test(t)) return true;
+              const t = (p.textContent || '').toLowerCase();
+              if (t.length < 120 && /\b(off|save|saved|cashback|extra|discount)\b/.test(t)) return true;
             }
             return false;
           }
@@ -3483,7 +3482,6 @@ app.get('/compare/search', async (req, res) => {
 
           function findPriceInCard(container) {
             // Only search within containers that aren't too large (avoid getting page-level prices)
-            // If the container has too much text, it's too broad
             if ((container.textContent || '').length > 1000) return 0;
             let best = 0;
             const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
@@ -3491,7 +3489,9 @@ app.get('/compare/search', async (req, res) => {
             while ((node = walker.nextNode())) {
               const p = parsePrice(node.textContent);
               if (p > 0 && !isDiscountContext(node.parentElement)) {
-                if (p > best) best = p;
+                // Pick LOWEST valid price — the sale price is always the lowest number in a card
+                // MRP (strikethrough) is higher; savings badge amounts caught by isDiscountContext
+                if (best === 0 || p < best) best = p;
               }
             }
             return best;
@@ -3570,56 +3570,14 @@ app.get('/compare/search', async (req, res) => {
             });
           }
 
-        // Wait for product name to load (not a Flash placeholder or empty)
-        const JUNK_NAMES = ['flash ai','compare prices','best price','loading','please wait','price compare'];
-        try {
-          await page.waitForFunction((junk) => {
-            // Try h1, h2, and title
-            const candidates = [
-              ...document.querySelectorAll('h1, h2, [class*="product"], [class*="title"], [class*="name"]'),
-            ];
-            for (const el of candidates) {
-              const t = (el.textContent || '').trim();
-              if (t.length > 8 && t.length < 400 && !junk.some(j => t.toLowerCase().includes(j))) return true;
-            }
-            // Also check page title
-            const title = document.title || '';
-            return title.length > 8 && !junk.some(j => title.toLowerCase().includes(j));
-          }, { timeout: 15000 }, JUNK_NAMES);
-        } catch(e) { console.log('[Compare/Puppeteer] Product name wait timed out'); }
+          // Return Strategy A/B results for merge with intercepted data
+          return stores;
+        }, interceptedStores);
 
-        // Wait for a real product image (not store logos)
-        try {
-          await page.waitForFunction(() => {
-            for (const img of document.querySelectorAll('img')) {
-              const src = img.src || '';
-              if (!src || src.includes('/merchants/') || src.includes('/favicon') || src.includes('logo')) continue;
-              if ((img.naturalWidth || img.width || 0) > 80) return true;
-            }
-            return false;
-          }, { timeout: 10000 });
-        } catch(e) { console.log('[Compare/Puppeteer] Image wait timed out'); }
-
-        // Scroll to load all stores
-        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-        await new Promise(r => setTimeout(r, 2000));
-
-        // Click "View all" if present
-        await page.evaluate(() => {
-          for (const el of document.querySelectorAll('button, a, [role="button"]')) {
-            const t = (el.textContent || '').toLowerCase().trim();
-            if (/view all|show all|all stores|more stores/.test(t)) { el.click(); break; }
-          }
-        }).catch(() => {});
-        await new Promise(r => setTimeout(r, 1500));
-
-        // Log page title for debugging
-        const pageTitle = await page.title().catch(() => '');
-        console.log('[Compare/Puppeteer] Page title:', pageTitle);
-        console.log('[Compare/Puppeteer] URL after load:', page.url());
-
-        // Extract store cards from DOM — card-based approach for accuracy
-        return await page.evaluate(() => {
+        // ── Strategy 0/1/2 card-based extraction (main evaluate) ──
+        // Merge intercepted API data + Strategy A/B DOM results into intercepted2
+        const mergedIntercepted = [...interceptedStores, ...strategyABStores];
+        return await page.evaluate((intercepted2) => {
           function normName(raw) {
             const l = (raw||'').toLowerCase().trim();
             if (l.includes('amazon'))    return 'Amazon';
@@ -3661,11 +3619,15 @@ app.get('/compare/search', async (req, res) => {
 
           // Is this price node inside a discount/savings badge?
           function isDiscountNode(el) {
+            // Check the element's own text first (catches self-contained badge elements)
+            const own = (el.textContent || '').toLowerCase();
+            if (/\b(off|save|saved|extra|cashback|discount)\b/.test(own)) return true;
+            // Walk up parents
             let p = el.parentElement;
             for (let i = 0; i < 5 && p; i++) {
               const t = (p.textContent || '').toLowerCase();
               // Short containers containing "off" or "save" = discount badge
-              if (t.length < 80 && /\b(off|save|saved|extra|cashback)\b/.test(t)) return true;
+              if (t.length < 120 && /\b(off|save|saved|extra|cashback|discount)\b/.test(t)) return true;
               p = p.parentElement;
             }
             return false;
@@ -3751,9 +3713,9 @@ app.get('/compare/search', async (req, res) => {
               const p = parsePrice(el.textContent);
               if (p > 0 && !isDiscountNode(el)) candidatePrices.push(p);
             });
-            // The main price is the largest price in the card
-            // (discount savings like "Save ₹200" are always smaller than the main price)
-            if (candidatePrices.length > 0) mainPrice = Math.max(...candidatePrices);
+            // The main price is the LOWEST valid price in the card.
+            // MRP (struck-through) is always higher; savings badge amounts are caught by isDiscountNode.
+            if (candidatePrices.length > 0) mainPrice = Math.min(...candidatePrices);
             if (!mainPrice) return null;
 
             // ── 2. Find store name — prefer img[alt], then text ──
@@ -3896,7 +3858,7 @@ app.get('/compare/search', async (req, res) => {
                 container.querySelectorAll('*').forEach(el => {
                   if (el.children.length > 0 || price) return;
                   const p = parsePrice(el.textContent);
-                  if (p > 0 && !isDiscountNode(el)) price = Math.max(price, p);
+                  if (p > 0 && !isDiscountNode(el)) price = (price === 0 || p < price) ? p : price;
                 });
                 container = container.parentElement;
               }
@@ -4010,7 +3972,7 @@ app.get('/compare/search', async (req, res) => {
           return { stores, productName, productImage,
             debug: { cardCount: stores.filter(s=>s._src==='card').length, linkCount: stores.filter(s=>s._src==='link').length, nextCount: 0 }
           };
-        });
+        }, mergedIntercepted);
 
       } finally {
         await page.close().catch(() => {});
