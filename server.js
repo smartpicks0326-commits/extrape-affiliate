@@ -1087,13 +1087,14 @@ function cleanLink(rawUrl) {
     // ── Long Amazon URL (amazon.in/dp/ASIN?tag=xxx&...) ──
     if (host.includes('amazon')) {
       const asin = (parsed.pathname.match(/\/dp\/([A-Z0-9]{10})/i) || [])[1];
-      const tag  = parsed.searchParams.get('tag');
+      // Always use our tag — ignore whatever tag Flash/others set
+      const tag = 'smartpickd0be-21';
       if (asin) {
-        const cleanDisplay  = 'https://www.amazon.in/dp/' + asin;       // no tag
-        const affiliateClick = cleanDisplay + (tag ? '?tag=' + tag : ''); // with tag
+        const cleanDisplay   = 'https://www.amazon.in/dp/' + asin;
+        const affiliateClick = cleanDisplay + '?tag=' + tag;
         return {
-          displayUrl: cleanDisplay,       // user sees/copies this — perfectly clean
-          clickUrl:   makeGoLink(affiliateClick), // Visit button — tag hidden in base64
+          displayUrl: cleanDisplay,
+          clickUrl:   makeGoLink(affiliateClick),
         };
       }
     }
@@ -4172,18 +4173,19 @@ app.get('/compare/search', async (req, res) => {
     let stores = extracted.stores
       .sort((a, b) => a.price - b.price)
       .map((s, i) => {
-        // Use Flash's isSource flag if set, fallback to URL-based detection
         const urlSrc = srcStore && s.name.toLowerCase().includes(srcStore.toLowerCase());
         const isSrc  = s.isSource || urlSrc;
-        // Best = lowest price that isn't out of stock
         const inStockStores = extracted.stores.filter(x => !x.outOfStock);
         const bestPrice = inStockStores.length > 0 ? Math.min(...inStockStores.map(x => x.price)) : 0;
+        const isBest = !s.outOfStock && s.price === bestPrice;
         return {
           ...s,
           normalizedName: s.name,
-          isSource:   isSrc,
-          isBest:     !s.outOfStock && s.price === bestPrice,
-          lowestPrice: s.lowestPrice || (!s.outOfStock && s.price === bestPrice),
+          isSource:    isSrc,
+          isBest,
+          lowestPrice: s.lowestPrice || isBest,
+          // Only show savingsBadge on the best price store
+          savingsBadge: isBest ? (s.savingsBadge || '') : '',
         };
       });
 
