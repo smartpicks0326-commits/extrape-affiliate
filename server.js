@@ -3389,20 +3389,39 @@ app.get('/compare/search', async (req, res) => {
         await page.evaluate(() => window.scrollTo(0, 0));
         await new Promise(r => setTimeout(r, 1000));
 
-        // Click "View all stores" if present to expand the full list
+        // Click "View all N stores" to expand hidden stores
+        // Flash renders only 2 stores initially — rest are behind this button
+        const preLinkCount = await page.evaluate(() =>
+          [...document.querySelectorAll('a[href]')].filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http')).length
+        ).catch(() => 0);
+
         const clicked2 = await page.evaluate(() => {
-          for (const el of document.querySelectorAll('button, a, [role="button"], span, div')) {
-            const t = (el.textContent || '').toLowerCase().trim();
-            if (/view all|show all|all stores|more stores|view \d+ store/.test(t)) {
-              el.click(); return true;
+          // Match "View all 10 stores", "View all stores", "Show all", etc.
+          const els = [...document.querySelectorAll('button, a, [role="button"], span, div, p')];
+          for (const el of els) {
+            const t = (el.textContent || '').replace(/\s+/g, ' ').toLowerCase().trim();
+            if (/view all|show all|all stores|more stores|view \d+|show \d+/.test(t) && t.length < 60) {
+              el.click(); return t;
             }
           }
-          return false;
-        }).catch(() => false);
+          return null;
+        }).catch(() => null);
+
         if (clicked2) {
-          await new Promise(r => setTimeout(r, 3000));
-          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+          console.log('[Compare/Puppeteer] Clicked expand button:', clicked2);
+          // Wait until outbound link count increases (new stores rendered)
+          try {
+            await page.waitForFunction((pre) =>
+              [...document.querySelectorAll('a[href]')]
+                .filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http')).length > pre,
+              { timeout: 8000 }, preLinkCount
+            );
+          } catch(e) { /* stores may already be in DOM */ }
           await new Promise(r => setTimeout(r, 2000));
+          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+          await new Promise(r => setTimeout(r, 1500));
+        } else {
+          console.log('[Compare/Puppeteer] No expand button found — all stores may already be visible');
         }
 
         const pageTitle2 = await page.title().catch(() => '');
