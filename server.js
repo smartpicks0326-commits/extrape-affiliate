@@ -3267,6 +3267,7 @@ app.get('/compare/search', async (req, res) => {
     // We navigate directly to the item/product-search page.
     console.log('[Compare] Opening in Puppeteer:', webappUrl);
 
+    let quickStores = [];
     const extracted = await withFlashBrowser(async () => {
       const browser = await getFlashBrowser();
       const page    = await browser.newPage();
@@ -3445,7 +3446,7 @@ app.get('/compare/search', async (req, res) => {
         // Debug: dump prices visible per outbound link to diagnose wrong price extraction
         // Quick extraction: per-link card price extraction
         // This is the most reliable method for Flash price-compare page
-        const quickStores = await page.evaluate(() => {
+        quickStores = await page.evaluate(() => {
           const STORE_MAP = {
             'amazon': 'Amazon', 'flipkart': 'Flipkart', 'myntra': 'Myntra',
             'ajio': 'Ajio', 'nykaa': 'Nykaa', 'tatacliq': 'TataCliq',
@@ -4100,10 +4101,6 @@ app.get('/compare/search', async (req, res) => {
         }, mergedIntercepted);
 
         // Merge quickStores (computed before second evaluate) into extracted result
-        if (quickStores && quickStores.length > 0) {
-          extracted.quickStores = quickStores;
-        }
-
       } finally {
         await page.close().catch(() => {});
       }
@@ -4112,10 +4109,10 @@ app.get('/compare/search', async (req, res) => {
     console.log('[Compare] Extracted', extracted.stores.length, 'stores:',
       extracted.stores.map(s => s.name + ':₹' + s.price).join(' | '));
 
-    // Override with quickStores if it found more/better data
-    if (extracted.quickStores && extracted.quickStores.length > 0) {
-      console.log('[Compare] Using quickStores:', extracted.quickStores.map(s => s.name + ':₹' + s.price).join(' | '));
-      extracted.stores = extracted.quickStores;
+    // Override extracted.stores with quickStores if it has data
+    if (quickStores.length > 0) {
+      console.log('[Compare] Using quickStores:', quickStores.map(s => s.name + ':₹' + s.price).join(' | '));
+      extracted.stores = quickStores;
     }
 
     if (extracted.stores.length === 0) {
