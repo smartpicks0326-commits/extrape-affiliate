@@ -1087,14 +1087,13 @@ function cleanLink(rawUrl) {
     // ── Long Amazon URL (amazon.in/dp/ASIN?tag=xxx&...) ──
     if (host.includes('amazon')) {
       const asin = (parsed.pathname.match(/\/dp\/([A-Z0-9]{10})/i) || [])[1];
-      // Always use our tag — ignore whatever tag Flash/others set
-      const tag = 'smartpickd0be-21';
+      const tag  = parsed.searchParams.get('tag');
       if (asin) {
-        const cleanDisplay   = 'https://www.amazon.in/dp/' + asin;
-        const affiliateClick = cleanDisplay + '?tag=' + tag;
+        const cleanDisplay  = 'https://www.amazon.in/dp/' + asin;       // no tag
+        const affiliateClick = cleanDisplay + (tag ? '?tag=' + tag : ''); // with tag
         return {
-          displayUrl: cleanDisplay,
-          clickUrl:   makeGoLink(affiliateClick),
+          displayUrl: cleanDisplay,       // user sees/copies this — perfectly clean
+          clickUrl:   makeGoLink(affiliateClick), // Visit button — tag hidden in base64
         };
       }
     }
@@ -3269,7 +3268,6 @@ app.get('/compare/search', async (req, res) => {
     console.log('[Compare] Opening in Puppeteer:', webappUrl);
 
     let quickStores = [];
-    let itemPageMeta = { img: '', name: '' };
     const extracted = await withFlashBrowser(async () => {
       const browser = await getFlashBrowser();
       const page    = await browser.newPage();
@@ -3391,42 +3389,6 @@ app.get('/compare/search', async (req, res) => {
         await new Promise(r => setTimeout(r, 3000));
         await page.evaluate(() => window.scrollTo(0, 0));
         await new Promise(r => setTimeout(r, 1000));
-
-        // Extract product image + name NOW (on item page) — price-compare page has no og:image
-        itemPageMeta = await page.evaluate(() => {
-          let img = '';
-          const ogImg = document.querySelector('meta[property="og:image"]');
-          if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo')) img = s; }
-          if (!img) {
-            for (const el of document.querySelectorAll('img')) {
-              const s = el.src || '';
-              if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
-              if (/img\.flash\.co.*\/plain\//.test(s)) { try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; } }
-            }
-          }
-          if (!img) {
-            for (const el of document.querySelectorAll('img')) {
-              const s = el.src || '';
-              if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
-              if (/media-amazon\.com|images-amazon\.com|_SL\d+_|_AC_|rukmini\d+\.flixcart|img\.flipkart/.test(s)) { img = s; break; }
-            }
-          }
-          const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
-          let name = '';
-          const ogTitle = document.querySelector('meta[property="og:title"]');
-          if (ogTitle) { const t = (ogTitle.getAttribute('content')||'').trim(); if (t.length > 8 && !JUNK.some(j => t.toLowerCase().includes(j))) name = t; }
-          if (!name) {
-            for (const sel of ['h1','h2','[class*="product-name"]','[class*="productName"]']) {
-              for (const el of document.querySelectorAll(sel)) {
-                const t = el.textContent.trim();
-                if (t.length > 8 && t.length < 400 && !JUNK.some(j => t.toLowerCase().includes(j))) { name = t; break; }
-              }
-              if (name) break;
-            }
-          }
-          return { img, name };
-        }).catch(() => ({ img: '', name: '' }));
-        console.log('[Compare/Puppeteer] Item page meta — image:', itemPageMeta.img.substring(0,80), '| name:', itemPageMeta.name.substring(0,60));
 
         // Click "View all N stores" to expand hidden stores
         // Flash renders only 2 stores initially — rest are behind this button
@@ -4157,10 +4119,6 @@ app.get('/compare/search', async (req, res) => {
       extracted.stores = quickStores;
     }
 
-    // Use image/name captured from item page (price-compare page has no og:image)
-    if (itemPageMeta.img) extracted.productImage = itemPageMeta.img;
-    if (itemPageMeta.name && !extracted.productName) extracted.productName = itemPageMeta.name;
-
     if (extracted.stores.length === 0) {
       return res.status(404).json({
         error: 'Flash.co loaded the product page but no store prices were found. Try again.',
@@ -4173,19 +4131,18 @@ app.get('/compare/search', async (req, res) => {
     let stores = extracted.stores
       .sort((a, b) => a.price - b.price)
       .map((s, i) => {
+        // Use Flash's isSource flag if set, fallback to URL-based detection
         const urlSrc = srcStore && s.name.toLowerCase().includes(srcStore.toLowerCase());
         const isSrc  = s.isSource || urlSrc;
+        // Best = lowest price that isn't out of stock
         const inStockStores = extracted.stores.filter(x => !x.outOfStock);
         const bestPrice = inStockStores.length > 0 ? Math.min(...inStockStores.map(x => x.price)) : 0;
-        const isBest = !s.outOfStock && s.price === bestPrice;
         return {
           ...s,
           normalizedName: s.name,
-          isSource:    isSrc,
-          isBest,
-          lowestPrice: s.lowestPrice || isBest,
-          // Only show savingsBadge on the best price store
-          savingsBadge: isBest ? (s.savingsBadge || '') : '',
+          isSource:   isSrc,
+          isBest:     !s.outOfStock && s.price === bestPrice,
+          lowestPrice: s.lowestPrice || (!s.outOfStock && s.price === bestPrice),
         };
       });
 
