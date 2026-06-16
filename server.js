@@ -3411,20 +3411,22 @@ app.get('/compare/search', async (req, res) => {
 
         if (clicked2) {
           console.log('[Compare/Puppeteer] Clicked expand button:', clicked2.text);
-          if (clicked2.href && clicked2.href.includes('flash.co')) {
-            // Navigate directly to the full-store page
+          // Flash's "View all N stores" links to flash.co/price-compare/{itemId}/h/{pageHash}
+          // Construct it directly — more reliable than waiting for navigation
+          const priceCompareUrl = itemId
+            ? `https://flash.co/price-compare/${itemId}/h/${pageHash}`
+            : (clicked2.href && clicked2.href.includes('flash.co') ? clicked2.href : null);
+
+          if (priceCompareUrl) {
             try {
-              await page.goto(clicked2.href, { waitUntil: 'networkidle2', timeout: 20000 });
-              console.log('[Compare/Puppeteer] Navigated to full store page:', page.url());
-            } catch(e) {}
-          } else {
-            // Button click — wait for navigation or link count increase
-            try {
-              await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 12000 });
-              console.log('[Compare/Puppeteer] Navigated after click:', page.url());
+              await page.goto(priceCompareUrl, { waitUntil: 'networkidle2', timeout: 20000 });
+              console.log('[Compare/Puppeteer] Navigated to price-compare:', page.url());
             } catch(e) {
-              await new Promise(r => setTimeout(r, 3000));
+              console.log('[Compare/Puppeteer] price-compare nav failed:', e.message);
             }
+          } else {
+            // Fallback: wait for same-page navigation
+            try { await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }); } catch(e) {}
           }
           // Wait for ≥5 outbound store links
           try {
