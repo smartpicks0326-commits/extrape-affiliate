@@ -4099,6 +4099,11 @@ app.get('/compare/search', async (req, res) => {
           };
         }, mergedIntercepted);
 
+        // Merge quickStores (computed before second evaluate) into extracted result
+        if (quickStores && quickStores.length > 0) {
+          extracted.quickStores = quickStores;
+        }
+
       } finally {
         await page.close().catch(() => {});
       }
@@ -4106,6 +4111,12 @@ app.get('/compare/search', async (req, res) => {
 
     console.log('[Compare] Extracted', extracted.stores.length, 'stores:',
       extracted.stores.map(s => s.name + ':₹' + s.price).join(' | '));
+
+    // Override with quickStores if it found more/better data
+    if (extracted.quickStores && extracted.quickStores.length > 0) {
+      console.log('[Compare] Using quickStores:', extracted.quickStores.map(s => s.name + ':₹' + s.price).join(' | '));
+      extracted.stores = extracted.quickStores;
+    }
 
     if (extracted.stores.length === 0) {
       return res.status(404).json({
