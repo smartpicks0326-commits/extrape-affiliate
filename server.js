@@ -3268,6 +3268,7 @@ app.get('/compare/search', async (req, res) => {
     console.log('[Compare] Opening in Puppeteer:', webappUrl);
 
     let quickStores = [];
+    let itemPageMeta = { img: '', name: '' };
     const extracted = await withFlashBrowser(async () => {
       const browser = await getFlashBrowser();
       const page    = await browser.newPage();
@@ -3389,6 +3390,42 @@ app.get('/compare/search', async (req, res) => {
         await new Promise(r => setTimeout(r, 3000));
         await page.evaluate(() => window.scrollTo(0, 0));
         await new Promise(r => setTimeout(r, 1000));
+
+        // Extract product image + name NOW (on item page) — price-compare page has no og:image
+        itemPageMeta = await page.evaluate(() => {
+          let img = '';
+          const ogImg = document.querySelector('meta[property="og:image"]');
+          if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo')) img = s; }
+          if (!img) {
+            for (const el of document.querySelectorAll('img')) {
+              const s = el.src || '';
+              if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
+              if (/img\.flash\.co.*\/plain\//.test(s)) { try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; } }
+            }
+          }
+          if (!img) {
+            for (const el of document.querySelectorAll('img')) {
+              const s = el.src || '';
+              if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
+              if (/media-amazon\.com|images-amazon\.com|_SL\d+_|_AC_|rukmini\d+\.flixcart|img\.flipkart/.test(s)) { img = s; break; }
+            }
+          }
+          const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
+          let name = '';
+          const ogTitle = document.querySelector('meta[property="og:title"]');
+          if (ogTitle) { const t = (ogTitle.getAttribute('content')||'').trim(); if (t.length > 8 && !JUNK.some(j => t.toLowerCase().includes(j))) name = t; }
+          if (!name) {
+            for (const sel of ['h1','h2','[class*="product-name"]','[class*="productName"]']) {
+              for (const el of document.querySelectorAll(sel)) {
+                const t = el.textContent.trim();
+                if (t.length > 8 && t.length < 400 && !JUNK.some(j => t.toLowerCase().includes(j))) { name = t; break; }
+              }
+              if (name) break;
+            }
+          }
+          return { img, name };
+        }).catch(() => ({ img: '', name: '' }));
+        console.log('[Compare/Puppeteer] Item page meta — image:', itemPageMeta.img.substring(0,80), '| name:', itemPageMeta.name.substring(0,60));
 
         // Click "View all N stores" to expand hidden stores
         // Flash renders only 2 stores initially — rest are behind this button
@@ -4118,6 +4155,10 @@ app.get('/compare/search', async (req, res) => {
       console.log('[Compare] Using quickStores:', quickStores.map(s => s.name + ':₹' + s.price).join(' | '));
       extracted.stores = quickStores;
     }
+
+    // Use image/name captured from item page (price-compare page has no og:image)
+    if (itemPageMeta.img) extracted.productImage = itemPageMeta.img;
+    if (itemPageMeta.name && !extracted.productName) extracted.productName = itemPageMeta.name;
 
     if (extracted.stores.length === 0) {
       return res.status(404).json({
