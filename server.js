@@ -3411,32 +3411,23 @@ app.get('/compare/search', async (req, res) => {
 
         if (clicked2) {
           console.log('[Compare/Puppeteer] Clicked expand button:', clicked2.text);
-          if (clicked2.href && clicked2.href.includes('flash.co')) {
-            // Navigate directly to the full-store page
-            try {
-              await page.goto(clicked2.href, { waitUntil: 'networkidle2', timeout: 20000 });
-              console.log('[Compare/Puppeteer] Navigated to full store page:', page.url());
-            } catch(e) {}
-          } else {
-            // Button click — wait for navigation or link count increase
-            try {
-              await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 12000 });
-              console.log('[Compare/Puppeteer] Navigated after click:', page.url());
-            } catch(e) {
-              await new Promise(r => setTimeout(r, 3000));
-            }
-          }
-          // Wait for ≥5 outbound store links
+          // Always navigate directly — don't rely on click navigation which is unreliable
+          const pcUrl = `https://flash.co/price-compare/${itemId}/h/${pageHash}`;
           try {
+            await page.goto(pcUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+            console.log('[Compare/Puppeteer] Navigated to price-compare:', page.url());
+            // Wait for store links to appear
             await page.waitForFunction(() =>
               [...document.querySelectorAll('a[href]')]
                 .filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http')).length >= 5,
-              { timeout: 10000 }
-            );
-          } catch(e) {}
-          await new Promise(r => setTimeout(r, 1500));
-          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-          await new Promise(r => setTimeout(r, 1000));
+              { timeout: 12000 }
+            ).catch(() => {});
+            await new Promise(r => setTimeout(r, 1500));
+            await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+            await new Promise(r => setTimeout(r, 1000));
+          } catch(e) {
+            console.log('[Compare/Puppeteer] price-compare nav failed:', e.message);
+          }
         } else {
           console.log('[Compare/Puppeteer] No expand button found');
         }
@@ -3452,18 +3443,65 @@ app.get('/compare/search', async (req, res) => {
         console.log('[Compare/Puppeteer] Outbound links visible:', linkCount2);
 
         // Debug: dump prices visible per outbound link to diagnose wrong price extraction
-        const priceDebug = await page.evaluate(() => {
-          const out = [];
+        // Quick extraction: per-link card price extraction
+        // This is the most reliable method for Flash price-compare page
+        const quickStores = await page.evaluate(() => {
+          const STORE_MAP = {
+            'amazon': 'Amazon', 'flipkart': 'Flipkart', 'myntra': 'Myntra',
+            'ajio': 'Ajio', 'nykaa': 'Nykaa', 'tatacliq': 'TataCliq',
+            'croma': 'Croma', 'snapdeal': 'Snapdeal', 'meesho': 'Meesho',
+            'jiomart': 'JioMart', 'bigbasket': 'BigBasket', 'zepto': 'Zepto',
+            'blinkit': 'Blinkit', 'swiggy': 'Swiggy', 'firstcry': 'FirstCry',
+            'netmeds': 'Netmeds', 'lenskart': 'Lenskart',
+            'reliancedigital': 'Reliance Digital', 'vijaysales': 'Vijay Sales',
+            'zebrs': 'Zebrs', 'poorvika': 'Poorvika', 'sangeetha': 'Sangeetha',
+            'fireboltt': 'Fire-Boltt', 'fire-boltt': 'Fire-Boltt',
+            'boat-lifestyle': 'Boat', 'vlebazaar': 'VleBazaar',
+            'gadgetsnow': 'GadgetsNow', 'bajajfinserv': 'Bajaj Markets',
+            'dailydeals365': 'DailyDeals365',
+          };
+          const seen = new Set();
+          const result = [];
           document.querySelectorAll('a[href]').forEach(a => {
             if (!a.href || a.href.includes('flash.co') || !a.href.startsWith('http')) return;
-            const card = a.closest('[class]') || a.parentElement;
-            if (!card) return;
-            const prices = (card.textContent.match(/₹[\d,]+/g) || []);
-            if (prices.length) out.push(a.href.substring(0,40) + ' → ' + prices.join(', '));
+            const hl = a.href.toLowerCase();
+            const storeKey = Object.keys(STORE_MAP).find(k => hl.includes(k));
+            if (!storeKey) return;
+            const name = STORE_MAP[storeKey];
+            if (seen.has(name)) return;
+
+            // Walk up to find card — stop when container exceeds 600 chars
+            // (bigger = contains multiple stores = wrong container)
+            let card = a.parentElement;
+            for (let d = 0; d < 8 && card && card.parentElement; d++) {
+              const next = card.parentElement;
+              if ((next.textContent || '').length > 600) break;
+              card = next;
+            }
+
+            const cardText = card ? (card.textContent || '') : '';
+            // All ₹ amounts >= 200 in this card
+            const amounts = [...(cardText.match(/₹[\d,]+/g) || [])]
+              .map(s => parseInt(s.replace(/[^0-9]/g, '')))
+              .filter(p => p >= 200 && p <= 100000);
+
+            if (!amounts.length) return;
+            // Actual price = lowest amount (savings badge amounts are filtered by >= 200 floor,
+            // and the store price is always >= source price or clearly the main number)
+            const price = Math.min(...amounts);
+
+            seen.add(name);
+            result.push({
+              name, price, url: a.href,
+              outOfStock:  /out of stock|unavailable|sold out/i.test(cardText),
+              isSource:    /you came from here/i.test(cardText),
+              lowestPrice: /lowest price|best price/i.test(cardText),
+              savingsBadge: (cardText.match(/save\s*₹[\d,]+[^.\n]*/i) || [''])[0].trim().substring(0, 50),
+            });
           });
-          return out.slice(0,10);
+          return result;
         }).catch(() => []);
-        console.log('[Compare/Puppeteer] Card prices:', priceDebug.join(' | '));
+        console.log('[Compare/Puppeteer] Quick stores:', quickStores.map(s => s.name + ':₹' + s.price).join(' | '));
 
 
         // Run first to collect any quick wins; results merged below.
@@ -3501,15 +3539,26 @@ app.get('/compare/search', async (req, res) => {
             const m = (text||'').trim().match(/^₹\s*([\d,]+)$/);
             if (!m) return 0;
             const p = parseInt(m[1].replace(/,/g,''));
-            return (p >= 100 && p <= 10000000) ? p : 0;
+            return (p >= 200 && p <= 10000000) ? p : 0;
           }
 
           function isDiscountContext(el) {
+            // Strikethrough = MRP/crossed-out price, not the sale price
+            const tag = (el.tagName || '').toLowerCase();
+            if (tag === 's' || tag === 'del' || tag === 'strike') return true;
+            const style = (el.getAttribute && el.getAttribute('style')) || '';
+            if (style.includes('line-through')) return true;
+            const cls = (el.className || '').toLowerCase();
+            if (/strike|linethrough|line.through|mrp|original.price|was.price|crossed/i.test(cls)) return true;
             // Check the element's own text first (catches self-contained badge elements)
             const own = (el.textContent || '').toLowerCase();
             if (/\b(off|save|saved|cashback|extra|discount)\b/.test(own)) return true;
             // Walk up parents
             for (let p = el.parentElement, i = 0; p && i < 4; p = p.parentElement, i++) {
+              const pt = (p.tagName || '').toLowerCase();
+              if (pt === 's' || pt === 'del' || pt === 'strike') return true;
+              const ps = (p.getAttribute && p.getAttribute('style')) || '';
+              if (ps.includes('line-through')) return true;
               const t = (p.textContent || '').toLowerCase();
               if (t.length < 120 && /\b(off|save|saved|cashback|extra|discount)\b/.test(t)) return true;
             }
@@ -3548,7 +3597,7 @@ app.get('/compare/search', async (req, res) => {
 
           function findPriceInCard(container) {
             // Only search within containers that aren't too large (avoid getting page-level prices)
-            if ((container.textContent || '').length > 1000) return 0;
+            if ((container.textContent || '').length > 3000) return 0;
             let best = 0;
             const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
             let node;
@@ -3680,19 +3729,29 @@ app.get('/compare/search', async (req, res) => {
             const m = (text || '').trim().match(/^₹\s*([\d,]+)$/);
             if (!m) return 0;
             const p = parseInt(m[1].replace(/,/g,''));
-            return (p >= 100 && p <= 10000000) ? p : 0;
+            return (p >= 200 && p <= 10000000) ? p : 0;
           }
 
-          // Is this price node inside a discount/savings badge?
+          // Is this price node inside a discount/savings badge or strikethrough (MRP)?
           function isDiscountNode(el) {
+            // Strikethrough = crossed-out MRP
+            const tag = (el.tagName || '').toLowerCase();
+            if (tag === 's' || tag === 'del' || tag === 'strike') return true;
+            const style = (el.getAttribute && el.getAttribute('style')) || '';
+            if (style.includes('line-through')) return true;
+            const cls = (el.className || '').toLowerCase();
+            if (/strike|linethrough|line.through|mrp|original.price|was.price|crossed/i.test(cls)) return true;
             // Check the element's own text first (catches self-contained badge elements)
             const own = (el.textContent || '').toLowerCase();
             if (/\b(off|save|saved|extra|cashback|discount)\b/.test(own)) return true;
             // Walk up parents
             let p = el.parentElement;
             for (let i = 0; i < 5 && p; i++) {
+              const pt = (p.tagName || '').toLowerCase();
+              if (pt === 's' || pt === 'del' || pt === 'strike') return true;
+              const ps = (p.getAttribute && p.getAttribute('style')) || '';
+              if (ps.includes('line-through')) return true;
               const t = (p.textContent || '').toLowerCase();
-              // Short containers containing "off" or "save" = discount badge
               if (t.length < 120 && /\b(off|save|saved|extra|cashback|discount)\b/.test(t)) return true;
               p = p.parentElement;
             }
