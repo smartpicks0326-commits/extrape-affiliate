@@ -3411,22 +3411,20 @@ app.get('/compare/search', async (req, res) => {
 
         if (clicked2) {
           console.log('[Compare/Puppeteer] Clicked expand button:', clicked2.text);
-          // Flash's "View all N stores" links to flash.co/price-compare/{itemId}/h/{pageHash}
-          // Construct it directly — more reliable than waiting for navigation
-          const priceCompareUrl = itemId
-            ? `https://flash.co/price-compare/${itemId}/h/${pageHash}`
-            : (clicked2.href && clicked2.href.includes('flash.co') ? clicked2.href : null);
-
-          if (priceCompareUrl) {
+          if (clicked2.href && clicked2.href.includes('flash.co')) {
+            // Navigate directly to the full-store page
             try {
-              await page.goto(priceCompareUrl, { waitUntil: 'networkidle2', timeout: 20000 });
-              console.log('[Compare/Puppeteer] Navigated to price-compare:', page.url());
-            } catch(e) {
-              console.log('[Compare/Puppeteer] price-compare nav failed:', e.message);
-            }
+              await page.goto(clicked2.href, { waitUntil: 'networkidle2', timeout: 20000 });
+              console.log('[Compare/Puppeteer] Navigated to full store page:', page.url());
+            } catch(e) {}
           } else {
-            // Fallback: wait for same-page navigation
-            try { await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }); } catch(e) {}
+            // Button click — wait for navigation or link count increase
+            try {
+              await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 12000 });
+              console.log('[Compare/Puppeteer] Navigated after click:', page.url());
+            } catch(e) {
+              await new Promise(r => setTimeout(r, 3000));
+            }
           }
           // Wait for ≥5 outbound store links
           try {
@@ -3453,7 +3451,21 @@ app.get('/compare/search', async (req, res) => {
         ).catch(() => 0);
         console.log('[Compare/Puppeteer] Outbound links visible:', linkCount2);
 
-        // ── DOM Extraction Strategy A/B: link-first + img-alt fallback ──
+        // Debug: dump prices visible per outbound link to diagnose wrong price extraction
+        const priceDebug = await page.evaluate(() => {
+          const out = [];
+          document.querySelectorAll('a[href]').forEach(a => {
+            if (!a.href || a.href.includes('flash.co') || !a.href.startsWith('http')) return;
+            const card = a.closest('[class]') || a.parentElement;
+            if (!card) return;
+            const prices = (card.textContent.match(/₹[\d,]+/g) || []);
+            if (prices.length) out.push(a.href.substring(0,40) + ' → ' + prices.join(', '));
+          });
+          return out.slice(0,10);
+        }).catch(() => []);
+        console.log('[Compare/Puppeteer] Card prices:', priceDebug.join(' | '));
+
+
         // Run first to collect any quick wins; results merged below.
         const strategyABStores = await page.evaluate((intercepted) => {
           function normName(raw) {
