@@ -536,11 +536,17 @@ async function flashSearchPuppeteer(productUrl) {
         // Fast path: got hash from stream, navigate directly
         pageHash = streamResult.hash;
         console.log('[Flash/Puppeteer] ✅ Hash from stream:', pageHash);
-        try {
-          await page.goto('https://flash.co/price-compare/' + pageHash, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        } catch(e) {
-          // Try alternate URL formats
-          try { await page.goto('https://flash.co/product-details/' + pageHash, { waitUntil: 'domcontentloaded', timeout: 20000 }); } catch(e2) {}
+        // Try product-search first (newer format), then price-compare, then product-details
+        let navOk = false;
+        for (const navUrl of [
+          'https://flash.co/product-search/' + pageHash,
+          'https://flash.co/price-compare/' + pageHash,
+          'https://flash.co/product-details/' + pageHash,
+        ]) {
+          try {
+            await page.goto(navUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
+            navOk = true; break;
+          } catch(e) {}
         }
         console.log('[Flash/Puppeteer] Navigated to:', page.url());
       } else {
@@ -3181,7 +3187,7 @@ app.get('/compare/search', async (req, res) => {
   try {
     // ── URL normalisation ──
     let url = rawUrl;
-    try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; pu.pathname = pu.pathname.replace(/^\/dl\//, '/'); url = pu.toString(); } } catch(e) {}
+    try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; url = pu.toString(); } } catch(e) {}
     if (isShortUrl(url)) {
       try { url = await resolveRedirect(url); }
       catch(e) { return res.status(400).json({ error: 'Could not resolve short link. Open it in your browser, copy the full URL, and paste that instead.' }); }
@@ -3226,29 +3232,39 @@ app.get('/compare/search', async (req, res) => {
     const streamText = await sr.text();
     console.log('[Compare] Stream sample:', streamText.substring(0, 300));
 
-    // Extract itemId and pageHash from INT_NAVIGATION event
-    // Format: "https://webapp.flash.co/item/94870/h/ce9vnppi"
+    // Extract webapp URL from INT_NAVIGATION event — Flash uses two formats:
+    // Format A: "https://webapp.flash.co/item/94870/h/ce9vnppi"  (item with hash)
+    // Format B: "https://webapp.flash.co/product-search/MewW_YRY" (product-search hash)
     let itemId   = null;
     let pageHash = null;
-    const navMatch = streamText.match(/webapp\.flash\.co\/item\/(\d+)\/h\/([A-Za-z0-9_-]+)/);
-    if (navMatch) { itemId = navMatch[1]; pageHash = navMatch[2]; }
+    let webappUrl = null;
 
-    // Fallback patterns
-    if (!pageHash) {
+    // Format A: item/{id}/h/{hash}
+    const navMatchA = streamText.match(/webapp\.flash\.co\/item\/(\d+)\/h\/([A-Za-z0-9_-]+)/);
+    if (navMatchA) { itemId = navMatchA[1]; pageHash = navMatchA[2]; webappUrl = `https://webapp.flash.co/item/${itemId}/h/${pageHash}`; }
+
+    // Format B: product-search/{hash}
+    if (!webappUrl) {
+      const navMatchB = streamText.match(/webapp\.flash\.co\/product-search\/([A-Za-z0-9_-]{4,})/);
+      if (navMatchB) { pageHash = navMatchB[1]; webappUrl = `https://webapp.flash.co/product-search/${pageHash}`; }
+    }
+
+    // Fallback: other hash patterns
+    if (!webappUrl) {
       for (const pat of [/price-compare\/\d+\/h\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{6,})/]) {
-        const m = streamText.match(pat); if (m) { pageHash = m[1]; break; }
+        const m = streamText.match(pat);
+        if (m) { pageHash = m[1]; webappUrl = `https://webapp.flash.co/product-search/${pageHash}`; break; }
       }
     }
 
-    console.log('[Compare] itemId:', itemId, '| pageHash:', pageHash);
-    if (!itemId && !pageHash) {
+    console.log('[Compare] itemId:', itemId, '| pageHash:', pageHash, '| webappUrl:', webappUrl);
+    if (!webappUrl) {
       return res.status(404).json({ error: 'Flash.co has no comparison data for this product.', streamSample: streamText.substring(0, 300) });
     }
 
     // ── Step 2: Open webapp.flash.co in Puppeteer and extract prices from DOM ──
     // The prices are rendered by Next.js client-side — no REST API returns them.
-    // We navigate directly to the item page (no homepage needed — faster).
-    const webappUrl = `https://webapp.flash.co/item/${itemId}/h/${pageHash}`;
+    // We navigate directly to the item/product-search page.
     console.log('[Compare] Opening in Puppeteer:', webappUrl);
 
     const extracted = await withFlashBrowser(async () => {
