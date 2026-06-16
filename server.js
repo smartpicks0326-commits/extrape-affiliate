@@ -3401,30 +3401,32 @@ app.get('/compare/search', async (req, res) => {
           for (const el of els) {
             const t = (el.textContent || '').replace(/\s+/g, ' ').toLowerCase().trim();
             if (/view all|show all|all stores|more stores|view \d+|show \d+/.test(t) && t.length < 60) {
-              el.click(); return t;
+              // If it's a link, return href so we can navigate directly
+              if (el.tagName === 'A' && el.href) return { text: t, href: el.href };
+              el.click(); return { text: t, href: null };
             }
           }
           return null;
         }).catch(() => null);
 
         if (clicked2) {
-          console.log('[Compare/Puppeteer] Clicked expand button:', clicked2);
-          // "View all N stores" navigates to flash.co/price-compare/{id}/h/{hash}
-          // Wait for that navigation to complete
-          try {
-            await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
-            console.log('[Compare/Puppeteer] Navigated after expand:', page.url());
-          } catch(e) {
-            // May not navigate — wait for link count to increase instead
+          console.log('[Compare/Puppeteer] Clicked expand button:', clicked2.text);
+          if (clicked2.href && clicked2.href.includes('flash.co')) {
+            // Navigate directly to the full-store page
             try {
-              await page.waitForFunction((pre) =>
-                [...document.querySelectorAll('a[href]')]
-                  .filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http')).length > pre,
-                { timeout: 8000 }, preLinkCount
-              );
-            } catch(e2) {}
+              await page.goto(clicked2.href, { waitUntil: 'networkidle2', timeout: 20000 });
+              console.log('[Compare/Puppeteer] Navigated to full store page:', page.url());
+            } catch(e) {}
+          } else {
+            // Button click — wait for navigation or link count increase
+            try {
+              await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 12000 });
+              console.log('[Compare/Puppeteer] Navigated after click:', page.url());
+            } catch(e) {
+              await new Promise(r => setTimeout(r, 3000));
+            }
           }
-          // Wait for all store cards to render
+          // Wait for ≥5 outbound store links
           try {
             await page.waitForFunction(() =>
               [...document.querySelectorAll('a[href]')]
@@ -3432,11 +3434,11 @@ app.get('/compare/search', async (req, res) => {
               { timeout: 10000 }
             );
           } catch(e) {}
-          await new Promise(r => setTimeout(r, 2000));
-          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
           await new Promise(r => setTimeout(r, 1500));
+          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+          await new Promise(r => setTimeout(r, 1000));
         } else {
-          console.log('[Compare/Puppeteer] No expand button found — all stores may already be visible');
+          console.log('[Compare/Puppeteer] No expand button found');
         }
 
         const pageTitle2 = await page.title().catch(() => '');
@@ -4069,6 +4071,24 @@ app.get('/compare/search', async (req, res) => {
       ? ('Product from ' + srcStore) : (extracted.productName || ('Product from ' + srcStore));
 
     console.log('[Compare] ✅ FINAL:', stores.map(s => s.name + ':₹' + s.price + (s.isSource?'[src]':'') + (s.isBest?'[best]':'')).join(' | '));
+
+    // ── Affiliate links via ExtraPe ──
+    if (extrapeTokenCache.accessToken) {
+      stores = await Promise.all(stores.map(async (s) => {
+        if (!s.url || !s.url.startsWith('http')) return s;
+        try {
+          const result = await convertExtraPe(s.url);
+          return {
+            ...s,
+            affiliateLink: result.clickUrl || result,
+            displayLink:   result.displayUrl || result.clickUrl || s.url,
+          };
+        } catch(e) {
+          return { ...s, affiliateLink: s.url, displayLink: s.url };
+        }
+      }));
+      console.log('[Compare] Affiliated:', stores.map(s => s.name + ':' + (s.affiliateLink||'').substring(0,40)).join(' | '));
+    }
 
     return res.json({
       stores, productName,
