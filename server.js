@@ -3409,14 +3409,29 @@ app.get('/compare/search', async (req, res) => {
 
         if (clicked2) {
           console.log('[Compare/Puppeteer] Clicked expand button:', clicked2);
-          // Wait until outbound link count increases (new stores rendered)
+          // "View all N stores" navigates to flash.co/price-compare/{id}/h/{hash}
+          // Wait for that navigation to complete
           try {
-            await page.waitForFunction((pre) =>
+            await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
+            console.log('[Compare/Puppeteer] Navigated after expand:', page.url());
+          } catch(e) {
+            // May not navigate — wait for link count to increase instead
+            try {
+              await page.waitForFunction((pre) =>
+                [...document.querySelectorAll('a[href]')]
+                  .filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http')).length > pre,
+                { timeout: 8000 }, preLinkCount
+              );
+            } catch(e2) {}
+          }
+          // Wait for all store cards to render
+          try {
+            await page.waitForFunction(() =>
               [...document.querySelectorAll('a[href]')]
-                .filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http')).length > pre,
-              { timeout: 8000 }, preLinkCount
+                .filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http')).length >= 5,
+              { timeout: 10000 }
             );
-          } catch(e) { /* stores may already be in DOM */ }
+          } catch(e) {}
           await new Promise(r => setTimeout(r, 2000));
           await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
           await new Promise(r => setTimeout(r, 1500));
