@@ -3471,13 +3471,17 @@ app.get('/compare/search', async (req, res) => {
             const name = STORE_MAP[storeKey];
             if (seen.has(name)) return;
 
-            // Walk up to find card — stop when container exceeds 600 chars
-            // (bigger = contains multiple stores = wrong container)
-            let card = a.parentElement;
-            for (let d = 0; d < 8 && card && card.parentElement; d++) {
-              const next = card.parentElement;
-              if ((next.textContent || '').length > 600) break;
-              card = next;
+            // Find card container — try closest known card selectors first
+            let card = a.closest('[class*="store"],[class*="Store"],[class*="card"],[class*="Card"],[class*="item"],[class*="Item"],[class*="row"],[class*="Row"],[class*="merchant"],[class*="retailer"],[class*="offer"]');
+            if (!card || (card.textContent || '').length > 500) {
+              // Fallback: walk up but stop at first container > 400 chars
+              card = a.parentElement;
+              for (let d = 0; d < 6 && card && card.parentElement; d++) {
+                const next = card.parentElement;
+                const len = (next.textContent || '').length;
+                if (len > 400) break;
+                card = next;
+              }
             }
 
             const cardText = card ? (card.textContent || '') : '';
