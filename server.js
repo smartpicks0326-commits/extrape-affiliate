@@ -3242,29 +3242,43 @@ app.get('/compare/search', async (req, res) => {
     const streamText = await sr.text();
     console.log('[Compare] Stream sample:', streamText.substring(0, 300));
 
-    // Extract itemId and pageHash from INT_NAVIGATION event
-    // Format: "https://webapp.flash.co/item/94870/h/ce9vnppi"
-    let itemId   = null;
-    let pageHash = null;
-    const navMatch = streamText.match(/webapp\.flash\.co\/item\/(\d+)\/h\/([A-Za-z0-9_-]+)/);
-    if (navMatch) { itemId = navMatch[1]; pageHash = navMatch[2]; }
+    // Extract webapp URL from INT_NAVIGATION event — Flash uses two formats:
+    // Format A: webapp.flash.co/item/273023/h/ce9vnppi
+    // Format B: webapp.flash.co/product-search/MewW_YRY
+    let itemId    = null;
+    let pageHash  = null;
+    let webappUrl = null;
 
-    // Fallback patterns
-    if (!pageHash) {
-      for (const pat of [/price-compare\/\d+\/h\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{6,})/]) {
-        const m = streamText.match(pat); if (m) { pageHash = m[1]; break; }
+    // Format A: item/{id}/h/{hash}
+    const navMatchA = streamText.match(/webapp\.flash\.co\/item\/(\d+)\/h\/([A-Za-z0-9_-]+)/);
+    if (navMatchA) {
+      itemId = navMatchA[1]; pageHash = navMatchA[2];
+      webappUrl = `https://webapp.flash.co/item/${itemId}/h/${pageHash}`;
+    }
+
+    // Format B: product-search/{hash}
+    if (!webappUrl) {
+      const navMatchB = streamText.match(/webapp\.flash\.co\/product-search\/([A-Za-z0-9_-]{4,})/);
+      if (navMatchB) { pageHash = navMatchB[1]; webappUrl = `https://webapp.flash.co/product-search/${pageHash}`; }
+    }
+
+    // Fallback: any /h/{hash} pattern
+    if (!webappUrl) {
+      for (const pat of [/price-compare\/(\d+)\/h\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{6,})/]) {
+        const m = streamText.match(pat);
+        if (m) {
+          pageHash = m[2] || m[1];
+          if (m[2]) itemId = m[1];
+          webappUrl = `https://webapp.flash.co/product-search/${pageHash}`;
+          break;
+        }
       }
     }
 
-    console.log('[Compare] itemId:', itemId, '| pageHash:', pageHash);
-    if (!itemId && !pageHash) {
+    console.log('[Compare] itemId:', itemId, '| pageHash:', pageHash, '| webappUrl:', webappUrl);
+    if (!webappUrl) {
       return res.status(404).json({ error: 'Flash.co has no comparison data for this product.', streamSample: streamText.substring(0, 300) });
     }
-
-    // ── Step 2: Open webapp.flash.co in Puppeteer and extract prices from DOM ──
-    // The prices are rendered by Next.js client-side — no REST API returns them.
-    // We navigate directly to the item page (no homepage needed — faster).
-    const webappUrl = `https://webapp.flash.co/item/${itemId}/h/${pageHash}`;
     console.log('[Compare] Opening in Puppeteer:', webappUrl);
 
     let quickStores = [];
