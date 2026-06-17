@@ -3181,7 +3181,23 @@ app.get('/compare/search', async (req, res) => {
   try {
     // ── URL normalisation ──
     let url = rawUrl;
-    try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; url = pu.toString(); } } catch(e) {}
+    try {
+      const pu = new URL(url);
+      // Fix dl.flipkart.com → www.flipkart.com (strip /dl/ prefix from path)
+      if (pu.hostname === 'dl.flipkart.com') {
+        pu.hostname = 'www.flipkart.com';
+        pu.pathname = pu.pathname.replace(/^\/dl\//, '/');
+        url = pu.toString();
+      }
+      // Strip noisy tracking params that confuse Flash stream API
+      // Keep only essential product-identifying params (pid, ASIN etc)
+      const STRIP_PARAMS = ['ref', 'ref_', 'social_share', 'iid', 'fm', 'hl_lid', 'lid',
+        'srno', 'otracker', 'ssid', 'ov_redirect', '_refId', '_appId', 'ppt', 'ppn',
+        'source', 'smid', 'psc', 'th', 'linkCode', 'tag', 'linkId', 'camp', 'creative'];
+      STRIP_PARAMS.forEach(p => pu.searchParams.delete(p));
+      url = pu.toString();
+    } catch(e) {}
+
     if (isShortUrl(url)) {
       try { url = await resolveRedirect(url); }
       catch(e) { return res.status(400).json({ error: 'Could not resolve short link. Open it in your browser, copy the full URL, and paste that instead.' }); }
