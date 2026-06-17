@@ -536,17 +536,11 @@ async function flashSearchPuppeteer(productUrl) {
         // Fast path: got hash from stream, navigate directly
         pageHash = streamResult.hash;
         console.log('[Flash/Puppeteer] ✅ Hash from stream:', pageHash);
-        // Try product-search first (newer format), then price-compare, then product-details
-        let navOk = false;
-        for (const navUrl of [
-          'https://flash.co/product-search/' + pageHash,
-          'https://flash.co/price-compare/' + pageHash,
-          'https://flash.co/product-details/' + pageHash,
-        ]) {
-          try {
-            await page.goto(navUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
-            navOk = true; break;
-          } catch(e) {}
+        try {
+          await page.goto('https://flash.co/price-compare/' + pageHash, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        } catch(e) {
+          // Try alternate URL formats
+          try { await page.goto('https://flash.co/product-details/' + pageHash, { waitUntil: 'domcontentloaded', timeout: 20000 }); } catch(e2) {}
         }
         console.log('[Flash/Puppeteer] Navigated to:', page.url());
       } else {
@@ -1087,13 +1081,13 @@ function cleanLink(rawUrl) {
     // ── Long Amazon URL (amazon.in/dp/ASIN?tag=xxx&...) ──
     if (host.includes('amazon')) {
       const asin = (parsed.pathname.match(/\/dp\/([A-Z0-9]{10})/i) || [])[1];
-      const tag  = parsed.searchParams.get('tag');
       if (asin) {
-        const cleanDisplay  = 'https://www.amazon.in/dp/' + asin;       // no tag
-        const affiliateClick = cleanDisplay + (tag ? '?tag=' + tag : ''); // with tag
+        const cleanDisplay   = 'https://www.amazon.in/dp/' + asin;
+        // Always use our tag — never use flashai or any other tag
+        const affiliateClick = cleanDisplay + '?tag=smartpickd0be-21';
         return {
-          displayUrl: cleanDisplay,       // user sees/copies this — perfectly clean
-          clickUrl:   makeGoLink(affiliateClick), // Visit button — tag hidden in base64
+          displayUrl: cleanDisplay,
+          clickUrl:   makeGoLink(affiliateClick),
         };
       }
     }
@@ -3232,42 +3226,33 @@ app.get('/compare/search', async (req, res) => {
     const streamText = await sr.text();
     console.log('[Compare] Stream sample:', streamText.substring(0, 300));
 
-    // Extract webapp URL from INT_NAVIGATION event — Flash uses two formats:
-    // Format A: "https://webapp.flash.co/item/94870/h/ce9vnppi"  (item with hash)
-    // Format B: "https://webapp.flash.co/product-search/MewW_YRY" (product-search hash)
+    // Extract itemId and pageHash from INT_NAVIGATION event
+    // Format: "https://webapp.flash.co/item/94870/h/ce9vnppi"
     let itemId   = null;
     let pageHash = null;
-    let webappUrl = null;
+    const navMatch = streamText.match(/webapp\.flash\.co\/item\/(\d+)\/h\/([A-Za-z0-9_-]+)/);
+    if (navMatch) { itemId = navMatch[1]; pageHash = navMatch[2]; }
 
-    // Format A: item/{id}/h/{hash}
-    const navMatchA = streamText.match(/webapp\.flash\.co\/item\/(\d+)\/h\/([A-Za-z0-9_-]+)/);
-    if (navMatchA) { itemId = navMatchA[1]; pageHash = navMatchA[2]; webappUrl = `https://webapp.flash.co/item/${itemId}/h/${pageHash}`; }
-
-    // Format B: product-search/{hash}
-    if (!webappUrl) {
-      const navMatchB = streamText.match(/webapp\.flash\.co\/product-search\/([A-Za-z0-9_-]{4,})/);
-      if (navMatchB) { pageHash = navMatchB[1]; webappUrl = `https://webapp.flash.co/product-search/${pageHash}`; }
-    }
-
-    // Fallback: other hash patterns
-    if (!webappUrl) {
+    // Fallback patterns
+    if (!pageHash) {
       for (const pat of [/price-compare\/\d+\/h\/([A-Za-z0-9_-]{4,})/, /\/h\/([A-Za-z0-9_-]{6,})/]) {
-        const m = streamText.match(pat);
-        if (m) { pageHash = m[1]; webappUrl = `https://webapp.flash.co/product-search/${pageHash}`; break; }
+        const m = streamText.match(pat); if (m) { pageHash = m[1]; break; }
       }
     }
 
-    console.log('[Compare] itemId:', itemId, '| pageHash:', pageHash, '| webappUrl:', webappUrl);
-    if (!webappUrl) {
+    console.log('[Compare] itemId:', itemId, '| pageHash:', pageHash);
+    if (!itemId && !pageHash) {
       return res.status(404).json({ error: 'Flash.co has no comparison data for this product.', streamSample: streamText.substring(0, 300) });
     }
 
     // ── Step 2: Open webapp.flash.co in Puppeteer and extract prices from DOM ──
     // The prices are rendered by Next.js client-side — no REST API returns them.
-    // We navigate directly to the item/product-search page.
+    // We navigate directly to the item page (no homepage needed — faster).
+    const webappUrl = `https://webapp.flash.co/item/${itemId}/h/${pageHash}`;
     console.log('[Compare] Opening in Puppeteer:', webappUrl);
 
     let quickStores = [];
+    let itemPageMeta = { img: '', name: '' };
     const extracted = await withFlashBrowser(async () => {
       const browser = await getFlashBrowser();
       const page    = await browser.newPage();
@@ -3364,8 +3349,35 @@ app.get('/compare/search', async (req, res) => {
         }
         console.log('[Compare/Puppeteer] Intercepted stores:', interceptedStores.length);
 
-        // ── Extra wait + scroll + expand after intercepted-data check ──
-        // Wait for 3+ price nodes — page is loading store data via client-side API
+        // ── Extract product image + name NOW on item page (before navigation) ──
+        itemPageMeta = await page.evaluate(() => {
+          let img = '';
+          const ogImg = document.querySelector('meta[property="og:image"]');
+          if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo')) img = s; }
+          if (!img) {
+            for (const el of document.querySelectorAll('img')) {
+              const s = el.src || '';
+              if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
+              if (/img\.flash\.co.*\/plain\//.test(s)) { try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; } }
+            }
+          }
+          if (!img) {
+            for (const el of document.querySelectorAll('img')) {
+              const s = el.src || '';
+              if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
+              if (/media-amazon\.com|images-amazon\.com|_SL\d+_|_AC_|rukmini\d+\.flixcart|img\.flipkart/.test(s)) { img = s; break; }
+            }
+          }
+          const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
+          let name = '';
+          const ogTitle = document.querySelector('meta[property="og:title"]');
+          if (ogTitle) { const t = (ogTitle.getAttribute('content')||'').trim(); if (t.length > 8 && !JUNK.some(j => t.toLowerCase().includes(j))) name = t; }
+          if (!name) { for (const el of document.querySelectorAll('h1,h2')) { const t = el.textContent.trim(); if (t.length > 8 && t.length < 400 && !JUNK.some(j => t.toLowerCase().includes(j))) { name = t; break; } } }
+          return { img, name };
+        }).catch(() => ({ img: '', name: '' }));
+        console.log('[Compare/Puppeteer] Item page meta — image:', itemPageMeta.img.substring(0,80), '| name:', itemPageMeta.name.substring(0,50));
+
+        // ── Wait for prices + store links ──
         try {
           await page.waitForFunction(() =>
             (document.body.innerText.match(/₹[\d,]{3,}/g) || []).length >= 3,
@@ -3374,50 +3386,39 @@ app.get('/compare/search', async (req, res) => {
           console.log('[Compare/Puppeteer] Prices detected');
         } catch(e) { console.log('[Compare/Puppeteer] Price wait timed out'); }
 
-        // Wait for multiple outbound store links (at least 3 = stores have rendered their buttons)
         try {
-          await page.waitForFunction(() => {
-            const links = [...document.querySelectorAll('a[href]')]
-              .filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http'));
-            return links.length >= 3;
-          }, { timeout: 25000 });
+          await page.waitForFunction(() =>
+            [...document.querySelectorAll('a[href]')]
+              .filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http')).length >= 3,
+            { timeout: 25000 }
+          );
           console.log('[Compare/Puppeteer] Store links detected');
         } catch(e) { console.log('[Compare/Puppeteer] Store links wait timed out'); }
 
-        // Scroll to trigger lazy loading of remaining store cards
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
         await new Promise(r => setTimeout(r, 3000));
         await page.evaluate(() => window.scrollTo(0, 0));
         await new Promise(r => setTimeout(r, 1000));
 
-        // Click "View all N stores" to expand hidden stores
-        // Flash renders only 2 stores initially — rest are behind this button
-        const preLinkCount = await page.evaluate(() =>
-          [...document.querySelectorAll('a[href]')].filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http')).length
-        ).catch(() => 0);
-
+        // ── Click "View all N stores" → navigate to price-compare page ──
         const clicked2 = await page.evaluate(() => {
-          // Match "View all 10 stores", "View all stores", "Show all", etc.
           const els = [...document.querySelectorAll('button, a, [role="button"], span, div, p')];
           for (const el of els) {
             const t = (el.textContent || '').replace(/\s+/g, ' ').toLowerCase().trim();
             if (/view all|show all|all stores|more stores|view \d+|show \d+/.test(t) && t.length < 60) {
-              // If it's a link, return href so we can navigate directly
-              if (el.tagName === 'A' && el.href) return { text: t, href: el.href };
-              el.click(); return { text: t, href: null };
+              el.click(); return t;
             }
           }
           return null;
         }).catch(() => null);
 
         if (clicked2) {
-          console.log('[Compare/Puppeteer] Clicked expand button:', clicked2.text);
-          // Always navigate directly — don't rely on click navigation which is unreliable
+          console.log('[Compare/Puppeteer] Clicked expand button:', clicked2);
+          // Always navigate directly — click navigation is unreliable
           const pcUrl = `https://flash.co/price-compare/${itemId}/h/${pageHash}`;
           try {
             await page.goto(pcUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
             console.log('[Compare/Puppeteer] Navigated to price-compare:', page.url());
-            // Wait for store links to appear
             await page.waitForFunction(() =>
               [...document.querySelectorAll('a[href]')]
                 .filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http')).length >= 5,
@@ -3437,15 +3438,12 @@ app.get('/compare/search', async (req, res) => {
         const pageUrl2 = page.url();
         console.log('[Compare/Puppeteer] Title:', pageTitle2, '| URL:', pageUrl2.substring(0, 80));
 
-        // Count outbound links for debugging
         const linkCount2 = await page.evaluate(() =>
           [...document.querySelectorAll('a[href]')].filter(a => a.href && !a.href.includes('flash.co')).length
         ).catch(() => 0);
         console.log('[Compare/Puppeteer] Outbound links visible:', linkCount2);
 
-        // Debug: dump prices visible per outbound link to diagnose wrong price extraction
-        // Quick extraction: per-link card price extraction
-        // This is the most reliable method for Flash price-compare page
+        // ── Quick per-link card extraction (price-compare page) ──
         quickStores = await page.evaluate(() => {
           const STORE_MAP = {
             'amazon': 'Amazon', 'flipkart': 'Flipkart', 'myntra': 'Myntra',
@@ -3471,29 +3469,28 @@ app.get('/compare/search', async (req, res) => {
             const name = STORE_MAP[storeKey];
             if (seen.has(name)) return;
 
-            // Find card container — try closest known card selectors first
-            let card = a.closest('[class*="store"],[class*="Store"],[class*="card"],[class*="Card"],[class*="item"],[class*="Item"],[class*="row"],[class*="Row"],[class*="merchant"],[class*="retailer"],[class*="offer"]');
-            if (!card || (card.textContent || '').length > 500) {
-              // Fallback: walk up but stop at first container > 400 chars
+            // Individual store card on Flash price-compare is ~50-150 chars
+            let card = a.closest('.block.cursor-pointer') || a.closest('[class*="cursor-pointer"]');
+            if (!card || (card.textContent || '').length > 300) {
               card = a.parentElement;
-              for (let d = 0; d < 6 && card && card.parentElement; d++) {
-                const next = card.parentElement;
-                const len = (next.textContent || '').length;
-                if (len > 400) break;
-                card = next;
+              let best = null;
+              for (let d = 0; d < 8 && card; d++) {
+                const txt = card.textContent || '';
+                if (txt.length > 300) break;
+                if (/₹[\d,]+/.test(txt)) best = card;
+                card = card.parentElement;
               }
+              card = best || a.parentElement;
             }
 
             const cardText = card ? (card.textContent || '') : '';
-            // All ₹ amounts >= 200 in this card
             const amounts = [...(cardText.match(/₹[\d,]+/g) || [])]
               .map(s => parseInt(s.replace(/[^0-9]/g, '')))
               .filter(p => p >= 200 && p <= 100000);
-
             if (!amounts.length) return;
-            // Actual price = lowest amount (savings badge amounts are filtered by >= 200 floor,
-            // and the store price is always >= source price or clearly the main number)
-            const price = Math.min(...amounts);
+
+            // LAST ₹ amount >= 200: Flash renders savings badge first, store price last
+            const price = amounts[amounts.length - 1];
 
             seen.add(name);
             result.push({
@@ -3508,8 +3505,7 @@ app.get('/compare/search', async (req, res) => {
         }).catch(() => []);
         console.log('[Compare/Puppeteer] Quick stores:', quickStores.map(s => s.name + ':₹' + s.price).join(' | '));
 
-
-        // Run first to collect any quick wins; results merged below.
+        // ── DOM Extraction Strategy A/B (fallback) ──
         const strategyABStores = await page.evaluate((intercepted) => {
           function normName(raw) {
             const l = (raw||'').toLowerCase().trim();
@@ -3544,28 +3540,13 @@ app.get('/compare/search', async (req, res) => {
             const m = (text||'').trim().match(/^₹\s*([\d,]+)$/);
             if (!m) return 0;
             const p = parseInt(m[1].replace(/,/g,''));
-            return (p >= 200 && p <= 10000000) ? p : 0;
+            return (p >= 100 && p <= 10000000) ? p : 0;
           }
 
           function isDiscountContext(el) {
-            // Strikethrough = MRP/crossed-out price, not the sale price
-            const tag = (el.tagName || '').toLowerCase();
-            if (tag === 's' || tag === 'del' || tag === 'strike') return true;
-            const style = (el.getAttribute && el.getAttribute('style')) || '';
-            if (style.includes('line-through')) return true;
-            const cls = (el.className || '').toLowerCase();
-            if (/strike|linethrough|line.through|mrp|original.price|was.price|crossed/i.test(cls)) return true;
-            // Check the element's own text first (catches self-contained badge elements)
-            const own = (el.textContent || '').toLowerCase();
-            if (/\b(off|save|saved|cashback|extra|discount)\b/.test(own)) return true;
-            // Walk up parents
             for (let p = el.parentElement, i = 0; p && i < 4; p = p.parentElement, i++) {
-              const pt = (p.tagName || '').toLowerCase();
-              if (pt === 's' || pt === 'del' || pt === 'strike') return true;
-              const ps = (p.getAttribute && p.getAttribute('style')) || '';
-              if (ps.includes('line-through')) return true;
-              const t = (p.textContent || '').toLowerCase();
-              if (t.length < 120 && /\b(off|save|saved|cashback|extra|discount)\b/.test(t)) return true;
+              const t = (p.textContent||'').toLowerCase();
+              if (t.length < 80 && /\b(off|save|saved|cashback|extra)\b/.test(t)) return true;
             }
             return false;
           }
@@ -3602,16 +3583,15 @@ app.get('/compare/search', async (req, res) => {
 
           function findPriceInCard(container) {
             // Only search within containers that aren't too large (avoid getting page-level prices)
-            if ((container.textContent || '').length > 3000) return 0;
+            // If the container has too much text, it's too broad
+            if ((container.textContent || '').length > 1000) return 0;
             let best = 0;
             const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
             let node;
             while ((node = walker.nextNode())) {
               const p = parsePrice(node.textContent);
               if (p > 0 && !isDiscountContext(node.parentElement)) {
-                // Pick LOWEST valid price — the sale price is always the lowest number in a card
-                // MRP (strikethrough) is higher; savings badge amounts caught by isDiscountContext
-                if (best === 0 || p < best) best = p;
+                if (p > best) best = p;
               }
             }
             return best;
@@ -3690,13 +3670,13 @@ app.get('/compare/search', async (req, res) => {
             });
           }
 
-          // Return Strategy A/B results for merge with intercepted data
           return stores;
         }, interceptedStores);
 
-        // ── Strategy 0/1/2 card-based extraction (main evaluate) ──
-        // Merge intercepted API data + Strategy A/B DOM results into intercepted2
+        // Merge for second evaluate
         const mergedIntercepted = [...interceptedStores, ...strategyABStores];
+
+        // ── Main extraction (Strategy 0/1/2) ──
         return await page.evaluate((intercepted2) => {
           function normName(raw) {
             const l = (raw||'').toLowerCase().trim();
@@ -3734,30 +3714,16 @@ app.get('/compare/search', async (req, res) => {
             const m = (text || '').trim().match(/^₹\s*([\d,]+)$/);
             if (!m) return 0;
             const p = parseInt(m[1].replace(/,/g,''));
-            return (p >= 200 && p <= 10000000) ? p : 0;
+            return (p >= 100 && p <= 10000000) ? p : 0;
           }
 
-          // Is this price node inside a discount/savings badge or strikethrough (MRP)?
+          // Is this price node inside a discount/savings badge?
           function isDiscountNode(el) {
-            // Strikethrough = crossed-out MRP
-            const tag = (el.tagName || '').toLowerCase();
-            if (tag === 's' || tag === 'del' || tag === 'strike') return true;
-            const style = (el.getAttribute && el.getAttribute('style')) || '';
-            if (style.includes('line-through')) return true;
-            const cls = (el.className || '').toLowerCase();
-            if (/strike|linethrough|line.through|mrp|original.price|was.price|crossed/i.test(cls)) return true;
-            // Check the element's own text first (catches self-contained badge elements)
-            const own = (el.textContent || '').toLowerCase();
-            if (/\b(off|save|saved|extra|cashback|discount)\b/.test(own)) return true;
-            // Walk up parents
             let p = el.parentElement;
             for (let i = 0; i < 5 && p; i++) {
-              const pt = (p.tagName || '').toLowerCase();
-              if (pt === 's' || pt === 'del' || pt === 'strike') return true;
-              const ps = (p.getAttribute && p.getAttribute('style')) || '';
-              if (ps.includes('line-through')) return true;
               const t = (p.textContent || '').toLowerCase();
-              if (t.length < 120 && /\b(off|save|saved|extra|cashback|discount)\b/.test(t)) return true;
+              // Short containers containing "off" or "save" = discount badge
+              if (t.length < 80 && /\b(off|save|saved|extra|cashback)\b/.test(t)) return true;
               p = p.parentElement;
             }
             return false;
@@ -3843,8 +3809,7 @@ app.get('/compare/search', async (req, res) => {
               const p = parsePrice(el.textContent);
               if (p > 0 && !isDiscountNode(el)) candidatePrices.push(p);
             });
-            // The main price is the LOWEST valid price in the card.
-            // MRP (struck-through) is always higher; savings badge amounts are caught by isDiscountNode.
+            // The main price is the LOWEST valid price — MRP is higher, badges caught by isDiscountNode
             if (candidatePrices.length > 0) mainPrice = Math.min(...candidatePrices);
             if (!mainPrice) return null;
 
@@ -4104,7 +4069,6 @@ app.get('/compare/search', async (req, res) => {
           };
         }, mergedIntercepted);
 
-        // Merge quickStores (computed before second evaluate) into extracted result
       } finally {
         await page.close().catch(() => {});
       }
@@ -4113,11 +4077,14 @@ app.get('/compare/search', async (req, res) => {
     console.log('[Compare] Extracted', extracted.stores.length, 'stores:',
       extracted.stores.map(s => s.name + ':₹' + s.price).join(' | '));
 
-    // Override extracted.stores with quickStores if it has data
+    // Use quickStores if available (correct prices from price-compare page)
     if (quickStores.length > 0) {
       console.log('[Compare] Using quickStores:', quickStores.map(s => s.name + ':₹' + s.price).join(' | '));
       extracted.stores = quickStores;
     }
+    // Use image/name from item page (price-compare page has no og:image)
+    if (itemPageMeta.img) extracted.productImage = itemPageMeta.img;
+    if (itemPageMeta.name && !extracted.productName) extracted.productName = itemPageMeta.name;
 
     if (extracted.stores.length === 0) {
       return res.status(404).json({
@@ -4131,18 +4098,19 @@ app.get('/compare/search', async (req, res) => {
     let stores = extracted.stores
       .sort((a, b) => a.price - b.price)
       .map((s, i) => {
-        // Use Flash's isSource flag if set, fallback to URL-based detection
         const urlSrc = srcStore && s.name.toLowerCase().includes(srcStore.toLowerCase());
         const isSrc  = s.isSource || urlSrc;
-        // Best = lowest price that isn't out of stock
         const inStockStores = extracted.stores.filter(x => !x.outOfStock);
         const bestPrice = inStockStores.length > 0 ? Math.min(...inStockStores.map(x => x.price)) : 0;
+        const isBest = !s.outOfStock && s.price === bestPrice;
         return {
           ...s,
           normalizedName: s.name,
-          isSource:   isSrc,
-          isBest:     !s.outOfStock && s.price === bestPrice,
-          lowestPrice: s.lowestPrice || (!s.outOfStock && s.price === bestPrice),
+          isSource:    isSrc,
+          isBest,
+          lowestPrice: s.lowestPrice || isBest,
+          // Only show savingsBadge on the best price store
+          savingsBadge: isBest ? (s.savingsBadge || '') : '',
         };
       });
 
@@ -4157,20 +4125,14 @@ app.get('/compare/search', async (req, res) => {
 
     console.log('[Compare] ✅ FINAL:', stores.map(s => s.name + ':₹' + s.price + (s.isSource?'[src]':'') + (s.isBest?'[best]':'')).join(' | '));
 
-    // ── Affiliate links via ExtraPe ──
+    // Affiliate links via ExtraPe
     if (extrapeTokenCache.accessToken) {
       stores = await Promise.all(stores.map(async (s) => {
         if (!s.url || !s.url.startsWith('http')) return s;
         try {
           const result = await convertExtraPe(s.url);
-          return {
-            ...s,
-            affiliateLink: result.clickUrl || result,
-            displayLink:   result.displayUrl || result.clickUrl || s.url,
-          };
-        } catch(e) {
-          return { ...s, affiliateLink: s.url, displayLink: s.url };
-        }
+          return { ...s, affiliateLink: result.clickUrl || result, displayLink: result.displayUrl || result.clickUrl || s.url };
+        } catch(e) { return { ...s, affiliateLink: s.url, displayLink: s.url }; }
       }));
       console.log('[Compare] Affiliated:', stores.map(s => s.name + ':' + (s.affiliateLink||'').substring(0,40)).join(' | '));
     }
@@ -4204,7 +4166,7 @@ app.get('/compare/rawdata', async (req, res) => {
 
   try {
     let url = rawUrl;
-    try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; pu.pathname = pu.pathname.replace(/^\/dl\//, '/'); url = pu.toString(); } } catch(e) {}
+    try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; url = pu.toString(); } } catch(e) {}
     if (isShortUrl(url)) { try { url = await resolveRedirect(url); } catch(e) {} }
 
     // Get stream to find itemId + pageHash
@@ -4286,7 +4248,7 @@ app.get('/compare/dump', async (req, res) => {
 
   try {
     let url = rawUrl;
-    try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; pu.pathname = pu.pathname.replace(/^\/dl\//, '/'); url = pu.toString(); } } catch(e) {}
+    try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; url = pu.toString(); } } catch(e) {}
     if (isShortUrl(url)) { try { url = await resolveRedirect(url); } catch(e) {} }
 
     // Step 1: Get itemId + pageHash from stream
@@ -4400,7 +4362,7 @@ app.get('/compare/debug', async (req, res) => {
 
   // ── URL normalisation ──
   let url = rawUrl;
-  try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; pu.pathname = pu.pathname.replace(/^\/dl\//, '/'); url = pu.toString(); } } catch(e) {}
+  try { const pu = new URL(url); if (pu.hostname === 'dl.flipkart.com') { pu.hostname = 'www.flipkart.com'; url = pu.toString(); } } catch(e) {}
   if (isShortUrl(url)) {
     try { url = await resolveRedirect(url); } catch(e) { url = rawUrl; }
   }
