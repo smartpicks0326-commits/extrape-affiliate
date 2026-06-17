@@ -3183,25 +3183,29 @@ app.get('/compare/search', async (req, res) => {
     let url = rawUrl;
     try {
       const pu = new URL(url);
-      // Fix dl.flipkart.com → www.flipkart.com (strip /dl/ prefix from path)
       if (pu.hostname === 'dl.flipkart.com') {
         pu.hostname = 'www.flipkart.com';
         pu.pathname = pu.pathname.replace(/^\/dl\//, '/');
         url = pu.toString();
       }
-      // Strip noisy tracking params that confuse Flash stream API
-      // Keep only essential product-identifying params (pid, ASIN etc)
-      const STRIP_PARAMS = ['ref', 'ref_', 'social_share', 'iid', 'fm', 'hl_lid', 'lid',
-        'srno', 'otracker', 'ssid', 'ov_redirect', '_refId', '_appId', 'ppt', 'ppn',
-        'source', 'smid', 'psc', 'th', 'linkCode', 'tag', 'linkId', 'camp', 'creative'];
-      STRIP_PARAMS.forEach(p => pu.searchParams.delete(p));
-      url = pu.toString();
     } catch(e) {}
 
     if (isShortUrl(url)) {
       try { url = await resolveRedirect(url); }
       catch(e) { return res.status(400).json({ error: 'Could not resolve short link. Open it in your browser, copy the full URL, and paste that instead.' }); }
     }
+
+    // Strip tracking params that confuse Flash — always run after redirect resolution
+    const STRIP_PARAMS = ['ref', 'ref_', 'social_share', 'iid', 'fm', 'hl_lid', 'lid',
+      'srno', 'otracker', 'ssid', 'ov_redirect', '_refId', '_appId', 'ppt', 'ppn',
+      'source', 'smid', 'psc', 'th', 'linkCode', 'tag', 'linkId', 'camp', 'creative',
+      'ctx', 'BU', 'marketplace'];
+    try {
+      const pu2 = new URL(url);
+      STRIP_PARAMS.forEach(p => pu2.searchParams.delete(p));
+      url = pu2.toString();
+    } catch(e) {}
+
     console.log('[Compare] URL:', url.substring(0, 100));
 
     const srcHost  = (() => { try { return new URL(url).hostname.replace('www.',''); } catch { return ''; } })();
@@ -3528,11 +3532,15 @@ app.get('/compare/search', async (req, res) => {
             const cardText = card ? (card.textContent || '') : '';
             const amounts = [...(cardText.match(/₹[\d,]+/g) || [])]
               .map(s => parseInt(s.replace(/[^0-9]/g, '')))
-              .filter(p => p >= 200 && p <= 100000);
+              .filter(p => p >= 200 && p <= 5000000);
             if (!amounts.length) return;
 
-            // LAST ₹ amount >= 200: Flash renders savings badge first, store price last
-            const price = amounts[amounts.length - 1];
+            // Price picking: if amounts span a huge ratio (e.g. ₹3910 vs ₹134900),
+            // the card is bleeding — take the MAX (actual price, not instalment/badge).
+            // Otherwise take LAST (Flash renders savings badge first, store price last).
+            const minAmt = Math.min(...amounts);
+            const maxAmt = Math.max(...amounts);
+            const price = (maxAmt / minAmt > 5) ? maxAmt : amounts[amounts.length - 1];
 
             seen.add(name);
             result.push({
