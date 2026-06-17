@@ -3288,7 +3288,19 @@ app.get('/compare/search', async (req, res) => {
 
         // Navigate directly to item page
         await page.goto(webappUrl, { waitUntil: 'networkidle2', timeout: 40000 });
-        console.log('[Compare/Puppeteer] Loaded:', page.url());
+        const loadedUrl = page.url();
+        console.log('[Compare/Puppeteer] Loaded:', loadedUrl);
+
+        // Extract itemId from page URL if not already set (product-search URLs redirect to item/ID/h/hash)
+        if (!itemId) {
+          const m = loadedUrl.match(/\/item\/(\d+)\//);
+          if (m) { itemId = m[1]; console.log('[Compare/Puppeteer] itemId from URL:', itemId); }
+        }
+        // Also update pageHash if URL has a different one
+        if (loadedUrl.includes('/h/')) {
+          const m = loadedUrl.match(/\/h\/([A-Za-z0-9_-]+)/);
+          if (m && m[1] !== pageHash) { pageHash = m[1]; console.log('[Compare/Puppeteer] pageHash updated:', pageHash); }
+        }
 
         // Wait until we see at least 3 distinct ₹ prices (all stores loaded)
         try {
