@@ -3513,13 +3513,33 @@ app.get('/compare/search', async (req, res) => {
             'fireboltt': 'Fire-Boltt', 'fire-boltt': 'Fire-Boltt',
             'boat-lifestyle': 'Boat', 'vlebazaar': 'VleBazaar',
             'gadgetsnow': 'GadgetsNow', 'bajajfinserv': 'Bajaj Markets',
-            'dailydeals365': 'DailyDeals365',
+            'dailydeals365': 'DailyDeals365', 'shopclues': 'ShopClues',
+            'pepperfry': 'Pepperfry', 'decathlon': 'Decathlon',
+            'mamaearth': 'Mamaearth', 'purplle': 'Purplle',
+            'nykaafashion': 'Nykaa Fashion', 'bewakoof': 'Bewakoof',
+            'paytmmall': 'Paytm Mall', 'tatadigital': 'Tata Digital',
+            'infibeam': 'Infibeam', 'shopsy': 'Shopsy',
+            'samsungshop': 'Samsung Shop', 'oneplusstore': 'OnePlus Store',
+            'realme': 'Realme Store', 'mi.com': 'Mi Store', 'mi store': 'Mi Store',
+            'apple': 'Apple Store', 'gonoise': 'Noise',
           };
+
+          // Unwrap redirect URLs to find the real store
+          function unwrapUrl(href) {
+            try {
+              const u = new URL(href);
+              const ulp = u.searchParams.get('ulp') || u.searchParams.get('url') ||
+                          u.searchParams.get('dest') || u.searchParams.get('target');
+              return ulp ? decodeURIComponent(ulp) : href;
+            } catch(e) { return href; }
+          }
           const seen = new Set();
           const result = [];
           document.querySelectorAll('a[href]').forEach(a => {
             if (!a.href || a.href.includes('flash.co') || !a.href.startsWith('http')) return;
-            const hl = a.href.toLowerCase();
+            // Unwrap redirect wrappers (linksredirect.com, tjzuh.com etc.)
+            const checkUrl = unwrapUrl(a.href);
+            const hl = checkUrl.toLowerCase();
             const storeKey = Object.keys(STORE_MAP).find(k => hl.includes(k));
             if (!storeKey) return;
             const name = STORE_MAP[storeKey];
