@@ -3246,9 +3246,11 @@ app.get('/compare/search', async (req, res) => {
     const streamText = await sr.text();
     console.log('[Compare] Stream sample:', streamText.substring(0, 300));
 
-    // Extract webapp URL from INT_NAVIGATION event — Flash uses two formats:
+    // Extract webapp URL from INT_NAVIGATION event — Flash uses multiple formats:
     // Format A: webapp.flash.co/item/273023/h/ce9vnppi
     // Format B: webapp.flash.co/product-search/MewW_YRY
+    // Format C: flash.co/product-details/FZBL5L7N
+    // Format D: flash.co/item/123/slug/h/hash
     let itemId    = null;
     let pageHash  = null;
     let webappUrl = null;
@@ -3264,6 +3266,18 @@ app.get('/compare/search', async (req, res) => {
     if (!webappUrl) {
       const navMatchB = streamText.match(/webapp\.flash\.co\/product-search\/([A-Za-z0-9_-]{4,})/);
       if (navMatchB) { pageHash = navMatchB[1]; webappUrl = `https://webapp.flash.co/product-search/${pageHash}`; }
+    }
+
+    // Format C: flash.co/product-details/{hash} — navigate directly, itemId resolved from page
+    if (!webappUrl) {
+      const navMatchC = streamText.match(/flash\.co\/product-details\/([A-Za-z0-9_-]{4,})/);
+      if (navMatchC) { pageHash = navMatchC[1]; webappUrl = `https://flash.co/product-details/${pageHash}`; }
+    }
+
+    // Format D: flash.co/item/{id}/...
+    if (!webappUrl) {
+      const navMatchD = streamText.match(/flash\.co\/item\/(\d+)\/[^/]+\/h\/([A-Za-z0-9_-]+)/);
+      if (navMatchD) { itemId = navMatchD[1]; pageHash = navMatchD[2]; webappUrl = `https://webapp.flash.co/item/${itemId}/h/${pageHash}`; }
     }
 
     // Fallback: any /h/{hash} pattern
@@ -3344,6 +3358,42 @@ app.get('/compare/search', async (req, res) => {
           // Fast path: go directly to price-compare — skips item page entirely
           console.log('[Compare/Puppeteer] Fast path → price-compare:', priceCompareUrl);
           await page.goto(priceCompareUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+        } else if (webappUrl && webappUrl.includes('product-details')) {
+          // Format C: flash.co/product-details/{hash} — click "Compare prices" to get to price-compare
+          console.log('[Compare/Puppeteer] Product-details path:', webappUrl);
+          await page.goto(webappUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+          await new Promise(r => setTimeout(r, 2000));
+          // Extract itemId from page URL or API calls
+          const pdUrl = page.url();
+          const pdM = pdUrl.match(/\/item\/(\d+)\//) || pdUrl.match(/product-details\/\d+\/h\//) ;
+          // Click "Compare prices" button
+          const clicked = await page.evaluate(() => {
+            for (const el of document.querySelectorAll('a, button, [role="button"]')) {
+              const t = (el.textContent || '').toLowerCase().trim();
+              if (/compare prices|view all stores|price compare|all \d+ stores/.test(t) && t.length < 60) {
+                if (el.tagName === 'A' && el.href) return el.href;
+                el.click(); return 'clicked';
+              }
+            }
+            return null;
+          }).catch(() => null);
+          if (clicked && clicked.startsWith('http')) {
+            await page.goto(clicked, { waitUntil: 'domcontentloaded', timeout: 20000 });
+          } else if (clicked === 'clicked') {
+            await new Promise(r => setTimeout(r, 2000));
+          }
+          // Try to extract itemId from current URL
+          const afterUrl = page.url();
+          const afterM = afterUrl.match(/\/item\/(\d+)\//) || afterUrl.match(/\/price-compare\/(\d+)\//);
+          if (afterM && !itemId) { itemId = afterM[1]; }
+          const afterH = afterUrl.match(/\/h\/([A-Za-z0-9_-]+)/);
+          if (afterH) { pageHash = afterH[1]; }
+          // If we now have itemId, navigate to price-compare
+          if (itemId && pageHash) {
+            const pc2 = `https://flash.co/price-compare/${itemId}/h/${pageHash}`;
+            console.log('[Compare/Puppeteer] Product-details → price-compare:', pc2);
+            await page.goto(pc2, { waitUntil: 'domcontentloaded', timeout: 20000 });
+          }
         } else {
           // No itemId — navigate to product-search and wait for redirect to item page
           console.log('[Compare/Puppeteer] No itemId — navigating to:', webappUrl);
