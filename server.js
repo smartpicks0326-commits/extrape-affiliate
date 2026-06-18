@@ -3313,73 +3313,177 @@ app.get('/compare/search', async (req, res) => {
       });
 
       try {
-        // Inject auth token
-        await page.goto('https://webapp.flash.co', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
-        await page.evaluate((tok) => {
-          try { localStorage.setItem('authToken',   tok); } catch(e) {}
-          try { localStorage.setItem('accessToken', tok); } catch(e) {}
-        }, token);
+        // ── Token injection — only visit flash.co homepage if not yet authenticated ──
+        let needsAuth = true;
+        try {
+          const existing = await page.evaluate(() => {
+            try { return !!localStorage.getItem('authToken'); } catch(e) { return false; }
+          }).catch(() => false);
+          if (existing) needsAuth = false;
+        } catch(e) {}
 
-        // Navigate directly to item page
-        await page.goto(webappUrl, { waitUntil: 'networkidle2', timeout: 40000 });
-        const loadedUrl = page.url();
+        if (needsAuth) {
+          await page.goto('https://flash.co', { waitUntil: 'domcontentloaded', timeout: 12000 }).catch(() => {});
+          await page.evaluate((tok) => {
+            try { localStorage.setItem('authToken', tok); } catch(e) {}
+            try { localStorage.setItem('accessToken', tok); } catch(e) {}
+          }, token);
+        } else {
+          await page.evaluate((tok) => {
+            try { localStorage.setItem('authToken', tok); } catch(e) {}
+            try { localStorage.setItem('accessToken', tok); } catch(e) {}
+          }, token);
+        }
+
+        // ── FAST PATH: Go directly to price-compare (has ALL stores, no expand needed) ──
+        const priceCompareUrl = itemId
+          ? `https://flash.co/price-compare/${itemId}/h/${pageHash}`
+          : null;
+
+        if (priceCompareUrl) {
+          // Fast path: go directly to price-compare — skips item page entirely
+          console.log('[Compare/Puppeteer] Fast path → price-compare:', priceCompareUrl);
+          await page.goto(priceCompareUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+        } else {
+          // No itemId — navigate to product-search and wait for redirect to item page
+          console.log('[Compare/Puppeteer] No itemId — navigating to:', webappUrl);
+          await page.goto(webappUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+          try {
+            await page.waitForFunction(
+              () => /\/item\/\d+\//.test(window.location.href) || /price-compare/.test(window.location.href),
+              { timeout: 15000 }
+            );
+          } catch(e) {}
+        }
+
+        let loadedUrl = page.url();
         console.log('[Compare/Puppeteer] Loaded:', loadedUrl);
 
-        // Extract itemId from page URL if not already set (product-search URLs redirect to item/ID/h/hash)
+        // Extract itemId/pageHash from URL if not already set
         if (!itemId) {
-          const m = loadedUrl.match(/\/item\/(\d+)\//);
+          const m = loadedUrl.match(/\/item\/(\d+)\//) || loadedUrl.match(/\/price-compare\/(\d+)\//);
           if (m) { itemId = m[1]; console.log('[Compare/Puppeteer] itemId from URL:', itemId); }
         }
-        // Also update pageHash if URL has a different one
         if (loadedUrl.includes('/h/')) {
           const m = loadedUrl.match(/\/h\/([A-Za-z0-9_-]+)/);
           if (m && m[1] !== pageHash) { pageHash = m[1]; console.log('[Compare/Puppeteer] pageHash updated:', pageHash); }
         }
 
-        // Wait until we see at least 3 distinct ₹ prices (all stores loaded)
-        try {
-          await page.waitForFunction(() => {
-            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-            const prices = new Set();
-            let node;
-            while ((node = walker.nextNode())) {
-              const t = node.textContent.trim();
-              if (/^₹[\d,]+$/.test(t)) prices.add(t);
+        // Handle product-details page — extract itemId from intercepted API calls
+        if (loadedUrl.includes('product-details') && !itemId) {
+          // Wait briefly for API calls to fire
+          await new Promise(r => setTimeout(r, 2000));
+          for (const { url: apiUrl } of interceptedData) {
+            const m = apiUrl.match(/\/item\/(\d+)/) || apiUrl.match(/itemId[=:](\d+)/);
+            if (m) { itemId = m[1]; console.log('[Compare/Puppeteer] itemId from API:', itemId); break; }
+          }
+          // Also try clicking "View all stores" / "Compare prices"
+          const clicked = await page.evaluate(() => {
+            for (const el of document.querySelectorAll('a, button, [role="button"]')) {
+              const t = (el.textContent || '').toLowerCase().trim();
+              if (/compare prices|view all|all stores|price compare/.test(t) && t.length < 50) {
+                el.click(); return t;
+              }
             }
-            return prices.size >= 3;
-          }, { timeout: 35000 });
-          console.log('[Compare/Puppeteer] 3+ distinct prices detected');
-        } catch(e) { console.log('[Compare/Puppeteer] Price wait timed out'); }
+            return null;
+          }).catch(() => null);
+          if (clicked) {
+            console.log('[Compare/Puppeteer] Clicked on product-details:', clicked);
+            await new Promise(r => setTimeout(r, 3000));
+            loadedUrl = page.url();
+            const m2 = loadedUrl.match(/\/item\/(\d+)\//) || loadedUrl.match(/\/price-compare\/(\d+)\//);
+            if (m2 && !itemId) { itemId = m2[1]; }
+            if (loadedUrl.includes('/h/')) { const m3 = loadedUrl.match(/\/h\/([A-Za-z0-9_-]+)/); if (m3) pageHash = m3[1]; }
+          }
+        }
 
-        // Wait for all store cards to render (outbound links present)
+        const isOnItemPage = /\/item\/\d+\//.test(loadedUrl) && !loadedUrl.includes('price-compare');
+
+        if (isOnItemPage) {
+          // Extract meta from item page then navigate to price-compare
+          itemPageMeta = await page.evaluate(() => {
+            const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
+            let img = '';
+            const ogImg = document.querySelector('meta[property="og:image"]');
+            if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo')) img = s; }
+            if (!img) {
+              for (const el of document.querySelectorAll('img')) {
+                const s = el.src || '';
+                if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
+                if (/img\.flash\.co.*\/plain\//.test(s)) { try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; } }
+                if (/media-amazon\.com|rukmini\d+\.flixcart|img\.flipkart|fireboltt\.com/.test(s)) { img = s; break; }
+              }
+            }
+            let name = '';
+            const ogTitle = document.querySelector('meta[property="og:title"]');
+            if (ogTitle) { const t = (ogTitle.getAttribute('content')||'').trim(); if (t.length > 8 && !JUNK.some(j => t.toLowerCase().includes(j))) name = t; }
+            if (!name) { for (const el of document.querySelectorAll('h1,h2')) { const t = el.textContent.trim(); if (t.length > 8 && t.length < 400 && !JUNK.some(j => t.toLowerCase().includes(j))) { name = t; break; } } }
+            return { img, name };
+          }).catch(() => ({ img: '', name: '' }));
+          console.log('[Compare/Puppeteer] Item meta:', itemPageMeta.name.substring(0,40));
+
+          // Navigate to price-compare
+          if (itemId && pageHash) {
+            const pc = `https://flash.co/price-compare/${itemId}/h/${pageHash}`;
+            await page.goto(pc, { waitUntil: 'domcontentloaded', timeout: 20000 });
+            console.log('[Compare/Puppeteer] Navigated to price-compare:', page.url());
+            loadedUrl = page.url();
+          }
+        } else {
+          // On price-compare or product-details — extract meta from og tags
+          itemPageMeta = await page.evaluate(() => {
+            const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
+            let img = '';
+            const ogImg = document.querySelector('meta[property="og:image"]');
+            if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo')) img = s; }
+            let name = '';
+            const ogTitle = document.querySelector('meta[property="og:title"]');
+            if (ogTitle) { const t = (ogTitle.getAttribute('content')||'').trim(); if (t.length > 8 && !JUNK.some(j => t.toLowerCase().includes(j))) name = t; }
+            return { img, name };
+          }).catch(() => ({ img: '', name: '' }));
+        }
+
+        // Wait for stores to appear — race between 3+ outbound links or 10s timeout
         try {
-          await page.waitForFunction(() => {
-            const links = document.querySelectorAll('a[href]');
-            let outbound = 0;
-            links.forEach(a => { if (a.href && !a.href.includes('flash.co') && a.href.startsWith('http')) outbound++; });
-            return outbound >= 3;
-          }, { timeout: 20000 });
-          console.log('[Compare/Puppeteer] 3+ outbound links detected');
-        } catch(e) { console.log('[Compare/Puppeteer] Link wait timed out'); }
+          await page.waitForFunction(() =>
+            [...document.querySelectorAll('a[href]')]
+              .filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http')).length >= 3,
+            { timeout: 10000 }
+          );
+        } catch(e) { console.log('[Compare/Puppeteer] Store links wait timed out'); }
 
-        // Extra settle time for all dynamic content
-        await new Promise(r => setTimeout(r, 4000));
+        // Click "view X more" / "view all" if present — some price-compare pages paginate
+        const clicked3 = await page.evaluate(() => {
+          for (const el of document.querySelectorAll('button, a, [role="button"], span, div, p')) {
+            const t = (el.textContent || '').replace(/\s+/g, ' ').toLowerCase().trim();
+            if (/view all|view \d+ more|show all|all stores|more stores/.test(t) && t.length < 60) {
+              el.click(); return t;
+            }
+          }
+          return null;
+        }).catch(() => null);
 
-        // Scroll to trigger lazy-loaded stores
+        if (clicked3) {
+          console.log('[Compare/Puppeteer] Clicked expand:', clicked3);
+          await new Promise(r => setTimeout(r, 2000));
+        }
+
+        await new Promise(r => setTimeout(r, 600));
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-        await new Promise(r => setTimeout(r, 2000));
-        await page.evaluate(() => window.scrollTo(0, 0));
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 500));
 
-        // Log page title and intercepted API calls
-        const pageTitle = await page.title().catch(() => '');
-        console.log('[Compare/Puppeteer] Page title:', pageTitle);
-        console.log('[Compare/Puppeteer] Intercepted API calls:', interceptedData.length,
-          interceptedData.map(d => d.url).join(' | ').substring(0, 200));
+        const pageTitle2 = await page.title().catch(() => '');
+        const pageUrl2 = page.url();
+        console.log('[Compare/Puppeteer] Title:', pageTitle2, '| URL:', pageUrl2.substring(0, 80));
 
-        // Check intercepted data for store prices first
-        let interceptedStores = [];
-        for (const { url: apiUrl, data } of interceptedData) {
+        const linkCount2 = await page.evaluate(() =>
+          [...document.querySelectorAll('a[href]')].filter(a => a.href && !a.href.includes('flash.co')).length
+        ).catch(() => 0);
+        console.log('[Compare/Puppeteer] Outbound links visible:', linkCount2);
+
+        // Intercepted stores from API calls
+        const interceptedStores = [];
+        for (const { data } of interceptedData) {
           function digIntercepted(o, d, acc) {
             if (!o || d > 10 || typeof o !== 'object') return;
             if (Array.isArray(o)) {
@@ -3390,104 +3494,10 @@ app.get('/compare/search', async (req, res) => {
               o.forEach(x => digIntercepted(x, d+1, acc));
             } else { Object.values(o).forEach(v => digIntercepted(v, d+1, acc)); }
           }
-          const items = []; digIntercepted(data, 0, items);
-          if (items.length > interceptedStores.length) interceptedStores = items;
+          digIntercepted(data, 0, interceptedStores);
         }
         console.log('[Compare/Puppeteer] Intercepted stores:', interceptedStores.length);
 
-        // ── Extract product image + name NOW on item page (before navigation) ──
-        itemPageMeta = await page.evaluate(() => {
-          let img = '';
-          const ogImg = document.querySelector('meta[property="og:image"]');
-          if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo')) img = s; }
-          if (!img) {
-            for (const el of document.querySelectorAll('img')) {
-              const s = el.src || '';
-              if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
-              if (/img\.flash\.co.*\/plain\//.test(s)) { try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; } }
-            }
-          }
-          if (!img) {
-            for (const el of document.querySelectorAll('img')) {
-              const s = el.src || '';
-              if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
-              if (/media-amazon\.com|images-amazon\.com|_SL\d+_|_AC_|rukmini\d+\.flixcart|img\.flipkart/.test(s)) { img = s; break; }
-            }
-          }
-          const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
-          let name = '';
-          const ogTitle = document.querySelector('meta[property="og:title"]');
-          if (ogTitle) { const t = (ogTitle.getAttribute('content')||'').trim(); if (t.length > 8 && !JUNK.some(j => t.toLowerCase().includes(j))) name = t; }
-          if (!name) { for (const el of document.querySelectorAll('h1,h2')) { const t = el.textContent.trim(); if (t.length > 8 && t.length < 400 && !JUNK.some(j => t.toLowerCase().includes(j))) { name = t; break; } } }
-          return { img, name };
-        }).catch(() => ({ img: '', name: '' }));
-        console.log('[Compare/Puppeteer] Item page meta — image:', itemPageMeta.img.substring(0,80), '| name:', itemPageMeta.name.substring(0,50));
-
-        // ── Wait for prices + store links ──
-        try {
-          await page.waitForFunction(() =>
-            (document.body.innerText.match(/₹[\d,]{3,}/g) || []).length >= 3,
-            { timeout: 35000 }
-          );
-          console.log('[Compare/Puppeteer] Prices detected');
-        } catch(e) { console.log('[Compare/Puppeteer] Price wait timed out'); }
-
-        try {
-          await page.waitForFunction(() =>
-            [...document.querySelectorAll('a[href]')]
-              .filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http')).length >= 3,
-            { timeout: 25000 }
-          );
-          console.log('[Compare/Puppeteer] Store links detected');
-        } catch(e) { console.log('[Compare/Puppeteer] Store links wait timed out'); }
-
-        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-        await new Promise(r => setTimeout(r, 3000));
-        await page.evaluate(() => window.scrollTo(0, 0));
-        await new Promise(r => setTimeout(r, 1000));
-
-        // ── Click "View all N stores" → navigate to price-compare page ──
-        const clicked2 = await page.evaluate(() => {
-          const els = [...document.querySelectorAll('button, a, [role="button"], span, div, p')];
-          for (const el of els) {
-            const t = (el.textContent || '').replace(/\s+/g, ' ').toLowerCase().trim();
-            if (/view all|show all|all stores|more stores|view \d+|show \d+/.test(t) && t.length < 60) {
-              el.click(); return t;
-            }
-          }
-          return null;
-        }).catch(() => null);
-
-        if (clicked2) {
-          console.log('[Compare/Puppeteer] Clicked expand button:', clicked2);
-          // Always navigate directly — click navigation is unreliable
-          const pcUrl = `https://flash.co/price-compare/${itemId}/h/${pageHash}`;
-          try {
-            await page.goto(pcUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-            console.log('[Compare/Puppeteer] Navigated to price-compare:', page.url());
-            await page.waitForFunction(() =>
-              [...document.querySelectorAll('a[href]')]
-                .filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http')).length >= 5,
-              { timeout: 12000 }
-            ).catch(() => {});
-            await new Promise(r => setTimeout(r, 1500));
-            await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-            await new Promise(r => setTimeout(r, 1000));
-          } catch(e) {
-            console.log('[Compare/Puppeteer] price-compare nav failed:', e.message);
-          }
-        } else {
-          console.log('[Compare/Puppeteer] No expand button found');
-        }
-
-        const pageTitle2 = await page.title().catch(() => '');
-        const pageUrl2 = page.url();
-        console.log('[Compare/Puppeteer] Title:', pageTitle2, '| URL:', pageUrl2.substring(0, 80));
-
-        const linkCount2 = await page.evaluate(() =>
-          [...document.querySelectorAll('a[href]')].filter(a => a.href && !a.href.includes('flash.co')).length
-        ).catch(() => 0);
-        console.log('[Compare/Puppeteer] Outbound links visible:', linkCount2);
 
         // ── Quick per-link card extraction (price-compare page) ──
         quickStores = await page.evaluate(() => {
