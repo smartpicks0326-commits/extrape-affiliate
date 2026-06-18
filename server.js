@@ -3199,7 +3199,7 @@ app.get('/compare/search', async (req, res) => {
     const STRIP_PARAMS = ['ref', 'ref_', 'social_share', 'iid', 'fm', 'hl_lid', 'lid',
       'srno', 'otracker', 'ssid', 'ov_redirect', '_refId', '_appId', 'ppt', 'ppn',
       'source', 'smid', 'psc', 'th', 'linkCode', 'tag', 'linkId', 'camp', 'creative',
-      'ctx', 'BU', 'marketplace'];
+      'ctx', 'BU', 'marketplace', '_encoding'];
     try {
       const pu2 = new URL(url);
       STRIP_PARAMS.forEach(p => pu2.searchParams.delete(p));
@@ -4189,8 +4189,17 @@ app.get('/compare/search', async (req, res) => {
     if (extrapeTokenCache.accessToken) {
       stores = await Promise.all(stores.map(async (s) => {
         if (!s.url || !s.url.startsWith('http')) return s;
+        // Clean store URL before sending to ExtraPe
+        let cleanUrl = s.url;
         try {
-          const result = await convertExtraPe(s.url);
+          const u = new URL(s.url);
+          ['ref', 'ref_', 'social_share', 'source', 'smid', 'psc', 'th', '_encoding',
+           'tag', 'linkCode', 'linkId', 'camp', 'creative', 'iid', 'fm', 'srno',
+           'otracker', 'ssid', 'ctx', 'BU', 'ov_redirect'].forEach(p => u.searchParams.delete(p));
+          cleanUrl = u.toString();
+        } catch(e) {}
+        try {
+          const result = await convertExtraPe(cleanUrl);
           return { ...s, affiliateLink: result.clickUrl || result, displayLink: result.displayUrl || result.clickUrl || s.url };
         } catch(e) { return { ...s, affiliateLink: s.url, displayLink: s.url }; }
       }));
