@@ -1454,7 +1454,12 @@ async function processQueue() {
       req.affiliateLink = req.displayLink = result;
     }
     req.state = 'done';
-    trackConversion(req.url, req.store, 'done', req.affiliateLink);
+    // Ensure store is detected — use URL detection if store is still Unknown
+    const finalStore = (req.store && req.store !== 'Unknown')
+      ? req.store
+      : (detectStoreFromUrl(req.url) || detectStoreFromUrl(req.affiliateLink || '') || 'Unknown');
+    req.store = finalStore;
+    trackConversion(req.url, finalStore, 'done', req.affiliateLink);
   } catch(e) {
     req.state = 'error'; req.error = e.message;
     trackConversion(req.url, req.store, 'error', null);
@@ -3531,6 +3536,14 @@ app.get('/compare/search', async (req, res) => {
             try {
               const itemUrl = `https://flash.co/item/${itemId}/h/${pageHash}`;
               await page.goto(itemUrl, { waitUntil: 'domcontentloaded', timeout: 12000 });
+              // Wait for og:image meta tag to be set (React renders it async)
+              try {
+                await page.waitForFunction(
+                  () => !!document.querySelector('meta[property="og:image"]')?.getAttribute('content'),
+                  { timeout: 5000 }
+                );
+              } catch(e) {}
+              await new Promise(r => setTimeout(r, 1000));
               const metaFromItem = await page.evaluate(() => {
                 const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
                 let img = '';
@@ -3552,6 +3565,7 @@ app.get('/compare/search', async (req, res) => {
               }).catch(() => ({ img: '', name: '' }));
               if (metaFromItem.img) itemPageMeta.img = metaFromItem.img;
               if (metaFromItem.name && !itemPageMeta.name) itemPageMeta.name = metaFromItem.name;
+              console.log('[Compare/Puppeteer] Image from item page:', itemPageMeta.img.substring(0,60));
               // Navigate back to price-compare
               const pcBack = `https://flash.co/price-compare/${itemId}/h/${pageHash}`;
               await page.goto(pcBack, { waitUntil: 'domcontentloaded', timeout: 15000 });
