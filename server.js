@@ -3480,17 +3480,83 @@ app.get('/compare/search', async (req, res) => {
             loadedUrl = page.url();
           }
         } else {
-          // On price-compare or product-details — extract meta from og tags
+          // On price-compare or product-details — try og:image then product CDN images
           itemPageMeta = await page.evaluate(() => {
             const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
             let img = '';
+            // 1. og:image
             const ogImg = document.querySelector('meta[property="og:image"]');
             if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo')) img = s; }
+            // 2. Flash CDN proxy images
+            if (!img) {
+              for (const el of document.querySelectorAll('img')) {
+                const s = el.src || '';
+                if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
+                if (/img\.flash\.co.*\/plain\//.test(s)) { try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; } }
+              }
+            }
+            // 3. Known product CDN patterns
+            if (!img) {
+              for (const el of document.querySelectorAll('img')) {
+                const s = el.src || '';
+                if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
+                if (/media-amazon\.com|images-amazon\.com|rukmini\d+\.flixcart|img\.flipkart|encrypted-tbn/.test(s)) { img = s; break; }
+              }
+            }
+            // 4. Largest non-logo image
+            if (!img) {
+              let best = '', bestScore = 0;
+              for (const el of document.querySelectorAll('img')) {
+                const s = el.src || '';
+                if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo') || s.length < 30) continue;
+                const w = el.naturalWidth || el.width || 0, h = el.naturalHeight || el.height || 0;
+                if (w < 60 || h < 60) continue;
+                const ratio = Math.max(w,h)/Math.min(w,h);
+                const score = w * h * (ratio < 1.5 ? 3 : ratio < 3 ? 1 : 0.1);
+                if (score > bestScore) { bestScore = score; best = s; }
+              }
+              img = best;
+            }
             let name = '';
             const ogTitle = document.querySelector('meta[property="og:title"]');
             if (ogTitle) { const t = (ogTitle.getAttribute('content')||'').trim(); if (t.length > 8 && !JUNK.some(j => t.toLowerCase().includes(j))) name = t; }
+            if (!name) { for (const el of document.querySelectorAll('h1,h2,[class*="product"],[class*="title"]')) { const t = el.textContent.trim(); if (t.length > 8 && t.length < 400 && !JUNK.some(j => t.toLowerCase().includes(j))) { name = t; break; } } }
             return { img, name };
           }).catch(() => ({ img: '', name: '' }));
+
+          // If no image from price-compare page, visit the item page briefly to get it
+          if (!itemPageMeta.img && itemId && pageHash) {
+            try {
+              const itemUrl = `https://flash.co/item/${itemId}/h/${pageHash}`;
+              await page.goto(itemUrl, { waitUntil: 'domcontentloaded', timeout: 12000 });
+              const metaFromItem = await page.evaluate(() => {
+                const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
+                let img = '';
+                const ogImg = document.querySelector('meta[property="og:image"]');
+                if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo')) img = s; }
+                if (!img) {
+                  for (const el of document.querySelectorAll('img')) {
+                    const s = el.src || '';
+                    if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
+                    if (/img\.flash\.co.*\/plain\//.test(s)) { try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; } }
+                    if (/media-amazon\.com|rukmini\d+\.flixcart|img\.flipkart|fireboltt\.com|encrypted-tbn/.test(s)) { img = s; break; }
+                  }
+                }
+                let name = '';
+                const ogTitle = document.querySelector('meta[property="og:title"]');
+                if (ogTitle) { const t = (ogTitle.getAttribute('content')||'').trim(); if (t.length > 8 && !JUNK.some(j => t.toLowerCase().includes(j))) name = t; }
+                if (!name) { for (const el of document.querySelectorAll('h1,h2')) { const t = el.textContent.trim(); if (t.length > 8 && t.length < 400 && !JUNK.some(j => t.toLowerCase().includes(j))) { name = t; break; } } }
+                return { img, name };
+              }).catch(() => ({ img: '', name: '' }));
+              if (metaFromItem.img) itemPageMeta.img = metaFromItem.img;
+              if (metaFromItem.name && !itemPageMeta.name) itemPageMeta.name = metaFromItem.name;
+              // Navigate back to price-compare
+              const pcBack = `https://flash.co/price-compare/${itemId}/h/${pageHash}`;
+              await page.goto(pcBack, { waitUntil: 'domcontentloaded', timeout: 15000 });
+            } catch(e) { console.log('[Compare/Puppeteer] Item page image fetch failed:', e.message); }
+          }
+
+          console.log('[Compare/Puppeteer] Page meta — image:', itemPageMeta.img.substring(0,60), '| name:', itemPageMeta.name.substring(0,40));
         }
 
         // Wait for stores to appear — race between 3+ outbound links or 10s timeout
