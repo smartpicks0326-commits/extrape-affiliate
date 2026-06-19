@@ -3117,7 +3117,9 @@ app.post('/generate', (req, res) => {
   try { new URL(url); } catch { return res.status(400).json({ error:'Invalid URL.' }); }
   if (!isSupported(url)) return res.status(400).json({ error:'Store not supported by ExtraPe.' });
   if (!extrapeTokenCache.accessToken) return res.status(500).json({ error:'EXTRAPE_ACCESS_TOKEN not set. Visit https://api.smartpickdeals.live/extrape/token-page' });
-  const id = enqueue(url, store||'Unknown');
+  // Detect store from URL if not provided or unknown
+  const detectedStore = (store && store !== 'Unknown') ? store : (detectStoreFromUrl(url) || 'Unknown');
+  const id = enqueue(url, detectedStore);
   processQueue();
   return res.json({ requestId:id, ...getStatus(id) });
 });
