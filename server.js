@@ -3009,11 +3009,7 @@ app.get('/dashboard/live', (req, res) => {
   const interval = setInterval(async () => {
     try {
       const now = new Date();
-      const IST_OFFSET = 5.5 * 60 * 60 * 1000;
-      const nowUTC = Date.now();
-      const midnightIST = new Date(nowUTC + IST_OFFSET);
-      midnightIST.setUTCHours(0,0,0,0);
-      const from = new Date(midnightIST.getTime() - IST_OFFSET);
+      const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // last 30 days
 
       if (dbConnected) {
         const dateFilter = { ts: { $gte: from, $lte: now } };
@@ -3040,13 +3036,10 @@ app.get('/dashboard/live', (req, res) => {
 
 // Dashboard stats — supports ?from=ISO&to=ISO date range
 app.get('/dashboard/stats', async (req, res) => {
-  // Default: today from midnight to now (IST = UTC+5:30)
-  const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+  // Default: last 30 days (today-only filter hides most data)
   const nowUTC = Date.now();
-  const nowIST = nowUTC + IST_OFFSET;
-  const midnightIST = nowIST - (nowIST % (24*60*60*1000));
-  const defaultFrom = new Date(midnightIST - IST_OFFSET); // back to UTC
   const defaultTo   = new Date(nowUTC);
+  const defaultFrom = new Date(nowUTC - 30 * 24 * 60 * 60 * 1000);
 
   const from = req.query.from ? new Date(req.query.from) : defaultFrom;
   const to   = req.query.to   ? new Date(req.query.to)   : defaultTo;
@@ -4352,7 +4345,10 @@ app.get('/compare/search', async (req, res) => {
         } catch(e) {}
         try {
           const result = await convertExtraPe(cleanUrl);
-          return { ...s, affiliateLink: result.clickUrl || result, displayLink: result.displayUrl || result.clickUrl || s.url };
+          const affiliateLink = result.clickUrl || result;
+          // Track each affiliated store as a conversion
+          trackConversion(cleanUrl, s.name, 'done', affiliateLink).catch(() => {});
+          return { ...s, affiliateLink, displayLink: result.displayUrl || result.clickUrl || s.url };
         } catch(e) { return { ...s, affiliateLink: s.url, displayLink: s.url }; }
       }));
       console.log('[Compare] Affiliated:', stores.map(s => s.name + ':' + (s.affiliateLink||'').substring(0,40)).join(' | '));
