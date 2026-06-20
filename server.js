@@ -1283,6 +1283,12 @@ async function trackVisit(page) {
 }
 
 async function trackConversion(url, store, state, affiliateLink) {
+  // Normalise URL to avoid duplicates (dl.flipkart.com → www.flipkart.com)
+  let normUrl = url || '';
+  try {
+    const u = new URL(normUrl);
+    if (u.hostname === 'dl.flipkart.com') { u.hostname = 'www.flipkart.com'; u.pathname = u.pathname.replace(/^\/dl\//, '/'); normUrl = u.toString(); }
+  } catch(e) {}
   // Cache affiliate short URL → store mapping for click tracking
   if (affiliateLink && store && state === 'done') {
     cacheShortUrlStore(affiliateLink, store);
@@ -1291,11 +1297,11 @@ async function trackConversion(url, store, state, affiliateLink) {
     const inc = { conversions: 1 };
     if (store && state === 'done') inc['storeBreakdown.' + store] = 1;
     await Counter.updateOne({ _id: 'main' }, { $inc: inc }).catch(e => console.error('[DB] trackConversion:', e.message));
-    await new Event({ type: 'conversion', url, store, state, ts: new Date() }).save().catch(() => {});
+    await new Event({ type: 'conversion', url: normUrl, store, state, ts: new Date() }).save().catch(() => {});
   } else {
     memAnalytics.conversions++;
     if (store && state === 'done') memAnalytics.storeBreakdown[store] = (memAnalytics.storeBreakdown[store]||0) + 1;
-    memAnalytics.recentConversions.unshift({ url, store, state, ts: Date.now() });
+    memAnalytics.recentConversions.unshift({ url: normUrl, store, state, ts: Date.now() });
     if (memAnalytics.recentConversions.length > 50) memAnalytics.recentConversions.pop();
   }
 }
@@ -2946,8 +2952,12 @@ app.post('/admin/sync-from', async (req, res) => {
 
 // Track page visits
 app.post('/track/visit', async (req, res) => {
-  const page = req.body?.page || req.headers?.referer || '/';
-  await trackVisit(page).catch(() => {});
+  // Store IP instead of page path for better analytics
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+    || req.headers['x-real-ip']
+    || req.socket?.remoteAddress
+    || 'unknown';
+  await trackVisit(ip).catch(() => {});
   res.json({ ok: true });
 });
 
@@ -4346,17 +4356,10 @@ app.get('/compare/search', async (req, res) => {
         try {
           const result = await convertExtraPe(cleanUrl);
           const affiliateLink = result.clickUrl || result;
-          // Track each affiliated store as a conversion (only on success)
-          // Use the original resolved URL not Flash's store URL to avoid duplicates
-          const trackUrl = url; // url = the user's input URL (already resolved)
-          trackConversion(trackUrl, s.name, 'done', affiliateLink).catch(() => {});
+          // Track each affiliated store as a conversion
+          trackConversion(cleanUrl, s.name, 'done', affiliateLink).catch(() => {});
           return { ...s, affiliateLink, displayLink: result.displayUrl || result.clickUrl || s.url };
-        } catch(e) {
-          // ExtraPe failed — apply cleanLink directly to ensure our tag replaces flashai tag
-          const fallback = cleanLink(cleanUrl);
-          const affiliateLink = (fallback && typeof fallback === 'object') ? fallback.clickUrl : (fallback || s.url);
-          return { ...s, affiliateLink, displayLink: s.url };
-        }
+        } catch(e) { return { ...s, affiliateLink: s.url, displayLink: s.url }; }
       }));
       console.log('[Compare] Affiliated:', stores.map(s => s.name + ':' + (s.affiliateLink||'').substring(0,40)).join(' | '));
     }
