@@ -1283,12 +1283,6 @@ async function trackVisit(page) {
 }
 
 async function trackConversion(url, store, state, affiliateLink) {
-  // Normalise URL to avoid duplicates (dl.flipkart.com → www.flipkart.com)
-  let normUrl = url || '';
-  try {
-    const u = new URL(normUrl);
-    if (u.hostname === 'dl.flipkart.com') { u.hostname = 'www.flipkart.com'; u.pathname = u.pathname.replace(/^\/dl\//, '/'); normUrl = u.toString(); }
-  } catch(e) {}
   // Cache affiliate short URL → store mapping for click tracking
   if (affiliateLink && store && state === 'done') {
     cacheShortUrlStore(affiliateLink, store);
@@ -1297,11 +1291,11 @@ async function trackConversion(url, store, state, affiliateLink) {
     const inc = { conversions: 1 };
     if (store && state === 'done') inc['storeBreakdown.' + store] = 1;
     await Counter.updateOne({ _id: 'main' }, { $inc: inc }).catch(e => console.error('[DB] trackConversion:', e.message));
-    await new Event({ type: 'conversion', url: normUrl, store, state, ts: new Date() }).save().catch(() => {});
+    await new Event({ type: 'conversion', url, store, state, ts: new Date() }).save().catch(() => {});
   } else {
     memAnalytics.conversions++;
     if (store && state === 'done') memAnalytics.storeBreakdown[store] = (memAnalytics.storeBreakdown[store]||0) + 1;
-    memAnalytics.recentConversions.unshift({ url: normUrl, store, state, ts: Date.now() });
+    memAnalytics.recentConversions.unshift({ url, store, state, ts: Date.now() });
     if (memAnalytics.recentConversions.length > 50) memAnalytics.recentConversions.pop();
   }
 }
@@ -1465,7 +1459,9 @@ async function processQueue() {
       ? req.store
       : (detectStoreFromUrl(req.url) || detectStoreFromUrl(req.affiliateLink || '') || 'Unknown');
     req.store = finalStore;
-    trackConversion(req.url, finalStore, 'done', req.affiliateLink);
+    // Track the affiliate link (not original input URL) so dashboard shows converted links
+    const trackUrl = req.displayLink || req.affiliateLink || req.url;
+    trackConversion(trackUrl, finalStore, 'done', req.affiliateLink);
   } catch(e) {
     req.state = 'error'; req.error = e.message;
     trackConversion(req.url, req.store, 'error', null);
@@ -2952,12 +2948,23 @@ app.post('/admin/sync-from', async (req, res) => {
 
 // Track page visits
 app.post('/track/visit', async (req, res) => {
-  // Store IP instead of page path for better analytics
   const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
     || req.headers['x-real-ip']
     || req.socket?.remoteAddress
     || 'unknown';
-  await trackVisit(ip).catch(() => {});
+  // Resolve IP → location (country - region - city)
+  let location = ip;
+  try {
+    if (ip && ip !== 'unknown' && !ip.startsWith('127.') && !ip.startsWith('::1')) {
+      const geo = await fetch(`http://ip-api.com/json/${ip}?fields=countryCode,regionName,city`, {
+        signal: AbortSignal.timeout(2000)
+      }).then(r => r.json()).catch(() => null);
+      if (geo && geo.countryCode) {
+        location = [geo.countryCode, geo.regionName, geo.city].filter(Boolean).join(' - ');
+      }
+    }
+  } catch(e) {}
+  await trackVisit(location).catch(() => {});
   res.json({ ok: true });
 });
 
