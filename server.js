@@ -4346,10 +4346,17 @@ app.get('/compare/search', async (req, res) => {
         try {
           const result = await convertExtraPe(cleanUrl);
           const affiliateLink = result.clickUrl || result;
-          // Track each affiliated store as a conversion
-          trackConversion(cleanUrl, s.name, 'done', affiliateLink).catch(() => {});
+          // Track each affiliated store as a conversion (only on success)
+          // Use the original resolved URL not Flash's store URL to avoid duplicates
+          const trackUrl = url; // url = the user's input URL (already resolved)
+          trackConversion(trackUrl, s.name, 'done', affiliateLink).catch(() => {});
           return { ...s, affiliateLink, displayLink: result.displayUrl || result.clickUrl || s.url };
-        } catch(e) { return { ...s, affiliateLink: s.url, displayLink: s.url }; }
+        } catch(e) {
+          // ExtraPe failed — apply cleanLink directly to ensure our tag replaces flashai tag
+          const fallback = cleanLink(cleanUrl);
+          const affiliateLink = (fallback && typeof fallback === 'object') ? fallback.clickUrl : (fallback || s.url);
+          return { ...s, affiliateLink, displayLink: s.url };
+        }
       }));
       console.log('[Compare] Affiliated:', stores.map(s => s.name + ':' + (s.affiliateLink||'').substring(0,40)).join(' | '));
     }
