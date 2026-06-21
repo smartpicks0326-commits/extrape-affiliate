@@ -924,10 +924,10 @@ async function flashSearchPuppeteer(productUrl) {
             if (!src) return true;
             if (src.includes('/merchants/')) return true;
             if (src.includes('/favicon'))    return true;
+            if (src.includes('faviconV2'))   return true;  // Google favicon service
             if (src.includes('/icons/'))     return true;
             if (/logo|icon/i.test(alt || '')) return true;
             if (src.includes('logo'))        return true;
-            // Flash store merchant logos are typically very small square PNGs
             return false;
           }
 
@@ -1459,9 +1459,18 @@ async function processQueue() {
       ? req.store
       : (detectStoreFromUrl(req.url) || detectStoreFromUrl(req.affiliateLink || '') || 'Unknown');
     req.store = finalStore;
-    // Track the affiliate link (not original input URL) so dashboard shows converted links
+    // Only track the affiliate link if it's meaningfully different from the input URL
+    // amzn.in short links return themselves — skip to avoid duplicate dashboard entries
     const trackUrl = req.displayLink || req.affiliateLink || req.url;
-    trackConversion(trackUrl, finalStore, 'done', req.affiliateLink);
+    const isDifferent = trackUrl !== req.url &&
+      !(req.url.includes('amzn.in') && trackUrl.includes('amzn.in')) &&
+      !(req.url.includes('fkrt.co') && trackUrl.includes('fkrt.co'));
+    if (isDifferent) {
+      trackConversion(trackUrl, finalStore, 'done', req.affiliateLink);
+    } else {
+      // Still track but with the affiliate link as the stored URL
+      trackConversion(req.affiliateLink || trackUrl, finalStore, 'done', req.affiliateLink);
+    }
   } catch(e) {
     req.state = 'error'; req.error = e.message;
     trackConversion(req.url, req.store, 'error', null);
