@@ -2993,6 +2993,23 @@ app.post('/admin/sync-from', async (req, res) => {
 
 // Track page visits
 app.post('/track/visit', async (req, res) => {
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+    || req.headers['x-real-ip']
+    || req.socket?.remoteAddress
+    || 'unknown';
+  // Resolve IP → location (country - region - city)
+  let location = ip;
+  try {
+    if (ip && ip !== 'unknown' && !ip.startsWith('127.') && !ip.startsWith('::1')) {
+      const geo = await fetch(`http://ip-api.com/json/${ip}?fields=countryCode,regionName,city`, {
+        signal: AbortSignal.timeout(2000)
+      }).then(r => r.json()).catch(() => null);
+      if (geo && geo.countryCode) {
+        location = [geo.regionName, geo.city, geo.countryCode].filter(Boolean).join(' - ');
+      }
+    }
+  } catch(e) {}
+  await trackVisit(location).catch(() => {});
   const page = req.body?.page || req.headers?.referer || '/';
   await trackVisit(page).catch(() => {});
   res.json({ ok: true });
