@@ -924,10 +924,10 @@ async function flashSearchPuppeteer(productUrl) {
             if (!src) return true;
             if (src.includes('/merchants/')) return true;
             if (src.includes('/favicon'))    return true;
+            if (src.includes('faviconV2'))   return true;  // Google favicon service
             if (src.includes('/icons/'))     return true;
             if (/logo|icon/i.test(alt || '')) return true;
             if (src.includes('logo'))        return true;
-            // Flash store merchant logos are typically very small square PNGs
             return false;
           }
 
@@ -1411,36 +1411,7 @@ setInterval(() => {
 }, 60000);
 
 // ── ExtraPe API ──
-// Simple in-memory dedup cache — prevents double ExtraPe calls for same URL within 60s
-const extrapeRecentCache = new Map(); // normalised url → { result, ts }
-
-function normaliseCacheKey(url) {
-  try {
-    const u = new URL(url);
-    // For Amazon: use ASIN as key
-    const asin = u.pathname.match(/\/dp\/([A-Z0-9]{10})/i);
-    if (asin && u.hostname.includes('amazon')) return 'amazon:' + asin[1];
-    // For Flipkart: use pid or path item ID
-    if (u.hostname.includes('flipkart') || u.hostname.includes('fkrt')) {
-      const pid = u.searchParams.get('pid');
-      if (pid) return 'flipkart:' + pid;
-    }
-    // Strip all tracking params and use clean URL
-    ['ref','ref_','social_share','tag','source','smid','psc','th','_encoding',
-     'linkCode','linkId','camp','creative','iid','fm','srno','otracker','ssid',
-     'ctx','BU','ov_redirect','affid','_appId','_refId'].forEach(p => u.searchParams.delete(p));
-    return u.toString();
-  } catch(e) { return url; }
-}
-
 async function convertExtraPe(productUrl) {
-  // Check dedup cache using normalised key
-  const cacheKey = normaliseCacheKey(productUrl);
-  const cached = extrapeRecentCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < 120000) {
-    console.log('ExtraPe cached:', (cached.result?.displayUrl || '').substring(0, 60));
-    return cached.result;
-  }
   const r = await fetch('https://www.extrape.com/handler/convertText', {
     method: 'POST',
     headers: {
@@ -1461,15 +1432,7 @@ async function convertExtraPe(productUrl) {
   if (!raw) throw new Error('No link returned: ' + JSON.stringify(data).substring(0,100));
   const decoded = decodeURIComponent(raw.trim());
   console.log('ExtraPe raw:', decoded);
-  const result = cleanLink(decoded);
-  // Cache for 60s to prevent duplicate calls
-  extrapeRecentCache.set(productUrl, { result, ts: Date.now() });
-  // Trim cache to prevent memory leak
-  if (extrapeRecentCache.size > 200) {
-    const oldest = [...extrapeRecentCache.entries()].sort((a,b) => a[1].ts - b[1].ts)[0];
-    extrapeRecentCache.delete(oldest[0]);
-  }
-  return result;
+  return cleanLink(decoded);
 }
 
 // ── Queue processor ──
@@ -1496,7 +1459,18 @@ async function processQueue() {
       ? req.store
       : (detectStoreFromUrl(req.url) || detectStoreFromUrl(req.affiliateLink || '') || 'Unknown');
     req.store = finalStore;
-    trackConversion(req.url, finalStore, 'done', req.affiliateLink);
+    // Only track the affiliate link if it's meaningfully different from the input URL
+    // amzn.in short links return themselves — skip to avoid duplicate dashboard entries
+    const trackUrl = req.displayLink || req.affiliateLink || req.url;
+    const isDifferent = trackUrl !== req.url &&
+      !(req.url.includes('amzn.in') && trackUrl.includes('amzn.in')) &&
+      !(req.url.includes('fkrt.co') && trackUrl.includes('fkrt.co'));
+    if (isDifferent) {
+      trackConversion(trackUrl, finalStore, 'done', req.affiliateLink);
+    } else {
+      // Still track but with the affiliate link as the stored URL
+      trackConversion(req.affiliateLink || trackUrl, finalStore, 'done', req.affiliateLink);
+    }
   } catch(e) {
     req.state = 'error'; req.error = e.message;
     trackConversion(req.url, req.store, 'error', null);
@@ -2983,8 +2957,23 @@ app.post('/admin/sync-from', async (req, res) => {
 
 // Track page visits
 app.post('/track/visit', async (req, res) => {
-  const page = req.body?.page || req.headers?.referer || '/';
-  await trackVisit(page).catch(() => {});
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+    || req.headers['x-real-ip']
+    || req.socket?.remoteAddress
+    || 'unknown';
+  // Resolve IP → location (country - region - city)
+  let location = ip;
+  try {
+    if (ip && ip !== 'unknown' && !ip.startsWith('127.') && !ip.startsWith('::1')) {
+      const geo = await fetch(`http://ip-api.com/json/${ip}?fields=countryCode,regionName,city`, {
+        signal: AbortSignal.timeout(2000)
+      }).then(r => r.json()).catch(() => null);
+      if (geo && geo.countryCode) {
+        location = [geo.countryCode, geo.regionName, geo.city].filter(Boolean).join(' - ');
+      }
+    }
+  } catch(e) {}
+  await trackVisit(location).catch(() => {});
   res.json({ ok: true });
 });
 
