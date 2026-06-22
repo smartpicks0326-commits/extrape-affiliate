@@ -2969,7 +2969,7 @@ app.post('/track/visit', async (req, res) => {
         signal: AbortSignal.timeout(2000)
       }).then(r => r.json()).catch(() => null);
       if (geo && geo.countryCode) {
-        location = [geo.countryCode, geo.regionName, geo.city].filter(Boolean).join(' - ');
+        location = [geo.city, geo.regionName, geo.countryCode].filter(Boolean).join(' - ');
       }
     }
   } catch(e) {}
