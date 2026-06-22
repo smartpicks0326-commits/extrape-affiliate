@@ -2993,8 +2993,27 @@ app.post('/admin/sync-from', async (req, res) => {
 
 // Track page visits
 app.post('/track/visit', async (req, res) => {
-  const page = req.body?.page || req.headers?.referer || '/';
-  await trackVisit(page).catch(() => {});
+  const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+    || req.headers['x-real-ip']
+    || req.socket?.remoteAddress
+    || '';
+
+  let location = 'Unknown';
+  try {
+    if (ip && !ip.startsWith('127.') && !ip.startsWith('::1') && !ip.startsWith('::f')) {
+      const geo = await fetch(`http://ip-api.com/json/${ip}?fields=countryCode,regionName,city`, {
+        signal: AbortSignal.timeout(2000)
+      }).then(r => r.json()).catch(() => null);
+      if (geo && geo.countryCode) {
+        // Format: Chennai - Tamil Nadu - IN
+        location = [geo.city, geo.regionName, geo.countryCode].filter(Boolean).join(' - ');
+      } else {
+        location = ip;
+      }
+    }
+  } catch(e) { location = ip || 'Unknown'; }
+
+  await trackVisit(location).catch(() => {});
   res.json({ ok: true });
 });
 
@@ -3126,7 +3145,7 @@ app.get('/dashboard/stats', async (req, res) => {
         storeBreakdown,
         recentConversions: recentConversions.map(e => ({ url: e.url, store: e.store, state: e.state, ts: e.ts?.getTime() })),
         recentClicks:      recentClicks.map(e => ({ dest: e.dest, store: e.store || detectStoreFromUrl(e.dest||'') || '', ts: e.ts?.getTime() })),
-        recentVisits:      recentVisits.map(e => ({ url: e.url, ts: e.ts?.getTime() })),
+        recentVisits:      recentVisits.map(e => ({ location: e.url, ts: e.ts?.getTime() })),
         dbConnected:  true,
         dateRange:    { from: from.toISOString(), to: to.toISOString() },
         serverUptime: Math.round(process.uptime() / 60) + ' min',
