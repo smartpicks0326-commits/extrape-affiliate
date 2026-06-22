@@ -1411,7 +1411,33 @@ setInterval(() => {
 }, 60000);
 
 // ── ExtraPe API ──
+// ── ExtraPe conversion cache — prevents duplicate calls within 10 minutes ──
+const _epCache = new Map(); // normalised url → { result, ts }
+const _EP_TTL  = 10 * 60 * 1000; // 10 min
+
+function _epCacheKey(url) {
+  try {
+    const u = new URL(url);
+    // For Amazon: key on ASIN only (ignores tracking params)
+    const asin = u.pathname.match(/\/dp\/([A-Z0-9]{10})/i)?.[1];
+    if (asin) return 'amz:' + asin;
+    // For Flipkart: key on itm product code
+    const itm = u.pathname.match(/\/(itm[a-z0-9]+)/i)?.[1]
+             || u.searchParams.get('pid');
+    if (itm) return 'fk:' + itm;
+    // Generic: hostname + pathname (strip query)
+    return u.hostname + u.pathname;
+  } catch(e) { return url; }
+}
+
 async function convertExtraPe(productUrl) {
+  const cacheKey = _epCacheKey(productUrl);
+  const cached = _epCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < _EP_TTL) {
+    console.log('ExtraPe [cache hit]:', cacheKey);
+    return cached.result;
+  }
+
   const r = await fetch('https://www.extrape.com/handler/convertText', {
     method: 'POST',
     headers: {
