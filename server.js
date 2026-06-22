@@ -924,10 +924,10 @@ async function flashSearchPuppeteer(productUrl) {
             if (!src) return true;
             if (src.includes('/merchants/')) return true;
             if (src.includes('/favicon'))    return true;
+            if (src.includes('faviconV2'))   return true;  // Google favicon service
             if (src.includes('/icons/'))     return true;
             if (/logo|icon/i.test(alt || '')) return true;
             if (src.includes('logo'))        return true;
-            // Flash store merchant logos are typically very small square PNGs
             return false;
           }
 
@@ -1411,46 +1411,7 @@ setInterval(() => {
 }, 60000);
 
 // ── ExtraPe API ──
-// Simple in-memory dedup cache — prevents double ExtraPe calls for same URL within 60s
-const extrapeRecentCache = new Map(); // normalised url → { result, ts }
-
-function normaliseCacheKey(url) {
-  try {
-    const u = new URL(url);
-    // For Amazon: use ASIN as key
-    const asin = u.pathname.match(/\/dp\/([A-Z0-9]{10})/i);
-    if (asin && u.hostname.includes('amazon')) return 'amazon:' + asin[1];
-    // For Flipkart: use pid or path item ID
-    if (u.hostname.includes('flipkart') || u.hostname.includes('fkrt')) {
-      const pid = u.searchParams.get('pid');
-      if (pid) return 'flipkart:' + pid;
-    }
-    // Strip all tracking params and use clean URL
-    ['ref','ref_','social_share','tag','source','smid','psc','th','_encoding',
-     'linkCode','linkId','camp','creative','iid','fm','srno','otracker','ssid',
-     'ctx','BU','ov_redirect','affid','_appId','_refId'].forEach(p => u.searchParams.delete(p));
-    return u.toString();
-  } catch(e) { return url; }
-}
-
-// ── ExtraPe conversion cache — prevents duplicate calls for same URL ──
-const extrapeCache = new Map(); // url → { result, ts }
-const EXTRAPE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
 async function convertExtraPe(productUrl) {
-  // Check simple URL cache first (catches exact same URL called twice)
-  const simpleCached = extrapeCache.get(productUrl);
-  if (simpleCached && Date.now() - simpleCached.ts < EXTRAPE_CACHE_TTL) {
-    console.log('ExtraPe cached:', productUrl.substring(0, 60));
-    return simpleCached.result;
-  }
-  // Check dedup cache using normalised key
-  const cacheKey = normaliseCacheKey(productUrl);
-  const cached = extrapeRecentCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < 120000) {
-    console.log('ExtraPe cached:', (cached.result?.displayUrl || '').substring(0, 60));
-    return cached.result;
-  }
   const r = await fetch('https://www.extrape.com/handler/convertText', {
     method: 'POST',
     headers: {
@@ -1471,15 +1432,7 @@ async function convertExtraPe(productUrl) {
   if (!raw) throw new Error('No link returned: ' + JSON.stringify(data).substring(0,100));
   const decoded = decodeURIComponent(raw.trim());
   console.log('ExtraPe raw:', decoded);
-  const result = cleanLink(decoded);
-  // Cache for 60s to prevent duplicate calls
-  extrapeRecentCache.set(productUrl, { result, ts: Date.now() });
-  // Trim cache to prevent memory leak
-  if (extrapeRecentCache.size > 200) {
-    const oldest = [...extrapeRecentCache.entries()].sort((a,b) => a[1].ts - b[1].ts)[0];
-    extrapeRecentCache.delete(oldest[0]);
-  }
-  return result;
+  return cleanLink(decoded);
 }
 
 // ── Queue processor ──
@@ -1506,7 +1459,18 @@ async function processQueue() {
       ? req.store
       : (detectStoreFromUrl(req.url) || detectStoreFromUrl(req.affiliateLink || '') || 'Unknown');
     req.store = finalStore;
-    trackConversion(req.url, finalStore, 'done', req.affiliateLink);
+    // Only track the affiliate link if it's meaningfully different from the input URL
+    // amzn.in short links return themselves — skip to avoid duplicate dashboard entries
+    const trackUrl = req.displayLink || req.affiliateLink || req.url;
+    const isDifferent = trackUrl !== req.url &&
+      !(req.url.includes('amzn.in') && trackUrl.includes('amzn.in')) &&
+      !(req.url.includes('fkrt.co') && trackUrl.includes('fkrt.co'));
+    if (isDifferent) {
+      trackConversion(trackUrl, finalStore, 'done', req.affiliateLink);
+    } else {
+      // Still track but with the affiliate link as the stored URL
+      trackConversion(req.affiliateLink || trackUrl, finalStore, 'done', req.affiliateLink);
+    }
   } catch(e) {
     req.state = 'error'; req.error = e.message;
     trackConversion(req.url, req.store, 'error', null);
@@ -2990,81 +2954,28 @@ app.post('/admin/sync-from', async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
 // Track page visits
 app.post('/track/visit', async (req, res) => {
-  let ip =
-    req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
-    req.headers['x-real-ip'] ||
-    req.socket?.remoteAddress ||
-    'unknown';
-
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+    || req.headers['x-real-ip']
+    || req.socket?.remoteAddress
+    || 'unknown';
+  // Resolve IP → location (country - region - city)
   let location = ip;
-
   try {
-    // If localhost, resolve server public IP
-    if (ip === '::1' || ip.startsWith('127.')) {
-      const publicIpData = await fetch('https://ipinfo.io/json', {
-        signal: AbortSignal.timeout(3000)
+    if (ip && ip !== 'unknown' && !ip.startsWith('127.') && !ip.startsWith('::1')) {
+      const geo = await fetch(`http://ip-api.com/json/${ip}?fields=countryCode,regionName,city`, {
+        signal: AbortSignal.timeout(2000)
       }).then(r => r.json()).catch(() => null);
-
-      if (publicIpData?.ip) {
-        ip = publicIpData.ip;
+      if (geo && geo.countryCode) {
+        location = [geo.countryCode, geo.regionName, geo.city].filter(Boolean).join(' - ');
       }
     }
-
-    // Resolve IP → location using IPinfo
-    if (ip && ip !== 'unknown') {
-      const geo = await fetch(`https://ipinfo.io/${ip}/json`, {
-        signal: AbortSignal.timeout(3000)
-      }).then(r => r.json()).catch(() => null);
-
-      if (geo) {
-        location = [
-          geo.city,
-          geo.region,
-          geo.country
-        ].filter(Boolean).join(' - ');
-      }
-    }
-  } catch (e) {
-    console.error('[GeoIP Error]', e.message);
-  }
-
-  // Save location into existing visit tracking (no other code changes needed)
-  await trackVisit(location || ip).catch(() => {});
-
-  res.json({
-    ok: true,
-    ip,
-    location
-  });
+  } catch(e) {}
+  await trackVisit(location).catch(() => {});
+  res.json({ ok: true });
 });
-
-// // Track page visits
-// app.post('/track/visit', async (req, res) => {
-//   const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
-//     || req.headers['x-real-ip']
-//     || req.socket?.remoteAddress
-//     || '';
-
-//   let location = 'Unknown';
-//   try {
-//     if (ip && !ip.startsWith('127.') && !ip.startsWith('::1') && !ip.startsWith('::f')) {
-//       const geo = await fetch(`http://ip-api.com/json/${ip}?fields=countryCode,regionName,city`, {
-//         signal: AbortSignal.timeout(2000)
-//       }).then(r => r.json()).catch(() => null);
-//       if (geo && geo.countryCode) {
-//         // Format: Chennai - Tamil Nadu - IN
-//         location = [geo.city, geo.regionName, geo.countryCode].filter(Boolean).join(' - ');
-//       } else {
-//         location = ip;
-//       }
-//     }
-//   } catch(e) { location = ip || 'Unknown'; }
-
-//   await trackVisit(location).catch(() => {});
-//   res.json({ ok: true });
-// });
 
 // Track compare searches
 app.post('/track/compare', async (req, res) => {
@@ -3194,7 +3105,7 @@ app.get('/dashboard/stats', async (req, res) => {
         storeBreakdown,
         recentConversions: recentConversions.map(e => ({ url: e.url, store: e.store, state: e.state, ts: e.ts?.getTime() })),
         recentClicks:      recentClicks.map(e => ({ dest: e.dest, store: e.store || detectStoreFromUrl(e.dest||'') || '', ts: e.ts?.getTime() })),
-        recentVisits:      recentVisits.map(e => ({ location: e.url, ts: e.ts?.getTime() })),
+        recentVisits:      recentVisits.map(e => ({ url: e.url, ts: e.ts?.getTime() })),
         dbConnected:  true,
         dateRange:    { from: from.toISOString(), to: to.toISOString() },
         serverUptime: Math.round(process.uptime() / 60) + ' min',
@@ -4446,17 +4357,6 @@ app.get('/compare/search', async (req, res) => {
     console.log('[Compare] ✅ FINAL:', stores.map(s => s.name + ':₹' + s.price + (s.isSource?'[src]':'') + (s.isBest?'[best]':'')).join(' | '));
 
     // Affiliate links via ExtraPe
-    // Build a dedup key from the input URL to skip re-converting same product
-    const inputUrlKey = (() => {
-      try {
-        const u = new URL(url);
-        // Extract product identifier (ASIN for Amazon, pid/itm for Flipkart)
-        const asin = u.pathname.match(/\/dp\/([A-Z0-9]{10})/i)?.[1];
-        const pid  = u.searchParams.get('pid') || u.pathname.match(/\/p\/(itm[a-z0-9]+)/i)?.[1];
-        return asin || pid || u.pathname;
-      } catch(e) { return ''; }
-    })();
-
     if (extrapeTokenCache.accessToken) {
       stores = await Promise.all(stores.map(async (s) => {
         if (!s.url || !s.url.startsWith('http')) return s;
@@ -4469,26 +4369,11 @@ app.get('/compare/search', async (req, res) => {
            'otracker', 'ssid', 'ctx', 'BU', 'ov_redirect'].forEach(p => u.searchParams.delete(p));
           cleanUrl = u.toString();
         } catch(e) {}
-
-        // Skip if this store URL refers to same product as input URL
-        // (user already converted it via the Convert feature)
-        const storeUrlKey = (() => {
-          try {
-            const u = new URL(cleanUrl);
-            const asin = u.pathname.match(/\/dp\/([A-Z0-9]{10})/i)?.[1];
-            const pid  = u.searchParams.get('pid') || u.pathname.match(/\/p\/(itm[a-z0-9]+)/i)?.[1];
-            return asin || pid || u.pathname;
-          } catch(e) { return ''; }
-        })();
-        const isSameProduct = inputUrlKey && storeUrlKey && inputUrlKey === storeUrlKey;
-
         try {
           const result = await convertExtraPe(cleanUrl);
           const affiliateLink = result.clickUrl || result;
-          // Only track in dashboard if NOT a duplicate of the convert-feature call
-          if (!isSameProduct) {
-            trackConversion(cleanUrl, s.name, 'done', affiliateLink).catch(() => {});
-          }
+          // Track each affiliated store as a conversion
+          trackConversion(cleanUrl, s.name, 'done', affiliateLink).catch(() => {});
           return { ...s, affiliateLink, displayLink: result.displayUrl || result.clickUrl || s.url };
         } catch(e) { return { ...s, affiliateLink: s.url, displayLink: s.url }; }
       }));
