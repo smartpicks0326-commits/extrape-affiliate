@@ -2993,60 +2993,20 @@ app.post('/admin/sync-from', async (req, res) => {
 
 // Track page visits
 app.post('/track/visit', async (req, res) => {
-  let ip =
+  const ip =
     req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
     req.headers['x-real-ip'] ||
     req.socket?.remoteAddress ||
     'unknown';
 
-  let location = ip;
-
-  try {
-    // If localhost, resolve server public IP
-    if (ip === '::1' || ip.startsWith('127.')) {
-      const publicIp = await fetch('https://ipinfo.io/json', {
-        signal: AbortSignal.timeout(3000)
-      })
-        .then((r) => r.json())
-        .catch(() => null);
-
-      if (publicIp?.ip) {
-        ip = publicIp.ip;
-      }
-    }
-
-    // Fetch geo location using IPinfo
-    if (ip && ip !== 'unknown') {
-      const geo = await fetch(`https://ipinfo.io/${ip}/json`, {
-        signal: AbortSignal.timeout(3000)
-      })
-        .then((r) => r.json())
-        .catch(() => null);
-
-      if (geo) {
-        const parts = [
-          geo.city,
-          geo.region,
-          geo.country
-        ].filter(Boolean);
-
-        location = parts.length ? parts.join(' - ') : ip;
-      }
-    }
-  } catch (e) {
-    console.error('Geo lookup failed:', e.message);
-    location = ip;
-  }
-
-  // Store only location
-  await trackVisit(location).catch((err) =>
+  // Store IP directly
+  await trackVisit(ip).catch((err) =>
     console.error('Track visit failed:', err.message)
   );
 
   res.json({
     ok: true,
-    ip,
-    location
+    ip
   });
 });
 // // Track page visits
