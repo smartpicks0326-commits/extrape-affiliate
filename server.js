@@ -2991,26 +2991,56 @@ app.post('/admin/sync-from', async (req, res) => {
   }
 });
 
-// Track page visits
+/// Track page visits
 app.post('/track/visit', async (req, res) => {
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
-    || req.headers['x-real-ip']
-    || req.socket?.remoteAddress
-    || 'unknown';
-  // Resolve IP → location (country - region - city)
+  const ip =
+    req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+    req.headers['x-real-ip'] ||
+    req.socket?.remoteAddress ||
+    'unknown';
+
   let location = ip;
+
   try {
-    if (ip && ip !== 'unknown' && !ip.startsWith('127.') && !ip.startsWith('::1')) {
-      const geo = await fetch(`http://ip-api.com/json/${ip}?fields=countryCode,regionName,city`, {
-        signal: AbortSignal.timeout(2000)
-      }).then(r => r.json()).catch(() => null);
-      if (geo && geo.countryCode) {
-        location = [geo.city, geo.regionName, geo.countryCode].filter(Boolean).join(' - ');
+    if (
+      ip &&
+      ip !== 'unknown' &&
+      !ip.startsWith('127.') &&
+      !ip.startsWith('::1')
+    ) {
+      const geo = await fetch(
+        `http://ip-api.com/json/${ip}?fields=status,countryCode,regionName,city`,
+        { signal: AbortSignal.timeout(3000) }
+      )
+        .then((r) => r.json())
+        .catch(() => null);
+
+      if (geo?.status === 'success') {
+        const parts = [
+          geo.city || '',
+          geo.regionName || '',
+          geo.countryCode || ''
+        ].filter((v) => v && v.trim() !== '');
+
+        location = parts.length ? parts.join(' - ') : ip;
+      } else {
+        location = ip;
       }
     }
-  } catch(e) {}
-  await trackVisit(location).catch(() => {});
-  res.json({ ok: true });
+  } catch (e) {
+    console.log('[GeoIP Error]', e.message);
+    location = ip;
+  }
+
+  await trackVisit(location).catch((e) =>
+    console.error('[Track Visit Error]', e.message)
+  );
+
+  res.json({
+    ok: true,
+    ip,
+    location
+  });
 });
 
 // Track compare searches
