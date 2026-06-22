@@ -2990,32 +2990,81 @@ app.post('/admin/sync-from', async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
-
 // Track page visits
 app.post('/track/visit', async (req, res) => {
-  const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
-    || req.headers['x-real-ip']
-    || req.socket?.remoteAddress
-    || '';
+  let ip =
+    req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+    req.headers['x-real-ip'] ||
+    req.socket?.remoteAddress ||
+    'unknown';
 
-  let location = 'Unknown';
+  let location = ip;
+
   try {
-    if (ip && !ip.startsWith('127.') && !ip.startsWith('::1') && !ip.startsWith('::f')) {
-      const geo = await fetch(`http://ip-api.com/json/${ip}?fields=countryCode,regionName,city`, {
-        signal: AbortSignal.timeout(2000)
+    // If localhost, resolve server public IP
+    if (ip === '::1' || ip.startsWith('127.')) {
+      const publicIpData = await fetch('https://ipinfo.io/json', {
+        signal: AbortSignal.timeout(3000)
       }).then(r => r.json()).catch(() => null);
-      if (geo && geo.countryCode) {
-        // Format: Chennai - Tamil Nadu - IN
-        location = [geo.city, geo.regionName, geo.countryCode].filter(Boolean).join(' - ');
-      } else {
-        location = ip;
+
+      if (publicIpData?.ip) {
+        ip = publicIpData.ip;
       }
     }
-  } catch(e) { location = ip || 'Unknown'; }
 
-  await trackVisit(location).catch(() => {});
-  res.json({ ok: true });
+    // Resolve IP → location using IPinfo
+    if (ip && ip !== 'unknown') {
+      const geo = await fetch(`https://ipinfo.io/${ip}/json`, {
+        signal: AbortSignal.timeout(3000)
+      }).then(r => r.json()).catch(() => null);
+
+      if (geo) {
+        location = [
+          geo.city,
+          geo.region,
+          geo.country
+        ].filter(Boolean).join(' - ');
+      }
+    }
+  } catch (e) {
+    console.error('[GeoIP Error]', e.message);
+  }
+
+  // Save location into existing visit tracking (no other code changes needed)
+  await trackVisit(location || ip).catch(() => {});
+
+  res.json({
+    ok: true,
+    ip,
+    location
+  });
 });
+
+// // Track page visits
+// app.post('/track/visit', async (req, res) => {
+//   const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+//     || req.headers['x-real-ip']
+//     || req.socket?.remoteAddress
+//     || '';
+
+//   let location = 'Unknown';
+//   try {
+//     if (ip && !ip.startsWith('127.') && !ip.startsWith('::1') && !ip.startsWith('::f')) {
+//       const geo = await fetch(`http://ip-api.com/json/${ip}?fields=countryCode,regionName,city`, {
+//         signal: AbortSignal.timeout(2000)
+//       }).then(r => r.json()).catch(() => null);
+//       if (geo && geo.countryCode) {
+//         // Format: Chennai - Tamil Nadu - IN
+//         location = [geo.city, geo.regionName, geo.countryCode].filter(Boolean).join(' - ');
+//       } else {
+//         location = ip;
+//       }
+//     }
+//   } catch(e) { location = ip || 'Unknown'; }
+
+//   await trackVisit(location).catch(() => {});
+//   res.json({ ok: true });
+// });
 
 // Track compare searches
 app.post('/track/compare', async (req, res) => {
