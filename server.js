@@ -2993,26 +2993,22 @@ app.post('/admin/sync-from', async (req, res) => {
 
 // Track page visits
 app.post('/track/visit', async (req, res) => {
-  const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
     || req.headers['x-real-ip']
     || req.socket?.remoteAddress
-    || '';
-
-  let location = 'Unknown';
+    || 'unknown';
+  // Resolve IP → location (country - region - city)
+  let location = ip;
   try {
-    if (ip && !ip.startsWith('127.') && !ip.startsWith('::1') && !ip.startsWith('::f')) {
+    if (ip && ip !== 'unknown' && !ip.startsWith('127.') && !ip.startsWith('::1')) {
       const geo = await fetch(`http://ip-api.com/json/${ip}?fields=countryCode,regionName,city`, {
         signal: AbortSignal.timeout(2000)
       }).then(r => r.json()).catch(() => null);
       if (geo && geo.countryCode) {
-        // Format: Chennai - Tamil Nadu - IN
         location = [geo.city, geo.regionName, geo.countryCode].filter(Boolean).join(' - ');
-      } else {
-        location = ip;
       }
     }
-  } catch(e) { location = ip || 'Unknown'; }
-
+  } catch(e) {}
   await trackVisit(location).catch(() => {});
   res.json({ ok: true });
 });
