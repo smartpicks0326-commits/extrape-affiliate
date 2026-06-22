@@ -2993,47 +2993,29 @@ app.post('/admin/sync-from', async (req, res) => {
 
 // Track page visits
 app.post('/track/visit', async (req, res) => {
-  const ip =
-    req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
-    req.headers['x-real-ip'] ||
-    req.socket?.remoteAddress ||
-    'unknown';
+  const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+    || req.headers['x-real-ip']
+    || req.socket?.remoteAddress
+    || '';
 
-  // Store IP directly
-  await trackVisit(ip).catch((err) =>
-    console.error('Track visit failed:', err.message)
-  );
+  let location = 'Unknown';
+  try {
+    if (ip && !ip.startsWith('127.') && !ip.startsWith('::1') && !ip.startsWith('::f')) {
+      const geo = await fetch(`http://ip-api.com/json/${ip}?fields=countryCode,regionName,city`, {
+        signal: AbortSignal.timeout(2000)
+      }).then(r => r.json()).catch(() => null);
+      if (geo && geo.countryCode) {
+        // Format: Chennai - Tamil Nadu - IN
+        location = [geo.city, geo.regionName, geo.countryCode].filter(Boolean).join(' - ');
+      } else {
+        location = ip;
+      }
+    }
+  } catch(e) { location = ip || 'Unknown'; }
 
-  res.json({
-    ok: true,
-    ip
-  });
+  await trackVisit(location).catch(() => {});
+  res.json({ ok: true });
 });
-// // Track page visits
-// app.post('/track/visit', async (req, res) => {
-//   const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
-//     || req.headers['x-real-ip']
-//     || req.socket?.remoteAddress
-//     || '';
-
-//   let location = 'Unknown';
-//   try {
-//     if (ip && !ip.startsWith('127.') && !ip.startsWith('::1') && !ip.startsWith('::f')) {
-//       const geo = await fetch(`http://ip-api.com/json/${ip}?fields=countryCode,regionName,city`, {
-//         signal: AbortSignal.timeout(2000)
-//       }).then(r => r.json()).catch(() => null);
-//       if (geo && geo.countryCode) {
-//         // Format: Chennai - Tamil Nadu - IN
-//         location = [geo.city, geo.regionName, geo.countryCode].filter(Boolean).join(' - ');
-//       } else {
-//         location = ip;
-//       }
-//     }
-//   } catch(e) { location = ip || 'Unknown'; }
-
-//   await trackVisit(location).catch(() => {});
-//   res.json({ ok: true });
-// });
 
 // Track compare searches
 app.post('/track/compare', async (req, res) => {
