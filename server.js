@@ -1473,6 +1473,15 @@ async function processQueue() {
   const req = requests[id];
   if (!req) { processing = false; processQueue(); return; }
   req.state = 'processing';
+
+  // If Compare is actively processing the same URL, wait for it to finish
+  // so we get the cached result instead of making a duplicate ExtraPe call
+  const reqKey = _epKey(req.url);
+  if (_compareActive.has(reqKey) || _compareActive.has(req.url)) {
+    console.log('[Queue] Compare is running for same URL — waiting 8s for cache:', reqKey);
+    await new Promise(r => setTimeout(r, 8000));
+  }
+
   try {
     const result = await convertExtraPe(req.url);
     // cleanLink always returns an object now
