@@ -4426,7 +4426,7 @@ app.get('/compare/search', async (req, res) => {
           trackConversion(cleanUrl, s.name, 'done', affiliateLink).catch(() => {});
           return { ...s, affiliateLink, displayLink: result.displayUrl || result.clickUrl || s.url };
         } catch(e) { return { ...s, affiliateLink: s.url, displayLink: s.url }; }
-      })));
+      }));
       console.log('[Compare] Affiliated:', stores.map(s => s.name + ':' + (s.affiliateLink||'').substring(0,40)).join(' | '));
     }
 
