@@ -15,6 +15,23 @@ const SERP_API_KEY = process.env.SERP_API_KEY || '';
 const FLASH_DEVICE_ID = process.env.FLASH_DEVICE_ID || 'web-spd-backend';
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'spd-admin-2024';
 
+// ── ExtraPe conversion cache — deduplicates calls within 10 min ──
+const _epCache = new Map();
+const _EP_TTL  = 10 * 60 * 1000;
+function _epKey(url) {
+  try {
+    const u = new URL(url);
+    const asin = u.pathname.match(/\/dp\/([A-Z0-9]{10})/i)?.[1];
+    if (asin) return 'amz:' + asin;
+    const itm = u.pathname.match(/\/(itm[a-z0-9]+)/i)?.[1] || u.searchParams.get('pid');
+    if (itm) return 'fk:' + itm;
+    return u.hostname + u.pathname;
+  } catch(e) { return url; }
+}
+
+// ── URLs currently being processed by Compare (block duplicate Convert queue) ──
+const _compareActive = new Set();
+
 // ── ExtraPe token — in-memory cache, loaded from .env at startup ──
 // Updated via the bookmarklet: visit https://api.smartpickdeals.live/extrape/token-page
 const extrapeTokenCache = {
@@ -1411,33 +1428,13 @@ setInterval(() => {
 }, 60000);
 
 // ── ExtraPe API ──
-// ── ExtraPe conversion cache — prevents duplicate calls within 10 minutes ──
-const _epCache = new Map(); // normalised url → { result, ts }
-const _EP_TTL  = 10 * 60 * 1000; // 10 min
-
-function _epCacheKey(url) {
-  try {
-    const u = new URL(url);
-    // For Amazon: key on ASIN only (ignores tracking params)
-    const asin = u.pathname.match(/\/dp\/([A-Z0-9]{10})/i)?.[1];
-    if (asin) return 'amz:' + asin;
-    // For Flipkart: key on itm product code
-    const itm = u.pathname.match(/\/(itm[a-z0-9]+)/i)?.[1]
-             || u.searchParams.get('pid');
-    if (itm) return 'fk:' + itm;
-    // Generic: hostname + pathname (strip query)
-    return u.hostname + u.pathname;
-  } catch(e) { return url; }
-}
-
 async function convertExtraPe(productUrl) {
-  const cacheKey = _epCacheKey(productUrl);
-  const cached = _epCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < _EP_TTL) {
-    console.log('ExtraPe [cache hit]:', cacheKey);
-    return cached.result;
+  const key = _epKey(productUrl);
+  const hit = _epCache.get(key);
+  if (hit && Date.now() - hit.ts < _EP_TTL) {
+    console.log('ExtraPe [cached]:', key);
+    return hit.result;
   }
-
   const r = await fetch('https://www.extrape.com/handler/convertText', {
     method: 'POST',
     headers: {
@@ -1458,7 +1455,13 @@ async function convertExtraPe(productUrl) {
   if (!raw) throw new Error('No link returned: ' + JSON.stringify(data).substring(0,100));
   const decoded = decodeURIComponent(raw.trim());
   console.log('ExtraPe raw:', decoded);
-  return cleanLink(decoded);
+  const result = cleanLink(decoded);
+  _epCache.set(key, { result, ts: Date.now() });
+  if (_epCache.size > 200) {
+    const oldest = [..._epCache.entries()].sort((a,b) => a[1].ts - b[1].ts)[0];
+    _epCache.delete(oldest[0]);
+  }
+  return result;
 }
 
 // ── Queue processor ──
@@ -3167,7 +3170,14 @@ app.post('/generate', (req, res) => {
   try { new URL(url); } catch { return res.status(400).json({ error:'Invalid URL.' }); }
   if (!isSupported(url)) return res.status(400).json({ error:'Store not supported by ExtraPe.' });
   if (!extrapeTokenCache.accessToken) return res.status(500).json({ error:'EXTRAPE_ACCESS_TOKEN not set. Visit https://api.smartpickdeals.live/extrape/token-page' });
-  // Detect store from URL if not provided or unknown
+
+  // Skip convert queue if this URL is currently being handled by Compare
+  const compareKey = _epKey(url);
+  if (_compareActive.has(compareKey)) {
+    console.log('[Generate] Skipped — Compare is handling this URL:', compareKey);
+    return res.json({ requestId: null, state: 'skipped', reason: 'compare_in_progress' });
+  }
+
   const detectedStore = (store && store !== 'Unknown') ? store : (detectStoreFromUrl(url) || 'Unknown');
   const id = enqueue(url, detectedStore);
   processQueue();
@@ -3230,6 +3240,11 @@ app.get('/compare/search', async (req, res) => {
   const deviceId = flashTokenCache.deviceId || process.env.FLASH_DEVICE_ID || 'web-spd';
   if (!token) return res.status(503).json({ error: 'Flash token not set. Visit https://api.smartpickdeals.live/flash/token-page' });
 
+  const _ck = _epKey(rawUrl); _compareActive.add(_ck);
+  _compareActive.add(rawUrl); // also add raw URL for short link matching
+  try {
+    // ── Ensure cleanup on response finish ──
+    res.on('finish', () => { _compareActive.delete(_ck); _compareActive.delete(rawUrl); });
   try {
     // ── URL normalisation ──
     let url = rawUrl;
