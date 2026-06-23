@@ -4435,7 +4435,7 @@ app.get('/compare/search', async (req, res) => {
     console.error('[Compare] Error:', e.message);
     return res.status(500).json({ error: e.message });
   }
-}});
+);
 
 
 // ── /compare/debug — step-by-step Flash API diagnostic ──
