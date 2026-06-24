@@ -1474,44 +1474,41 @@ async function processQueue() {
   if (!req) { processing = false; processQueue(); return; }
   req.state = 'processing';
 
-  // If Compare is actively processing the same URL, wait for it to finish
-  // so we get the cached result instead of making a duplicate ExtraPe call
   const reqKey = _epKey(req.url);
+
+  // If Compare is actively processing the same URL, wait for it to complete
+  // then use the cached ExtraPe result — no duplicate call
   if (_compareActive.has(reqKey) || _compareActive.has(req.url)) {
-    console.log('[Queue] Compare is running for same URL — waiting 8s for cache:', reqKey);
-    await new Promise(r => setTimeout(r, 8000));
+    console.log('[Queue] Waiting for Compare to finish:', reqKey);
+    // Poll until compare finishes (max 60s)
+    for (let i = 0; i < 12; i++) {
+      await new Promise(r => setTimeout(r, 5000));
+      if (!_compareActive.has(reqKey) && !_compareActive.has(req.url)) break;
+    }
+    console.log('[Queue] Compare done — checking cache for:', reqKey);
   }
 
   try {
-    const result = await convertExtraPe(req.url);
-    // cleanLink always returns an object now
+    const result = await convertExtraPe(req.url); // cache hit if compare already ran
     if (result && typeof result === 'object') {
-      req.affiliateLink = result.clickUrl;   // Visit button — earns commission
-      req.displayLink   = result.displayUrl; // shown to user — always clean
+      req.affiliateLink = result.clickUrl;
+      req.displayLink   = result.displayUrl;
     } else {
       req.affiliateLink = req.displayLink = result;
     }
     req.state = 'done';
-    // Ensure store is detected — use URL detection if store is still Unknown
     const finalStore = (req.store && req.store !== 'Unknown')
       ? req.store
       : (detectStoreFromUrl(req.url) || detectStoreFromUrl(req.affiliateLink || '') || 'Unknown');
     req.store = finalStore;
-    // Only track the affiliate link if it's meaningfully different from the input URL
-    // amzn.in short links return themselves — skip to avoid duplicate dashboard entries
-    const trackUrl = req.displayLink || req.affiliateLink || req.url;
-    const isDifferent = trackUrl !== req.url &&
-      !(req.url.includes('amzn.in') && trackUrl.includes('amzn.in')) &&
-      !(req.url.includes('fkrt.co') && trackUrl.includes('fkrt.co'));
-    if (isDifferent) {
+    // Don't track in dashboard — compare already tracked all store conversions
+    // Only track if this was a pure Convert (not triggered alongside Compare)
+    if (!_compareActive.has(reqKey) && !_compareActive.has(req.url)) {
+      const trackUrl = req.displayLink || req.affiliateLink || req.url;
       trackConversion(trackUrl, finalStore, 'done', req.affiliateLink);
-    } else {
-      // Still track but with the affiliate link as the stored URL
-      trackConversion(req.affiliateLink || trackUrl, finalStore, 'done', req.affiliateLink);
     }
   } catch(e) {
     req.state = 'error'; req.error = e.message;
-    trackConversion(req.url, req.store, 'error', null);
     console.error('Queue error:', e.message);
   } finally {
     processing = false; processQueue();
