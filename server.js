@@ -3251,9 +3251,7 @@ app.get('/compare/search', async (req, res) => {
 
   const _ck = _epKey(rawUrl); _compareActive.add(_ck);
   _compareActive.add(rawUrl); // also add raw URL for short link matching
-  try {
-    // ── Ensure cleanup on response finish ──
-    res.on('finish', () => { _compareActive.delete(_ck); _compareActive.delete(rawUrl); });
+  res.on('finish', () => { _compareActive.delete(_ck); _compareActive.delete(rawUrl); });
   try {
     // ── URL normalisation ──
     let url = rawUrl;
