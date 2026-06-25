@@ -15,23 +15,6 @@ const SERP_API_KEY = process.env.SERP_API_KEY || '';
 const FLASH_DEVICE_ID = process.env.FLASH_DEVICE_ID || 'web-spd-backend';
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'spd-admin-2024';
 
-// ── ExtraPe conversion cache — deduplicates calls within 10 min ──
-const _epCache = new Map();
-const _EP_TTL  = 10 * 60 * 1000;
-function _epKey(url) {
-  try {
-    const u = new URL(url);
-    const asin = u.pathname.match(/\/dp\/([A-Z0-9]{10})/i)?.[1];
-    if (asin) return 'amz:' + asin;
-    const itm = u.pathname.match(/\/(itm[a-z0-9]+)/i)?.[1] || u.searchParams.get('pid');
-    if (itm) return 'fk:' + itm;
-    return u.hostname + u.pathname;
-  } catch(e) { return url; }
-}
-
-// ── URLs currently being processed by Compare (block duplicate Convert queue) ──
-const _compareActive = new Set();
-
 // ── ExtraPe token — in-memory cache, loaded from .env at startup ──
 // Updated via the bookmarklet: visit https://api.smartpickdeals.live/extrape/token-page
 const extrapeTokenCache = {
@@ -1137,7 +1120,92 @@ function cleanLink(rawUrl) {
   } catch(e) { return { displayUrl: rawUrl, clickUrl: rawUrl }; }
 }
 
-// ── MongoDB Atlas connection ──
+// ── Store logo system ──
+// Known official logos for major stores
+const STORE_LOGOS = {
+  'Amazon':          'https://logo.clearbit.com/amazon.in',
+  'Flipkart':        'https://logo.clearbit.com/flipkart.com',
+  'Myntra':          'https://logo.clearbit.com/myntra.com',
+  'Ajio':            'https://logo.clearbit.com/ajio.com',
+  'Nykaa':           'https://logo.clearbit.com/nykaa.com',
+  'TataCliq':        'https://logo.clearbit.com/tatacliq.com',
+  'Croma':           'https://logo.clearbit.com/croma.com',
+  'Snapdeal':        'https://logo.clearbit.com/snapdeal.com',
+  'Meesho':          'https://logo.clearbit.com/meesho.com',
+  'JioMart':         'https://logo.clearbit.com/jiomart.com',
+  'BigBasket':       'https://logo.clearbit.com/bigbasket.com',
+  'Zepto':           'https://logo.clearbit.com/zeptonow.com',
+  'Blinkit':         'https://logo.clearbit.com/blinkit.com',
+  'Swiggy':          'https://logo.clearbit.com/swiggy.com',
+  'FirstCry':        'https://logo.clearbit.com/firstcry.com',
+  'Netmeds':         'https://logo.clearbit.com/netmeds.com',
+  'Lenskart':        'https://logo.clearbit.com/lenskart.com',
+  'Reliance Digital':'https://logo.clearbit.com/reliancedigital.in',
+  'Vijay Sales':     'https://logo.clearbit.com/vijaysales.com',
+  'Bajaj Markets':   'https://logo.clearbit.com/bajajfinservmarkets.in',
+  'Zebrs':           'https://logo.clearbit.com/zebrs.com',
+  'Poorvika':        'https://logo.clearbit.com/poorvika.com',
+  'Sangeetha':       'https://logo.clearbit.com/sangeetha.com',
+  'Fire-Boltt':      'https://logo.clearbit.com/fireboltt.com',
+  'Boat':            'https://logo.clearbit.com/boat-lifestyle.com',
+  'GadgetsNow':      'https://logo.clearbit.com/gadgetsnow.com',
+  'Shopsy':          'https://logo.clearbit.com/shopsy.in',
+  'Pepperfry':       'https://logo.clearbit.com/pepperfry.com',
+  'Decathlon':       'https://logo.clearbit.com/decathlon.co.in',
+  'Noise':           'https://logo.clearbit.com/gonoise.com',
+  'VleBazaar':       'https://logo.clearbit.com/vlebazaar.in',
+  'Bajaj Markets':   'https://logo.clearbit.com/bajajfinservmarkets.in',
+};
+
+// In-memory logo cache for unknown stores (domain → logo url)
+const _logoCache = new Map();
+
+async function getStoreLogo(storeName, storeUrl) {
+  // 1. Check hardcoded map first
+  if (STORE_LOGOS[storeName]) return STORE_LOGOS[storeName];
+
+  // 2. Check in-memory cache
+  let domain = '';
+  try { domain = new URL(storeUrl || '').hostname.replace('www.', ''); } catch(e) {}
+  if (!domain) return '';
+
+  if (_logoCache.has(domain)) return _logoCache.get(domain);
+
+  // 3. Fetch via Google Favicon API (reliable, no auth needed)
+  try {
+    const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
+    // Verify it's not the default Google favicon (16x16 grey globe)
+    const r = await fetch(faviconUrl, { signal: AbortSignal.timeout(3000) });
+    if (r.ok) {
+      const logo = faviconUrl;
+      _logoCache.set(domain, logo);
+      console.log('[Logo] Cached favicon for:', domain);
+      return logo;
+    }
+  } catch(e) {}
+
+  // 4. Fallback: Clearbit logo API
+  try {
+    const clearbitUrl = `https://logo.clearbit.com/${domain}`;
+    const r = await fetch(clearbitUrl, { signal: AbortSignal.timeout(3000) });
+    if (r.ok && r.headers.get('content-type')?.includes('image')) {
+      _logoCache.set(domain, clearbitUrl);
+      return clearbitUrl;
+    }
+  } catch(e) {}
+
+  return '';
+}
+
+// ── GET /store-logo?store=Amazon&url=https://... ──
+app.get('/store-logo', async (req, res) => {
+  const { store, url } = req.query;
+  if (!store) return res.status(400).json({ error: 'Pass ?store=' });
+  const logo = await getStoreLogo(store, url || '');
+  return res.json({ store, logo });
+});
+
+
 const MONGO_URI = process.env.MONGO_URI || '';
 
 // ── Mongoose Schemas ──
@@ -1429,12 +1497,6 @@ setInterval(() => {
 
 // ── ExtraPe API ──
 async function convertExtraPe(productUrl) {
-  const key = _epKey(productUrl);
-  const hit = _epCache.get(key);
-  if (hit && Date.now() - hit.ts < _EP_TTL) {
-    console.log('ExtraPe [cached]:', key);
-    return hit.result;
-  }
   const r = await fetch('https://www.extrape.com/handler/convertText', {
     method: 'POST',
     headers: {
@@ -1455,13 +1517,7 @@ async function convertExtraPe(productUrl) {
   if (!raw) throw new Error('No link returned: ' + JSON.stringify(data).substring(0,100));
   const decoded = decodeURIComponent(raw.trim());
   console.log('ExtraPe raw:', decoded);
-  const result = cleanLink(decoded);
-  _epCache.set(key, { result, ts: Date.now() });
-  if (_epCache.size > 200) {
-    const oldest = [..._epCache.entries()].sort((a,b) => a[1].ts - b[1].ts)[0];
-    _epCache.delete(oldest[0]);
-  }
-  return result;
+  return cleanLink(decoded);
 }
 
 // ── Queue processor ──
@@ -1473,15 +1529,6 @@ async function processQueue() {
   const req = requests[id];
   if (!req) { processing = false; processQueue(); return; }
   req.state = 'processing';
-
-  // If Compare is actively processing the same URL, wait for it to finish
-  // so we get the cached result instead of making a duplicate ExtraPe call
-  const reqKey = _epKey(req.url);
-  if (_compareActive.has(reqKey) || _compareActive.has(req.url)) {
-    console.log('[Queue] Compare is running for same URL — waiting 8s for cache:', reqKey);
-    await new Promise(r => setTimeout(r, 8000));
-  }
-
   try {
     const result = await convertExtraPe(req.url);
     // cleanLink always returns an object now
@@ -3179,14 +3226,7 @@ app.post('/generate', (req, res) => {
   try { new URL(url); } catch { return res.status(400).json({ error:'Invalid URL.' }); }
   if (!isSupported(url)) return res.status(400).json({ error:'Store not supported by ExtraPe.' });
   if (!extrapeTokenCache.accessToken) return res.status(500).json({ error:'EXTRAPE_ACCESS_TOKEN not set. Visit https://api.smartpickdeals.live/extrape/token-page' });
-
-  // Skip convert queue if this URL is currently being handled by Compare
-  const compareKey = _epKey(url);
-  if (_compareActive.has(compareKey)) {
-    console.log('[Generate] Skipped — Compare is handling this URL:', compareKey);
-    return res.json({ requestId: null, state: 'skipped', reason: 'compare_in_progress' });
-  }
-
+  // Detect store from URL if not provided or unknown
   const detectedStore = (store && store !== 'Unknown') ? store : (detectStoreFromUrl(url) || 'Unknown');
   const id = enqueue(url, detectedStore);
   processQueue();
@@ -3249,9 +3289,6 @@ app.get('/compare/search', async (req, res) => {
   const deviceId = flashTokenCache.deviceId || process.env.FLASH_DEVICE_ID || 'web-spd';
   if (!token) return res.status(503).json({ error: 'Flash token not set. Visit https://api.smartpickdeals.live/flash/token-page' });
 
-  const _ck = _epKey(rawUrl); _compareActive.add(_ck);
-  _compareActive.add(rawUrl); // also add raw URL for short link matching
-  res.on('finish', () => { _compareActive.delete(_ck); _compareActive.delete(rawUrl); });
   try {
     // ── URL normalisation ──
     let url = rawUrl;
@@ -4420,11 +4457,8 @@ app.get('/compare/search', async (req, res) => {
         try {
           const result = await convertExtraPe(cleanUrl);
           const affiliateLink = result.clickUrl || result;
-          // Only track NON-source stores in dashboard
-          // Source store is already tracked by the Convert queue (processQueue)
-          if (!s.isSource) {
-            trackConversion(cleanUrl, s.name, 'done', affiliateLink).catch(() => {});
-          }
+          // Track each affiliated store as a conversion
+          trackConversion(cleanUrl, s.name, 'done', affiliateLink).catch(() => {});
           return { ...s, affiliateLink, displayLink: result.displayUrl || result.clickUrl || s.url };
         } catch(e) { return { ...s, affiliateLink: s.url, displayLink: s.url }; }
       }));
