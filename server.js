@@ -1159,11 +1159,15 @@ function makeGoLink(affiliateUrl) {
 const SUPPORTED = [
   'amazon.in','amazon.com','amzn.in','amzn.to',
   'flipkart.com','dl.flipkart.com','fkrt.co',
+  'shopsy.in',
   'myntra.com','ajio.com','nykaa.com','nykaafashion.com',
   'tatacliq.com','croma.com','snapdeal.com',
   'netmeds.com','lenskart.com','mamaearth.in',
   'boat-lifestyle.com','pepperfry.com','jiomart.com',
   'bigbasket.com','firstcry.com','meesho.com',
+  'vijaysales.com','reliancedigital.in',
+  'decathlon.in','purplle.com','bewakoof.com',
+  'paytmmall.com','infibeam.com',
   'makemytrip.com','cleartrip.com',
 ];
 
@@ -1180,6 +1184,25 @@ function cleanLink(rawUrl) {
   try {
     const parsed = new URL(rawUrl);
     const host   = parsed.hostname;
+
+    // ── ExtraPe short links — return as-is (these ARE the affiliate links) ──
+    // ExtraPe generates store-specific short links; never wrap them in /go/
+    const EXTRAPE_SHORT_DOMAINS = [
+      'bilty.co',    // Croma, Shopsy, others
+      'ajiio.co',    // Ajio
+      'cliq.ly',     // TataCliq
+      'myntr.co',    // Myntra
+      'meesho.co',   // Meesho
+      'jio.com',     // JioMart (affiliate)
+      'nykaa.co',    // Nykaa
+      'bwkf.co',     // Bewakoof
+      'snapd.co',    // Snapdeal
+      'bgbt.co',     // BigBasket
+      'jmart.co',    // JioMart alt
+    ];
+    if (EXTRAPE_SHORT_DOMAINS.some(d => host === d || host.endsWith('.' + d))) {
+      return { displayUrl: rawUrl, clickUrl: rawUrl };
+    }
 
     // ── Flipkart native short (fkrt.co/xxxxx) ──
     // Clean already. Display & click are the same.
@@ -1544,7 +1567,7 @@ async function convertExtraPe(productUrl) {
       'rememberMeToken': extrapeTokenCache.rememberToken,
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
     },
-    body: JSON.stringify({ inputText: encodeURIComponent(productUrl), bitlyConvert:false, advanceMode:false })
+    body: JSON.stringify({ inputText: encodeURIComponent(productUrl), bitlyConvert:false, advanceMode:true })
   });
   if (!r.ok) throw new Error('ExtraPe ' + r.status);
   const data = await r.json();
@@ -3527,7 +3550,70 @@ app.get('/compare/search', async (req, res) => {
           : null;
 
         if (priceCompareUrl) {
-          // Fast path: go directly to price-compare — skips item page entirely
+          // Fast path: fetch image from item page FIRST, then navigate to price-compare
+          // (price-compare page never has og:image — only the item page does)
+          console.log('[Compare/Puppeteer] Fast path — fetching image from item page first:', `https://flash.co/item/${itemId}/h/${pageHash}`);
+          try {
+            await page.goto(`https://flash.co/item/${itemId}/h/${pageHash}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+            // Wait for React to render og:image (up to 8s)
+            try {
+              await page.waitForFunction(
+                () => !!document.querySelector('meta[property="og:image"]')?.getAttribute('content'),
+                { timeout: 8000 }
+              );
+            } catch(e) {}
+            await new Promise(r => setTimeout(r, 800));
+            itemPageMeta = await page.evaluate(() => {
+              const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
+              let img = '';
+              const ogImg = document.querySelector('meta[property="og:image"]');
+              if (ogImg) {
+                const s = (ogImg.getAttribute('content') || '').trim();
+                if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo') &&
+                    !s.includes('merchant') && !s.toLowerCase().includes('faviconv2') && !s.includes('/favicon')) {
+                  img = s;
+                }
+              }
+              if (!img) {
+                for (const el of document.querySelectorAll('img')) {
+                  const s = el.src || '';
+                  if (!s || s.includes('/merchants/') || s.includes('/favicon') ||
+                      s.toLowerCase().includes('faviconv2') || s.includes('/icons/') ||
+                      s.includes('logo') || s.includes('merchant')) continue;
+                  if (/img\.flash\.co.*\/plain\//.test(s)) {
+                    try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; }
+                  }
+                  if (/media-amazon\.com|images-amazon\.com|rukmini\d+\.flixcart|img\.flipkart|fireboltt\.com/.test(s)) { img = s; break; }
+                }
+              }
+              // Largest square-ish image fallback
+              if (!img) {
+                let best = '', bestScore = 0;
+                for (const el of document.querySelectorAll('img')) {
+                  const s = el.src || '';
+                  if (!s || s.includes('/merchants/') || s.includes('/favicon') ||
+                      s.toLowerCase().includes('faviconv2') || s.includes('/icons/') ||
+                      s.includes('logo') || s.includes('merchant') || s.length < 30) continue;
+                  const w = el.naturalWidth || el.width || 0, h = el.naturalHeight || el.height || 0;
+                  if (w < 80 || h < 80) continue;
+                  const ratio = Math.max(w,h) / Math.min(w,h);
+                  const score = w * h * (ratio < 1.5 ? 3 : ratio < 3 ? 1 : 0.1);
+                  if (score > bestScore) { bestScore = score; best = s; }
+                }
+                img = best;
+              }
+              let name = '';
+              const ogTitle = document.querySelector('meta[property="og:title"]');
+              if (ogTitle) { const t = (ogTitle.getAttribute('content') || '').trim(); if (t.length > 8 && !JUNK.some(j => t.toLowerCase().includes(j))) name = t; }
+              if (!name) { for (const el of document.querySelectorAll('h1,h2')) { const t = el.textContent.trim(); if (t.length > 8 && t.length < 400 && !JUNK.some(j => t.toLowerCase().includes(j))) { name = t; break; } } }
+              return { img, name };
+            }).catch(() => ({ img: '', name: '' }));
+            console.log('[Compare/Puppeteer] Fast-path item page image:', itemPageMeta.img.substring(0, 80));
+          } catch(imgErr) {
+            console.log('[Compare/Puppeteer] Fast-path image fetch failed:', imgErr.message);
+          }
+
+          // Now navigate to price-compare for store prices
           console.log('[Compare/Puppeteer] Fast path → price-compare:', priceCompareUrl);
           await page.goto(priceCompareUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
         } else if (webappUrl && webappUrl.includes('product-details')) {
@@ -4403,14 +4489,19 @@ app.get('/compare/search', async (req, res) => {
           const ogImg = document.querySelector('meta[property="og:image"]');
           if (ogImg) {
             const src = (ogImg.getAttribute('content') || '').trim();
-            if (src && src.startsWith('http') && !src.includes('/merchants/') && !src.includes('logo')) productImage = src;
+            const sl = src.toLowerCase();
+            if (src && src.startsWith('http') && !sl.includes('/merchants/') && !sl.includes('logo')
+                && !sl.includes('/favicon') && !sl.includes('merchant') && !sl.includes('faviconv2')
+                && !sl.includes('/icons/') && !sl.includes('clearbit')) productImage = src;
           }
 
           // 2. Flash CDN proxy — img.flash.co/plain/<encoded-url>
           if (!productImage) {
             for (const img of document.querySelectorAll('img')) {
               const src = img.src || '';
-              if (!src || src.includes('/merchants/') || src.includes('/favicon') || src.includes('logo')) continue;
+              const sl = src.toLowerCase();
+              if (!src || sl.includes('/merchants/') || sl.includes('/favicon') || sl.includes('logo')
+                  || sl.includes('merchant') || sl.includes('faviconv2') || sl.includes('/icons/')) continue;
               if (/img\.flash\.co.*\/plain\//.test(src)) {
                 try { const d = decodeURIComponent(src.split('/plain/')[1].split('?')[0]); if (d.startsWith('http')) { productImage = d; break; } } catch { productImage = src; break; }
               }
@@ -4421,7 +4512,9 @@ app.get('/compare/search', async (req, res) => {
           if (!productImage) {
             for (const img of document.querySelectorAll('img')) {
               const src = img.src || '';
-              if (!src || src.includes('/merchants/') || src.includes('/favicon') || src.includes('logo')) continue;
+              const sl = src.toLowerCase();
+              if (!src || sl.includes('/merchants/') || sl.includes('/favicon') || sl.includes('logo')
+                  || sl.includes('merchant') || sl.includes('faviconv2') || sl.includes('/icons/')) continue;
               if (/media-amazon\.com|images-amazon\.com|_SL\d+_|_AC_|rukmini\d+\.flixcart|img\.flipkart/.test(src)) { productImage = src; break; }
             }
           }
@@ -4431,9 +4524,12 @@ app.get('/compare/search', async (req, res) => {
             let best = '', bestScore = 0;
             for (const img of document.querySelectorAll('img')) {
               const src = img.src || '';
-              if (!src || src.includes('/merchants/') || src.includes('/favicon') || src.includes('logo') || src.length < 30) continue;
+              const sl = src.toLowerCase();
+              if (!src || sl.includes('/merchants/') || sl.includes('/favicon') || sl.includes('logo')
+                  || sl.includes('merchant') || sl.includes('faviconv2') || sl.includes('/icons/')
+                  || src.length < 30) continue;
               const w = img.naturalWidth || img.width || 0, h = img.naturalHeight || img.height || 0;
-              if (w < 60 || h < 60) continue;
+              if (w < 80 || h < 80) continue;
               const ratio = Math.max(w,h)/Math.min(w,h);
               const score = w * h * (ratio < 1.5 ? 3 : ratio < 3 ? 1 : 0.1);
               if (score > bestScore) { bestScore = score; best = src; }
@@ -4462,6 +4558,72 @@ app.get('/compare/search', async (req, res) => {
     // Use image/name from item page (price-compare page has no og:image)
     if (itemPageMeta.img) extracted.productImage = itemPageMeta.img;
     if (itemPageMeta.name && !extracted.productName) extracted.productName = itemPageMeta.name;
+
+    // ── Stage 4 server-side image fallback ──
+    // If Puppeteer stages all failed to get a product image, try fetching it from
+    // the Flash item page og:image via a plain HTTP request (no browser needed).
+    if (!extracted.productImage && itemId && pageHash) {
+      try {
+        const itemPageUrl = `https://flash.co/item/${itemId}/h/${pageHash}`;
+        console.log('[Compare] Stage 4 image fetch (HTTP):', itemPageUrl);
+        const imgRes = await fetch(itemPageUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+            'Accept': 'text/html,application/xhtml+xml',
+          },
+          signal: AbortSignal.timeout(8000),
+        }).catch(() => null);
+        if (imgRes && imgRes.ok) {
+          const html = await imgRes.text().catch(() => '');
+          // og:image
+          const ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
+                       || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+          if (ogMatch && ogMatch[1]) {
+            const src = ogMatch[1].trim();
+            const sl = src.toLowerCase();
+            if (src.startsWith('http') && !sl.includes('/merchants/') && !sl.includes('logo')
+                && !sl.includes('/favicon') && !sl.includes('merchant') && !sl.includes('faviconv2')) {
+              extracted.productImage = src;
+              console.log('[Compare] Stage 4 image found:', src.substring(0, 60));
+            }
+          }
+          // img.flash.co/plain/<encoded> CDN pattern
+          if (!extracted.productImage) {
+            const cdnMatch = html.match(/https:\/\/img\.flash\.co[^"'\s]+\/plain\/([^"'\s?]+)/);
+            if (cdnMatch) {
+              try {
+                const decoded = decodeURIComponent(cdnMatch[1]);
+                if (decoded.startsWith('http')) {
+                  extracted.productImage = decoded;
+                  console.log('[Compare] Stage 4 CDN image found:', decoded.substring(0, 60));
+                }
+              } catch {}
+            }
+          }
+        }
+      } catch(e) { console.log('[Compare] Stage 4 image fetch failed:', e.message); }
+    }
+
+    // ── Stage 5: derive product image from source store URL ──
+    // As absolute last resort, use the Amazon/Flipkart product URL pattern to construct image URL
+    if (!extracted.productImage) {
+      const srcStoreEntry = (quickStores.length > 0 ? quickStores : extracted.stores).find(s => s.isSource);
+      const anyStore = srcStoreEntry || (quickStores.length > 0 ? quickStores[0] : extracted.stores[0]);
+      if (anyStore && anyStore.url) {
+        try {
+          const su = new URL(anyStore.url);
+          const sh = su.hostname;
+          // Amazon: construct image from ASIN
+          if (sh.includes('amazon')) {
+            const asin = su.pathname.match(/\/dp\/([A-Z0-9]{10})/i)?.[1];
+            if (asin) {
+              extracted.productImage = `https://images-na.ssl-images-amazon.com/images/P/${asin}.01._SL500_.jpg`;
+              console.log('[Compare] Stage 5 Amazon image from ASIN:', asin);
+            }
+          }
+        } catch {}
+      }
+    }
 
     if (extracted.stores.length === 0) {
       return res.status(404).json({
@@ -4506,25 +4668,60 @@ app.get('/compare/search', async (req, res) => {
     if (extrapeTokenCache.accessToken) {
       stores = await Promise.all(stores.map(async (s) => {
         if (!s.url || !s.url.startsWith('http')) return s;
-        // Clean store URL before sending to ExtraPe
-        let cleanUrl = s.url;
+
+        // ── Unwrap redirect wrappers (linksredirect.com, tjzuh.com, etc.) ──
+        // Flash wraps some store links (e.g. Shopsy) in linksredirect.com?url=https://shopsy.in/...
+        // We must unwrap to get the real product URL before sending to ExtraPe.
+        let rawUrl = s.url;
         try {
-          const u = new URL(s.url);
+          const wu = new URL(s.url);
+          const ulp = wu.searchParams.get('ulp') || wu.searchParams.get('url') ||
+                      wu.searchParams.get('dest') || wu.searchParams.get('target');
+          if (ulp) {
+            const unwrapped = decodeURIComponent(ulp);
+            if (unwrapped.startsWith('http')) rawUrl = unwrapped;
+          }
+        } catch(e) {}
+
+        // Clean tracking params from the (possibly unwrapped) URL
+        let cleanUrl = rawUrl;
+        try {
+          const u = new URL(rawUrl);
           ['ref', 'ref_', 'social_share', 'source', 'smid', 'psc', 'th', '_encoding',
            'tag', 'linkCode', 'linkId', 'camp', 'creative', 'iid', 'fm', 'srno',
            'otracker', 'ssid', 'ctx', 'BU', 'ov_redirect'].forEach(p => u.searchParams.delete(p));
           cleanUrl = u.toString();
         } catch(e) {}
-        try {
+
+        // Skip ExtraPe if store not supported (avoids pointless API call + error)
+        if (!isSupported(cleanUrl)) {
+          console.log('[Compare] Not affiliatable (unsupported):', s.name, cleanUrl.substring(0, 60));
+          return s;
+        }
+
+        // Convert via ExtraPe — retry once on failure
+        const tryConvert = async () => {
           const result = await convertExtraPe(cleanUrl);
           const affiliateLink = result.clickUrl || result;
-          // Only track NON-source stores in dashboard
-          // Source store is already tracked by the Convert queue (processQueue)
           if (!s.isSource) {
             trackConversion(cleanUrl, s.name, 'done', affiliateLink).catch(() => {});
           }
           return { ...s, affiliateLink, displayLink: result.displayUrl || result.clickUrl || s.url };
-        } catch(e) { return { ...s, affiliateLink: s.url, displayLink: s.url }; }
+        };
+
+        try {
+          return await tryConvert();
+        } catch(e) {
+          console.log('[Compare] ExtraPe failed for', s.name, '— retrying once:', e.message);
+          await new Promise(r => setTimeout(r, 1500));
+          try {
+            return await tryConvert();
+          } catch(e2) {
+            console.log('[Compare] ExtraPe retry also failed for', s.name, ':', e2.message);
+            // Fall back to cleanUrl (unwrapped) — never expose raw Flash linksredirect URL
+            return { ...s, affiliateLink: cleanUrl, displayLink: cleanUrl };
+          }
+        }
       }));
       console.log('[Compare] Affiliated:', stores.map(s => s.name + ':' + (s.affiliateLink||'').substring(0,40)).join(' | '));
     }
