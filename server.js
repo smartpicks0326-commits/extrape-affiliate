@@ -3555,14 +3555,18 @@ app.get('/compare/search', async (req, res) => {
           console.log('[Compare/Puppeteer] Fast path — fetching image from item page first:', `https://flash.co/item/${itemId}/h/${pageHash}`);
           try {
             await page.goto(`https://flash.co/item/${itemId}/h/${pageHash}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
-            // Wait for React to render og:image (up to 8s)
+            // Wait for React to render og:image — up to 10s (primary image source, must succeed)
             try {
               await page.waitForFunction(
-                () => !!document.querySelector('meta[property="og:image"]')?.getAttribute('content'),
-                { timeout: 8000 }
+                () => {
+                  const m = document.querySelector('meta[property="og:image"]');
+                  const s = m?.getAttribute('content') || '';
+                  return s.startsWith('http') && s.length > 20 && !s.includes('/merchants/') && !s.includes('logo');
+                },
+                { timeout: 10000 }
               );
             } catch(e) {}
-            await new Promise(r => setTimeout(r, 800));
+            await new Promise(r => setTimeout(r, 1500));
             itemPageMeta = await page.evaluate(() => {
               const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
               let img = '';
@@ -4665,7 +4669,8 @@ app.get('/compare/search', async (req, res) => {
     console.log('[Compare] ✅ FINAL:', stores.map(s => s.name + ':₹' + s.price + (s.isSource?'[src]':'') + (s.isBest?'[best]':'')).join(' | '));
 
     // Affiliate links via ExtraPe
-    if (extrapeTokenCache.accessToken) {
+    // Always run this block — even without a token we must unwrap linksredirect URLs
+    if (true) {
       stores = await Promise.all(stores.map(async (s) => {
         if (!s.url || !s.url.startsWith('http')) return s;
 
@@ -4693,20 +4698,27 @@ app.get('/compare/search', async (req, res) => {
           cleanUrl = u.toString();
         } catch(e) {}
 
-        // Skip ExtraPe if store not supported (avoids pointless API call + error)
+        // Skip ExtraPe if store not supported or token not set
         if (!isSupported(cleanUrl)) {
           console.log('[Compare] Not affiliatable (unsupported):', s.name, cleanUrl.substring(0, 60));
-          return s;
+          // Still clean the URL — replace linksredirect with actual store URL
+          return { ...s, url: cleanUrl, affiliateLink: cleanUrl, displayLink: cleanUrl };
+        }
+        if (!extrapeTokenCache.accessToken) {
+          console.log('[Compare] ExtraPe token not set — using clean URL for:', s.name);
+          return { ...s, url: cleanUrl, affiliateLink: cleanUrl, displayLink: cleanUrl };
         }
 
         // Convert via ExtraPe — retry once on failure
         const tryConvert = async () => {
           const result = await convertExtraPe(cleanUrl);
           const affiliateLink = result.clickUrl || result;
+          const displayLink = result.displayUrl || result.clickUrl || cleanUrl;
           if (!s.isSource) {
             trackConversion(cleanUrl, s.name, 'done', affiliateLink).catch(() => {});
           }
-          return { ...s, affiliateLink, displayLink: result.displayUrl || result.clickUrl || s.url };
+          // Always overwrite s.url so the frontend never falls back to raw Flash redirect URL
+          return { ...s, url: affiliateLink, affiliateLink, displayLink };
         };
 
         try {
@@ -4719,7 +4731,7 @@ app.get('/compare/search', async (req, res) => {
           } catch(e2) {
             console.log('[Compare] ExtraPe retry also failed for', s.name, ':', e2.message);
             // Fall back to cleanUrl (unwrapped) — never expose raw Flash linksredirect URL
-            return { ...s, affiliateLink: cleanUrl, displayLink: cleanUrl };
+            return { ...s, url: cleanUrl, affiliateLink: cleanUrl, displayLink: cleanUrl };
           }
         }
       }));
