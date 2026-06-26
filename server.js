@@ -32,6 +32,95 @@ function _epKey(url) {
 // ── URLs currently being processed by Compare (block duplicate Convert queue) ──
 const _compareActive = new Set();
 
+// ── Store logo system ─────────────────────────────────────────────────────────
+// Hardcoded official favicons for known stores (overrides Google favicon fallback)
+const STORE_LOGOS = {
+  'amazon':              'https://www.amazon.in/favicon.ico',
+  'flipkart':            'https://static-assets-web.flixcart.com/batman-returns/batman-returns/p/images/favicon-36x36-40207b.png',
+  'myntra':              'https://constant.myntassets.com/web/assets/img/favicon.png',
+  'ajio':                'https://assets.ajio.com/static/icons/favicon-96x96.png',
+  'nykaa':               'https://www.nykaa.com/favicon.ico',
+  'nykaa fashion':       'https://www.nykaafashion.com/favicon.ico',
+  'nykaafashion':        'https://www.nykaafashion.com/favicon.ico',
+  'tatacliq':            'https://www.tatacliq.com/favicon.ico',
+  'croma':               'https://media.croma.com/image/upload/v1637759004/Croma%20Assets/CMS/Category%20icon%20and%20thumbnail/Favicon_nynlgc.png',
+  'snapdeal':            'https://akamai.netstorage.snapdeal.com/images/snap/favicon.ico',
+  'meesho':              'https://images.meesho.com/images/pow/favicon-new.ico',
+  'jiomart':             'https://www.jiomart.com/favicon.ico',
+  'bigbasket':           'https://www.bigbasket.com/favicon.ico',
+  'big basket':          'https://www.bigbasket.com/favicon.ico',
+  'zepto':               'https://zepto.app/favicon.ico',
+  'blinkit':             'https://blinkit.com/favicon.ico',
+  'swiggy':              'https://www.swiggy.com/favicon.ico',
+  'firstcry':            'https://www.firstcry.com/favicon.ico',
+  'netmeds':             'https://www.netmeds.com/favicon.ico',
+  'lenskart':            'https://www.lenskart.com/favicon.ico',
+  'reliance digital':    'https://www.reliancedigital.in/favicon.ico',
+  'reliancedigital':     'https://www.reliancedigital.in/favicon.ico',
+  'vijay sales':         'https://www.vijaysales.com/favicon.ico',
+  'vijaysales':          'https://www.vijaysales.com/favicon.ico',
+  'bajaj markets':       'https://www.bajajfinservmarkets.in/favicon.ico',
+  'bajajfinserv':        'https://www.bajajfinservmarkets.in/favicon.ico',
+  'bajajfinservmarkets': 'https://www.bajajfinservmarkets.in/favicon.ico',
+  'croma':               'https://media.croma.com/image/upload/v1637759004/Croma%20Assets/CMS/Category%20icon%20and%20thumbnail/Favicon_nynlgc.png',
+  'decathlon':           'https://www.decathlon.in/favicon.ico',
+  'pepperfry':           'https://www.pepperfry.com/favicon.ico',
+  'mamaearth':           'https://www.mamaearth.in/favicon.ico',
+  'purplle':             'https://www.purplle.com/favicon.ico',
+  'bewakoof':            'https://www.bewakoof.com/favicon.ico',
+  'shopsy':              'https://www.shopsy.in/favicon.ico',
+  'shopclues':           'https://www.shopclues.com/favicon.ico',
+  'infibeam':            'https://www.infibeam.com/favicon.ico',
+  'boat':                'https://www.boat-lifestyle.com/favicon.ico',
+  'boat-lifestyle':      'https://www.boat-lifestyle.com/favicon.ico',
+  'fire-boltt':          'https://www.fireboltt.com/favicon.ico',
+  'fireboltt':           'https://www.fireboltt.com/favicon.ico',
+  'noise':               'https://www.gonoise.com/favicon.ico',
+  'gonoise':             'https://www.gonoise.com/favicon.ico',
+  'samsung shop':        'https://www.samsung.com/favicon.ico',
+  'samsungshop':         'https://www.samsung.com/favicon.ico',
+  'oneplus store':       'https://www.oneplus.in/favicon.ico',
+  'oneplusstore':        'https://www.oneplus.in/favicon.ico',
+  'realme store':        'https://www.realme.com/favicon.ico',
+  'realme':              'https://www.realme.com/favicon.ico',
+  'mi store':            'https://www.mi.com/favicon.ico',
+  'apple store':         'https://www.apple.com/favicon.ico',
+  'poorvika':            'https://www.poorvika.com/favicon.ico',
+  'sangeetha':           'https://www.sangeetha.com/favicon.ico',
+  'zebrs':               'https://www.zebrs.com/favicon.ico',
+  'gadgetsnow':          'https://www.gadgetsnow.com/favicon.ico',
+  'vlebazaar':           'https://www.vlebazaar.in/favicon.ico',
+  'paytm mall':          'https://paytmmall.com/favicon.ico',
+  'paytmmall':           'https://paytmmall.com/favicon.ico',
+};
+
+// In-memory cache: storeName (lowercase) → resolved logo URL
+const _logoCache = new Map();
+
+// Returns logo URL for a store — checks hardcoded map first, then Google Favicon API
+async function getStoreLogo(storeName, storeUrl) {
+  const key = (storeName || '').toLowerCase().trim();
+  if (_logoCache.has(key)) return _logoCache.get(key);
+
+  // Check hardcoded STORE_LOGOS map
+  for (const [k, v] of Object.entries(STORE_LOGOS)) {
+    if (key === k || key.includes(k) || k.includes(key)) {
+      _logoCache.set(key, v);
+      return v;
+    }
+  }
+
+  // Derive domain from storeUrl for Google Favicon API fallback
+  let domain = '';
+  try { domain = new URL(storeUrl || '').hostname.replace(/^www\./, ''); } catch {}
+  if (!domain) domain = key.replace(/\s+/g, '') + '.com';
+
+  const faviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`;
+  _logoCache.set(key, faviconUrl);
+  return faviconUrl;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 // ── ExtraPe token — in-memory cache, loaded from .env at startup ──
 // Updated via the bookmarklet: visit https://api.smartpickdeals.live/extrape/token-page
 const extrapeTokenCache = {
@@ -939,12 +1028,21 @@ async function flashSearchPuppeteer(productUrl) {
         const productImage = (() => {
           function isLogoOrIcon(src, alt) {
             if (!src) return true;
-            if (src.includes('/merchants/')) return true;
-            if (src.includes('/favicon'))    return true;
-            if (src.includes('faviconV2'))   return true;  // Google favicon service
-            if (src.includes('/icons/'))     return true;
-            if (/logo|icon/i.test(alt || '')) return true;
-            if (src.includes('logo'))        return true;
+            const s = src.toLowerCase();
+            const a = (alt || '').toLowerCase();
+            if (s.includes('/merchants/'))  return true;
+            if (s.includes('/favicon'))     return true;
+            if (s.includes('faviconv2'))    return true;  // Google favicon proxy (encrypted-tbn)
+            if (s.includes('/icons/'))      return true;
+            if (s.includes('logo'))         return true;
+            if (s.includes('clearbit.com')) return true;  // Clearbit logo service
+            if (s.includes('brandlogo'))    return true;
+            if (s.includes('brand_logo'))   return true;
+            if (s.includes('store-logo'))   return true;
+            if (s.includes('merchant'))     return true;
+            if (/logo|icon|brand/i.test(a)) return true;
+            // Reject tiny icon sizes hinted in URL
+            if (/[_\-](16|24|32|48)(x\1)?[_.\-]/i.test(s)) return true;
             return false;
           }
 
@@ -3529,11 +3627,11 @@ app.get('/compare/search', async (req, res) => {
             const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
             let img = '';
             const ogImg = document.querySelector('meta[property="og:image"]');
-            if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo')) img = s; }
+            if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo') && !s.includes('merchant') && !s.toLowerCase().includes('faviconv2') && !s.includes('/favicon')) img = s; }
             if (!img) {
               for (const el of document.querySelectorAll('img')) {
                 const s = el.src || '';
-                if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
+                if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.toLowerCase().includes('faviconv2') || s.includes('/icons/') || s.includes('logo') || s.includes('merchant')) continue;
                 if (/img\.flash\.co.*\/plain\//.test(s)) { try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; } }
                 if (/media-amazon\.com|rukmini\d+\.flixcart|img\.flipkart|fireboltt\.com/.test(s)) { img = s; break; }
               }
@@ -3560,12 +3658,12 @@ app.get('/compare/search', async (req, res) => {
             let img = '';
             // 1. og:image
             const ogImg = document.querySelector('meta[property="og:image"]');
-            if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo')) img = s; }
+            if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo') && !s.includes('merchant') && !s.toLowerCase().includes('faviconv2') && !s.includes('/favicon')) img = s; }
             // 2. Flash CDN proxy images
             if (!img) {
               for (const el of document.querySelectorAll('img')) {
                 const s = el.src || '';
-                if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
+                if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.toLowerCase().includes('faviconv2') || s.includes('/icons/') || s.includes('logo') || s.includes('merchant')) continue;
                 if (/img\.flash\.co.*\/plain\//.test(s)) { try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; } }
               }
             }
@@ -3573,7 +3671,7 @@ app.get('/compare/search', async (req, res) => {
             if (!img) {
               for (const el of document.querySelectorAll('img')) {
                 const s = el.src || '';
-                if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
+                if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.toLowerCase().includes('faviconv2') || s.includes('/icons/') || s.includes('logo') || s.includes('merchant')) continue;
                 if (/media-amazon\.com|images-amazon\.com|rukmini\d+\.flixcart|img\.flipkart|encrypted-tbn/.test(s)) { img = s; break; }
               }
             }
@@ -3582,7 +3680,7 @@ app.get('/compare/search', async (req, res) => {
               let best = '', bestScore = 0;
               for (const el of document.querySelectorAll('img')) {
                 const s = el.src || '';
-                if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo') || s.length < 30) continue;
+                if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.toLowerCase().includes('faviconv2') || s.includes('/icons/') || s.includes('logo') || s.includes('merchant') || s.length < 30) continue;
                 const w = el.naturalWidth || el.width || 0, h = el.naturalHeight || el.height || 0;
                 if (w < 60 || h < 60) continue;
                 const ratio = Math.max(w,h)/Math.min(w,h);
@@ -3607,7 +3705,7 @@ app.get('/compare/search', async (req, res) => {
               try {
                 await page.waitForFunction(
                   () => !!document.querySelector('meta[property="og:image"]')?.getAttribute('content'),
-                  { timeout: 5000 }
+                  { timeout: 8000 }
                 );
               } catch(e) {}
               await new Promise(r => setTimeout(r, 1000));
@@ -3615,11 +3713,11 @@ app.get('/compare/search', async (req, res) => {
                 const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
                 let img = '';
                 const ogImg = document.querySelector('meta[property="og:image"]');
-                if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo')) img = s; }
+                if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo') && !s.includes('merchant') && !s.toLowerCase().includes('faviconv2') && !s.includes('/favicon')) img = s; }
                 if (!img) {
                   for (const el of document.querySelectorAll('img')) {
                     const s = el.src || '';
-                    if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
+                    if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.toLowerCase().includes('faviconv2') || s.includes('/icons/') || s.includes('logo') || s.includes('merchant')) continue;
                     if (/img\.flash\.co.*\/plain\//.test(s)) { try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; } }
                     if (/media-amazon\.com|rukmini\d+\.flixcart|img\.flipkart|fireboltt\.com|encrypted-tbn/.test(s)) { img = s; break; }
                   }
@@ -4430,6 +4528,13 @@ app.get('/compare/search', async (req, res) => {
       }));
       console.log('[Compare] Affiliated:', stores.map(s => s.name + ':' + (s.affiliateLink||'').substring(0,40)).join(' | '));
     }
+
+    // Attach store logos — hardcoded map first, Google Favicon API fallback for unknowns
+    stores = await Promise.all(stores.map(async (s) => {
+      const storeUrl = s.affiliateLink || s.url || '';
+      const logoUrl = await getStoreLogo(s.name, storeUrl);
+      return { ...s, logoUrl };
+    }));
 
     return res.json({
       stores, productName,
