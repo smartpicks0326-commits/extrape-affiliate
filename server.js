@@ -149,6 +149,8 @@ function isProductImage(src) {
   if (s.includes('img.flash.co') && !s.includes('/plain/')) return false;
   if (/flash\.co\/(uploads?|banners?|promo|ads?|campaign|quiz|win|reward|storage|assets)\//i.test(s)) return false;
   if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(s) && !s.includes('/plain/')) return false;
+  // Flash promo S3 assets appear via /plain/ proxy — reject by decoded path content
+  if (/flash-creatives|images\/games|images\/banners|images\/promos|quiz|giveaway|reward|spin|contest/i.test(s)) return false;
 
   return true;
 }
@@ -1209,6 +1211,10 @@ const SUPPORTED = [
   'decathlon.in','purplle.com','bewakoof.com',
   'paytmmall.com','infibeam.com',
   'makemytrip.com','cleartrip.com',
+  'sangeethamobiles.com','sangeetha.com',
+  'zepto.com','zeptonow.com',
+  'poorvika.com',
+  'vijaysales.com',
 ];
 
 function isSupported(url) {
@@ -3613,26 +3619,33 @@ app.get('/compare/search', async (req, res) => {
               // "Win a smartwatch") whose <img> src are Amazon CDN URLs, visually
               // indistinguishable from real product images by URL pattern alone.
 
+              // Helper: is this og:image URL a Flash promo/game asset?
+              const isFlashPromo = (s) => {
+                const sl = s.toLowerCase();
+                if (sl.includes('/merchants/') || sl.includes('/favicon') || sl.includes('faviconv2') || sl.includes('/icons/')) return true;
+                // Flash promo S3 paths (games, creatives, banners) appear in /plain/ encoded URLs
+                if (/flash-creatives|images\/games|images\/banners|images\/promos|quiz|giveaway|reward|spin|contest/i.test(sl)) return true;
+                // Flash own-domain assets without /plain/ proxy (not product images)
+                if (sl.includes('flash.co') && !sl.includes('/plain/') && !sl.includes('/item/') && /\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl)) return true;
+                return false;
+              };
+
               const ogImg = document.querySelector('meta[property="og:image"]');
               if (ogImg) {
                 const s = (ogImg.getAttribute('content') || '').trim();
-                const sl = s.toLowerCase();
-                // Only reject if it's clearly a Flash UI/logo asset — never reject CDN product URLs
-                const isFlashPromo = sl.includes('/merchants/') || sl.includes('/favicon') ||
-                  sl.includes('faviconv2') || sl.includes('/icons/') ||
-                  /flash\.co\/(uploads?|banner|promo|ads?|campaign|quiz|win|reward)\//i.test(sl) ||
-                  (sl.includes('flash.co') && !sl.includes('/plain/') && !sl.includes('/item/') &&
-                   /\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl));
-                if (s.startsWith('http') && !isFlashPromo) img = s;
+                if (s.startsWith('http') && !isFlashPromo(s)) img = s;
               }
 
-              // Only if og:image is completely absent, try img.flash.co/plain/ proxy images
-              // (these are real product images proxied through Flash CDN — safe to use)
+              // Only if og:image absent or rejected, try img.flash.co/plain/ — but decode and re-check
               if (!img) {
                 for (const el of document.querySelectorAll('img')) {
                   const s = el.src || '';
                   if (/img\.flash\.co.*\/plain\//.test(s)) {
-                    try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; }
+                    try {
+                      const decoded = decodeURIComponent(s.split('/plain/')[1].split('?')[0]);
+                      const candidate = decoded.startsWith('http') ? decoded : s;
+                      if (!isFlashPromo(candidate)) { img = candidate; break; }
+                    } catch { /* skip */ }
                   }
                 }
               }
@@ -3747,15 +3760,15 @@ app.get('/compare/search', async (req, res) => {
           itemPageMeta = await page.evaluate(() => {
             const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
             let img = '';
+            const _isFP = (s) => { const sl=s.toLowerCase(); return sl.includes('/merchants/')||sl.includes('/favicon')||sl.includes('faviconv2')||/flash-creatives|images\/games|quiz|giveaway|reward|spin|contest/i.test(sl)||(/flash\.co\/(uploads?|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl))||(/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl)&&!sl.includes('/plain/')); };
             const ogImg = document.querySelector('meta[property="og:image"]');
-            if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); const sl = s.toLowerCase(); const _fp = /flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl) || (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/')); if (s.startsWith('http') && !sl.includes('/merchants/') && !sl.includes('logo') && !sl.includes('merchant') && !sl.includes('faviconv2') && !sl.includes('/favicon') && !_fp) img = s; }
-            // img.flash.co/plain/ only — do NOT use generic CDN img loops here.
-            // Promo banners (e.g. smartwatch quiz) use Amazon CDN URLs indistinguishable from products.
+            if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !_isFP(s)) img = s; }
+            // img.flash.co/plain/ only — decode and re-check to catch flash-creatives S3 paths
             if (!img) {
               for (const el of document.querySelectorAll('img')) {
                 const s = el.src || '';
                 if (/img\.flash\.co.*\/plain\//.test(s)) {
-                  try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; }
+                  try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); const c = d.startsWith('http') ? d : s; if (!_isFP(c)) { img = c; break; } } catch {}
                 }
               }
             }
@@ -3779,15 +3792,17 @@ app.get('/compare/search', async (req, res) => {
           itemPageMeta = await page.evaluate(() => {
             const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
             let img = '';
-            // 1. og:image
+            // 1. og:image — re-check decoded path for flash-creatives S3 game/promo assets
+            const _isFP3 = (s) => { const sl=s.toLowerCase(); return sl.includes('/merchants/')||sl.includes('/favicon')||sl.includes('faviconv2')||/flash-creatives|images\/games|quiz|giveaway|reward|spin|contest/i.test(sl)||(/flash\.co\/(uploads?|banner|promo|ads?|campaign|quiz|win|reward)\//i.test(sl))||(sl.includes('flash.co')&&!sl.includes('/plain/')&&!sl.includes('/item/')&&/\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl)); };
             const ogImg = document.querySelector('meta[property="og:image"]');
-            if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); const sl = s.toLowerCase(); const _fp = /flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl) || (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/')); if (s.startsWith('http') && !sl.includes('/merchants/') && !sl.includes('logo') && !sl.includes('merchant') && !sl.includes('faviconv2') && !sl.includes('/favicon') && !_fp) img = s; }
-            // 2. Flash CDN proxy images
+            if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !_isFP3(s)) img = s; }
+            // 2. img.flash.co/plain/ — decode and re-check decoded path
             if (!img) {
               for (const el of document.querySelectorAll('img')) {
                 const s = el.src || '';
-                if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.toLowerCase().includes('faviconv2') || s.includes('/icons/') || s.includes('logo') || s.includes('merchant')) continue;
-                if (/img\.flash\.co.*\/plain\//.test(s)) { try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; } }
+                if (/img\.flash\.co.*\/plain\//.test(s)) {
+                  try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); const c = d.startsWith('http') ? d : s; if (!_isFP3(c)) { img = c; break; } } catch {}
+                }
               }
             }
             // 3. Known product CDN patterns
@@ -3840,13 +3855,14 @@ app.get('/compare/search', async (req, res) => {
                 const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
                 let img = '';
                 const ogImg = document.querySelector('meta[property="og:image"]');
-                if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); const sl = s.toLowerCase(); const _fp = /flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl) || (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/')); if (s.startsWith('http') && !sl.includes('/merchants/') && !sl.includes('logo') && !sl.includes('merchant') && !sl.includes('faviconv2') && !sl.includes('/favicon') && !_fp) img = s; }
+                const _isFP4 = (s) => { const sl=s.toLowerCase(); return sl.includes('/merchants/')||sl.includes('/favicon')||sl.includes('faviconv2')||/flash-creatives|images\/games|quiz|giveaway|reward|spin|contest/i.test(sl)||(/flash\.co\/(uploads?|banner|promo|ads?|campaign|quiz|win|reward)\//i.test(sl))||(/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl)&&!sl.includes('/plain/')); };
+                if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !_isFP4(s)) img = s; }
                 if (!img) {
                   for (const el of document.querySelectorAll('img')) {
                     const s = el.src || '';
-                    if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.toLowerCase().includes('faviconv2') || s.includes('/icons/') || s.includes('logo') || s.includes('merchant')) continue;
-                    if (/img\.flash\.co.*\/plain\//.test(s)) { try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; } }
-                    // Removed: CDN img loop — promo banners use same CDN, cannot distinguish
+                    if (/img\.flash\.co.*\/plain\//.test(s)) {
+                      try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); const c = d.startsWith('http') ? d : s; if (!_isFP4(c)) { img = c; break; } } catch {}
+                    }
                   }
                 }
                 let name = '';
@@ -4763,6 +4779,10 @@ app.get('/compare/search', async (req, res) => {
            'otracker', 'ssid', 'ctx', 'BU', 'ov_redirect'].forEach(p => u.searchParams.delete(p));
           cleanUrl = u.toString();
         } catch(e) {}
+
+        // Normalise URL before ExtraPe: force https, fix dl.flipkart.com
+        cleanUrl = cleanUrl.replace(/^http:\/\//i, 'https://');
+        cleanUrl = cleanUrl.replace('://dl.flipkart.com', '://www.flipkart.com');
 
         // Skip ExtraPe if store not supported or token not set
         if (!isSupported(cleanUrl)) {
