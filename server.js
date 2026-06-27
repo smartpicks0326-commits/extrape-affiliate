@@ -3968,6 +3968,15 @@ app.get('/compare/search', async (req, res) => {
             'apple': 'Apple Store', 'gonoise': 'Noise',
           };
 
+          // Store domain whitelist — only accept URLs from the store's own domain
+          const STORE_DOMAINS = {
+            'Apple Store': ['apple.com'],
+            'Samsung Shop': ['samsung.com'],
+            'OnePlus Store': ['oneplus.in','oneplus.com'],
+            'Realme Store': ['realme.com'],
+            'Mi Store': ['mi.com'],
+          };
+
           // Unwrap redirect URLs to find the real store
           function unwrapUrl(href) {
             try {
@@ -3988,6 +3997,14 @@ app.get('/compare/search', async (req, res) => {
             if (!storeKey) return;
             const name = STORE_MAP[storeKey];
             if (seen.has(name)) return;
+            // Validate URL domain matches store — prevents cashify.in appearing as Apple Store
+            const allowedDomains = STORE_DOMAINS[name];
+            if (allowedDomains) {
+              try {
+                const host = new URL(checkUrl).hostname.replace('www.','');
+                if (!allowedDomains.some(d => host.includes(d))) return;
+              } catch(e) { return; }
+            }
 
             // Individual store card on Flash price-compare is ~50-150 chars
             let card = a.closest('.block.cursor-pointer') || a.closest('[class*="cursor-pointer"]');
@@ -4778,13 +4795,41 @@ app.get('/compare/search', async (req, res) => {
         let cleanUrl = rawUrl;
         try {
           const u = new URL(rawUrl);
-          ['ref', 'ref_', 'social_share', 'source', 'smid', 'psc', 'th', '_encoding',
-           'tag', 'linkCode', 'linkId', 'camp', 'creative', 'iid', 'fm', 'srno',
-           'otracker', 'ssid', 'ctx', 'BU', 'ov_redirect'].forEach(p => u.searchParams.delete(p));
-          cleanUrl = u.toString();
+          const host = u.hostname.replace('www.','');
+
+          if (host.includes('flipkart.com') || host.includes('dl.flipkart.com')) {
+            // Flipkart: keep only pid — all other params cause ExtraPe INVALID_URL
+            const pid = u.searchParams.get('pid');
+            u.hostname = 'www.flipkart.com';
+            u.protocol = 'https:';
+            u.search = pid ? '?pid=' + pid : '';
+            cleanUrl = u.toString();
+          } else if (host.includes('amazon.')) {
+            // Amazon: keep only ASIN path, no params needed (tag added by cleanLink)
+            const asinMatch = u.pathname.match(/\/dp\/([A-Z0-9]{10})/i) ||
+                              u.pathname.match(/\/([A-Z0-9]{10})(?:\/|$)/i);
+            if (asinMatch) {
+              u.search = '';
+              u.protocol = 'https:';
+              cleanUrl = u.toString();
+            } else {
+              u.search = '';
+              u.protocol = 'https:';
+              cleanUrl = u.toString();
+            }
+          } else {
+            // Other stores: strip known tracking params
+            ['ref', 'ref_', 'social_share', 'source', 'smid', 'psc', 'th', '_encoding',
+             'tag', 'linkCode', 'linkId', 'camp', 'creative', 'iid', 'fm', 'srno',
+             'otracker', 'otracker1', 'ssid', 'ctx', 'BU', 'ov_redirect',
+             'q', 'qH', 'spotlightTagId', 'store', 'affid', 'utm_source',
+             'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'].forEach(p => u.searchParams.delete(p));
+            u.protocol = 'https:';
+            cleanUrl = u.toString();
+          }
         } catch(e) {}
 
-        // Normalise URL before ExtraPe: force https, fix dl.flipkart.com
+        // Final safety: force https, fix dl.flipkart.com
         cleanUrl = cleanUrl.replace(/^http:\/\//i, 'https://');
         cleanUrl = cleanUrl.replace('://dl.flipkart.com', '://www.flipkart.com');
 
@@ -4829,22 +4874,21 @@ app.get('/compare/search', async (req, res) => {
     }
 
     // Attach store logos:
-    // Priority: 1) STORE_LOGOS hardcoded/embedded (most reliable — includes base64 SVGs)
-    //           2) Flash card DOM logo (from /merchants/ or img.flash.co CDN)
+    // Priority: 1) Flash card DOM logo from img.flash.co (Flash's own correct logos — 64x64)
+    //           2) STORE_LOGOS hardcoded/embedded data URIs (for stores not in Flash card)
     //           3) Google Favicon API fallback
     stores = await Promise.all(stores.map(async (s) => {
       const storeUrl = s.affiliateLink || s.url || '';
-      // Check hardcoded STORE_LOGOS first (includes embedded base64 for stores like Reliance Digital)
-      const hardcoded = await getStoreLogo(s.name, storeUrl);
-      if (hardcoded && hardcoded.startsWith('data:')) {
-        // Embedded data URI — always use, no network fetch needed
-        return { ...s, logoUrl: hardcoded };
-      }
-      // Use Flash card DOM logo if found (Flash renders correct store logos)
-      if (s.flashLogoUrl && (s.flashLogoUrl.includes('/merchants/') || s.flashLogoUrl.includes('img.flash.co'))) {
-        console.log('[Compare] Flash card logo for', s.name, ':', s.flashLogoUrl.substring(0, 60));
+
+      // Flash card logos (img.flash.co/plain/s3://flash-creatives/...) are CORRECT store logos
+      // The 64x64 size confirms these are logos not product images
+      if (s.flashLogoUrl && s.flashLogoUrl.includes('img.flash.co')) {
         return { ...s, logoUrl: s.flashLogoUrl };
       }
+
+      // Hardcoded/embedded logos (data URIs for stores whose Flash card logo wasn't captured)
+      const hardcoded = await getStoreLogo(s.name, storeUrl);
+      console.log('[Compare] Logo for', s.name, ':', (hardcoded||'').substring(0, 60));
       return { ...s, logoUrl: hardcoded };
     }));
 
