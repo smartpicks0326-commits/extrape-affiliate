@@ -55,8 +55,8 @@ const STORE_LOGOS = {
   'firstcry':            'https://www.firstcry.com/favicon.ico',
   'netmeds':             'https://www.netmeds.com/favicon.ico',
   'lenskart':            'https://www.lenskart.com/favicon.ico',
-  'reliance digital':    'https://www.google.com/s2/favicons?domain=reliancedigital.in&sz=256',
-  'reliancedigital':     'https://www.google.com/s2/favicons?domain=reliancedigital.in&sz=256',
+  'reliance digital':    'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMDAgMjAwIiB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCI+CiAgPHJlY3Qgd2lkdGg9IjIwMCIgaGVpZ2h0PSIyMDAiIHJ4PSIyNCIgZmlsbD0iI0UzMTgzNyIvPgogIDx0ZXh0IHg9IjEwMCIgeT0iODgiIGZvbnQtZmFtaWx5PSJBcmlhbCBCbGFjayxBcmlhbCxzYW5zLXNlcmlmIiBmb250LXdlaWdodD0iOTAwIiBmb250LXNpemU9IjMwIiBmaWxsPSJ3aGl0ZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgbGV0dGVyLXNwYWNpbmc9Ii0wLjUiPlJlbGlhbmNlPC90ZXh0PgogIDx0ZXh0IHg9IjEwMCIgeT0iMTI2IiBmb250LWZhbWlseT0iQXJpYWwgQmxhY2ssQXJpYWwsc2Fucy1zZXJpZiIgZm9udC13ZWlnaHQ9IjkwMCIgZm9udC1zaXplPSIzMCIgZmlsbD0id2hpdGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGxldHRlci1zcGFjaW5nPSItMC41Ij5EaWdpdGFsPC90ZXh0PgogIDxyZWN0IHg9IjYwIiB5PSIxNDQiIHdpZHRoPSI4MCIgaGVpZ2h0PSI0IiByeD0iMiIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjUpIi8+Cjwvc3ZnPg==',
+  'reliancedigital':     'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMDAgMjAwIiB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCI+CiAgPHJlY3Qgd2lkdGg9IjIwMCIgaGVpZ2h0PSIyMDAiIHJ4PSIyNCIgZmlsbD0iI0UzMTgzNyIvPgogIDx0ZXh0IHg9IjEwMCIgeT0iODgiIGZvbnQtZmFtaWx5PSJBcmlhbCBCbGFjayxBcmlhbCxzYW5zLXNlcmlmIiBmb250LXdlaWdodD0iOTAwIiBmb250LXNpemU9IjMwIiBmaWxsPSJ3aGl0ZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgbGV0dGVyLXNwYWNpbmc9Ii0wLjUiPlJlbGlhbmNlPC90ZXh0PgogIDx0ZXh0IHg9IjEwMCIgeT0iMTI2IiBmb250LWZhbWlseT0iQXJpYWwgQmxhY2ssQXJpYWwsc2Fucy1zZXJpZiIgZm9udC13ZWlnaHQ9IjkwMCIgZm9udC1zaXplPSIzMCIgZmlsbD0id2hpdGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGxldHRlci1zcGFjaW5nPSItMC41Ij5EaWdpdGFsPC90ZXh0PgogIDxyZWN0IHg9IjYwIiB5PSIxNDQiIHdpZHRoPSI4MCIgaGVpZ2h0PSI0IiByeD0iMiIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjUpIi8+Cjwvc3ZnPg==',
   'vijay sales':         'https://www.vijaysales.com/favicon.ico',
   'vijaysales':          'https://www.vijaysales.com/favicon.ico',
   'bajaj markets':       'https://www.bajajfinservmarkets.in/favicon.ico',
@@ -143,6 +143,9 @@ function isProductImage(src) {
   if (/media-amazon\.com|images-amazon\.com|ssl-images-amazon|m\.media-amazon|rukmini\d+\.flixcart|img\.flipkart|assets\.myntassets|akamai\.netstorage|img\.tatacliq|assets\.croma|firebasestorage\.googleapis\.com|storage\.googleapis\.com/.test(s)) {
     return true;
   }
+
+  // Reject Google Shopping thumbnail cache (low quality, sometimes wrong product)
+  if (s.includes('gstatic.com/shopping') || (s.includes('encrypted-tbn') && s.includes('gstatic'))) return false;
 
   // Reject Flash.co own-domain non-product assets (promos, banners, UI elements)
   // Real product images on Flash come via img.flash.co/plain/<encoded-product-url>
@@ -3623,6 +3626,7 @@ app.get('/compare/search', async (req, res) => {
               const isFlashPromo = (s) => {
                 const sl = s.toLowerCase();
                 if (sl.includes('/merchants/') || sl.includes('/favicon') || sl.includes('faviconv2') || sl.includes('/icons/')) return true;
+                if (sl.includes('gstatic.com/shopping') || sl.includes('encrypted-tbn')) return true;  // Google Shopping thumbnail cache
                 // Flash promo S3 paths (games, creatives, banners) appear in /plain/ encoded URLs
                 if (/flash-creatives|images\/games|images\/banners|images\/promos|quiz|giveaway|reward|spin|contest/i.test(sl)) return true;
                 // Flash own-domain assets without /plain/ proxy (not product images)
@@ -3760,7 +3764,7 @@ app.get('/compare/search', async (req, res) => {
           itemPageMeta = await page.evaluate(() => {
             const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
             let img = '';
-            const _isFP = (s) => { const sl=s.toLowerCase(); return sl.includes('/merchants/')||sl.includes('/favicon')||sl.includes('faviconv2')||/flash-creatives|images\/games|quiz|giveaway|reward|spin|contest/i.test(sl)||(/flash\.co\/(uploads?|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl))||(/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl)&&!sl.includes('/plain/')); };
+            const _isFP = (s) => { const sl=s.toLowerCase(); return sl.includes('/merchants/')||sl.includes('/favicon')||sl.includes('faviconv2')||(sl.includes('gstatic.com/shopping')||sl.includes('encrypted-tbn'))||/flash-creatives|images\/games|quiz|giveaway|reward|spin|contest/i.test(sl)||(/flash\.co\/(uploads?|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl))||(/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl)&&!sl.includes('/plain/')); };
             const ogImg = document.querySelector('meta[property="og:image"]');
             if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !_isFP(s)) img = s; }
             // img.flash.co/plain/ only — decode and re-check to catch flash-creatives S3 paths
@@ -3793,7 +3797,7 @@ app.get('/compare/search', async (req, res) => {
             const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
             let img = '';
             // 1. og:image — re-check decoded path for flash-creatives S3 game/promo assets
-            const _isFP3 = (s) => { const sl=s.toLowerCase(); return sl.includes('/merchants/')||sl.includes('/favicon')||sl.includes('faviconv2')||/flash-creatives|images\/games|quiz|giveaway|reward|spin|contest/i.test(sl)||(/flash\.co\/(uploads?|banner|promo|ads?|campaign|quiz|win|reward)\//i.test(sl))||(sl.includes('flash.co')&&!sl.includes('/plain/')&&!sl.includes('/item/')&&/\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl)); };
+            const _isFP3 = (s) => { const sl=s.toLowerCase(); return sl.includes('/merchants/')||sl.includes('/favicon')||sl.includes('faviconv2')||(sl.includes('gstatic.com/shopping')||sl.includes('encrypted-tbn'))||/flash-creatives|images\/games|quiz|giveaway|reward|spin|contest/i.test(sl)||(/flash\.co\/(uploads?|banner|promo|ads?|campaign|quiz|win|reward)\//i.test(sl))||(sl.includes('flash.co')&&!sl.includes('/plain/')&&!sl.includes('/item/')&&/\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl)); };
             const ogImg = document.querySelector('meta[property="og:image"]');
             if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !_isFP3(s)) img = s; }
             // 2. img.flash.co/plain/ — decode and re-check decoded path
@@ -3855,7 +3859,7 @@ app.get('/compare/search', async (req, res) => {
                 const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
                 let img = '';
                 const ogImg = document.querySelector('meta[property="og:image"]');
-                const _isFP4 = (s) => { const sl=s.toLowerCase(); return sl.includes('/merchants/')||sl.includes('/favicon')||sl.includes('faviconv2')||/flash-creatives|images\/games|quiz|giveaway|reward|spin|contest/i.test(sl)||(/flash\.co\/(uploads?|banner|promo|ads?|campaign|quiz|win|reward)\//i.test(sl))||(/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl)&&!sl.includes('/plain/')); };
+                const _isFP4 = (s) => { const sl=s.toLowerCase(); return sl.includes('/merchants/')||sl.includes('/favicon')||sl.includes('faviconv2')||(sl.includes('gstatic.com/shopping')||sl.includes('encrypted-tbn'))||/flash-creatives|images\/games|quiz|giveaway|reward|spin|contest/i.test(sl)||(/flash\.co\/(uploads?|banner|promo|ads?|campaign|quiz|win|reward)\//i.test(sl))||(/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl)&&!sl.includes('/plain/')); };
                 if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !_isFP4(s)) img = s; }
                 if (!img) {
                   for (const el of document.querySelectorAll('img')) {
@@ -4825,17 +4829,23 @@ app.get('/compare/search', async (req, res) => {
     }
 
     // Attach store logos:
-    // Priority: 1) Flash card logo (extracted from DOM — Flash uses correct logos)
-    //           2) STORE_LOGOS hardcoded map
+    // Priority: 1) STORE_LOGOS hardcoded/embedded (most reliable — includes base64 SVGs)
+    //           2) Flash card DOM logo (from /merchants/ or img.flash.co CDN)
     //           3) Google Favicon API fallback
     stores = await Promise.all(stores.map(async (s) => {
-      // Use Flash's own card logo if it's a real logo URL (from /merchants/ path)
-      if (s.flashLogoUrl && s.flashLogoUrl.includes('/merchants/')) {
+      const storeUrl = s.affiliateLink || s.url || '';
+      // Check hardcoded STORE_LOGOS first (includes embedded base64 for stores like Reliance Digital)
+      const hardcoded = await getStoreLogo(s.name, storeUrl);
+      if (hardcoded && hardcoded.startsWith('data:')) {
+        // Embedded data URI — always use, no network fetch needed
+        return { ...s, logoUrl: hardcoded };
+      }
+      // Use Flash card DOM logo if found (Flash renders correct store logos)
+      if (s.flashLogoUrl && (s.flashLogoUrl.includes('/merchants/') || s.flashLogoUrl.includes('img.flash.co'))) {
+        console.log('[Compare] Flash card logo for', s.name, ':', s.flashLogoUrl.substring(0, 60));
         return { ...s, logoUrl: s.flashLogoUrl };
       }
-      const storeUrl = s.affiliateLink || s.url || '';
-      const logoUrl = await getStoreLogo(s.name, storeUrl);
-      return { ...s, logoUrl };
+      return { ...s, logoUrl: hardcoded };
     }));
 
     return res.json({
