@@ -55,8 +55,8 @@ const STORE_LOGOS = {
   'firstcry':            'https://www.firstcry.com/favicon.ico',
   'netmeds':             'https://www.netmeds.com/favicon.ico',
   'lenskart':            'https://www.lenskart.com/favicon.ico',
-  'reliance digital':    'https://www.reliancedigital.in/favicon.ico',
-  'reliancedigital':     'https://www.reliancedigital.in/favicon.ico',
+  'reliance digital':    'https://www.google.com/s2/favicons?domain=reliancedigital.in&sz=128',
+  'reliancedigital':     'https://www.google.com/s2/favicons?domain=reliancedigital.in&sz=128',
   'vijay sales':         'https://www.vijaysales.com/favicon.ico',
   'vijaysales':          'https://www.vijaysales.com/favicon.ico',
   'bajaj markets':       'https://www.bajajfinservmarkets.in/favicon.ico',
@@ -118,6 +118,30 @@ async function getStoreLogo(storeName, storeUrl) {
   const faviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`;
   _logoCache.set(key, faviconUrl);
   return faviconUrl;
+}
+
+// ── isProductImage: server-side check for image URLs returned from Puppeteer ──
+// Rejects Flash promo/ad images, banners, and anything that isn't a real product image.
+// Used AFTER Puppeteer extraction to validate the URL before storing it.
+function isProductImage(src) {
+  if (!src || !src.startsWith('http')) return false;
+  const s = src.toLowerCase();
+  // Reject logo / favicon patterns
+  if (s.includes('/merchants/')) return false;
+  if (s.includes('/favicon'))    return false;
+  if (s.includes('faviconv2'))   return false;
+  if (s.includes('/icons/'))     return false;
+  if (s.includes('logo'))        return false;
+  if (s.includes('merchant'))    return false;
+  if (s.includes('clearbit'))    return false;
+  // Reject Flash promo / ad images — these come from flash.co/uploads or flash.co/banners
+  // Real product images come via img.flash.co/plain/<encoded> proxy
+  if (/flash\.co\/(uploads?|banner|promo|ads?|campaign|quiz|win|reward)\//i.test(s)) return false;
+  if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(s) && !s.includes('/plain/')) return false;
+  // Reject Google's own CDN promo/ad images
+  if (s.includes('googleadservices')) return false;
+  if (s.includes('doubleclick'))      return false;
+  return true;
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1043,8 +1067,14 @@ async function flashSearchPuppeteer(productUrl) {
             if (/logo|icon|brand/i.test(a)) return true;
             // Reject tiny icon sizes hinted in URL
             if (/[_\-](16|24|32|48)(x\1)?[_.\-]/i.test(s)) return true;
+            // Reject Flash promo / ad / banner images (quiz, campaign, win, reward etc.)
+            // Real product images on Flash come only via img.flash.co/plain/<encoded> proxy
+            if (/flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(s)) return true;
+            if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(s) && !s.includes('/plain/')) return true;
             return false;
           }
+          // Reject landscape banners — real product images are roughly square
+          function isBanner(w, h) { return w > 0 && h > 0 && (w / h) > 2.2; }
 
           // 1. Flash CDN proxy — always a real product image
           for (const img of document.querySelectorAll('img')) {
@@ -1071,7 +1101,7 @@ async function flashSearchPuppeteer(productUrl) {
             }
           }
 
-          // 3. Largest square-ish image that isn't a logo
+          // 3. Largest square-ish image that isn't a logo or banner
           let best = '', bestScore = 0;
           for (const img of document.querySelectorAll('img')) {
             const src = img.src || '';
@@ -1079,8 +1109,9 @@ async function flashSearchPuppeteer(productUrl) {
             const w = img.naturalWidth  || img.width  || 0;
             const h = img.naturalHeight || img.height || 0;
             if (w < 80 || h < 80) continue;           // skip tiny images
+            if (isBanner(w, h)) continue;              // skip wide landscape banners/ads
             const ratio = Math.max(w, h) / Math.min(w, h);
-            if (ratio > 4) continue;                   // skip banners/strips
+            if (ratio > 3) continue;                   // skip extreme aspect ratios
             const score = w * h * (ratio < 1.3 ? 4 : ratio < 2 ? 2 : 1);
             if (score > bestScore) { bestScore = score; best = src; }
           }
@@ -3555,51 +3586,59 @@ app.get('/compare/search', async (req, res) => {
           console.log('[Compare/Puppeteer] Fast path — fetching image from item page first:', `https://flash.co/item/${itemId}/h/${pageHash}`);
           try {
             await page.goto(`https://flash.co/item/${itemId}/h/${pageHash}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
-            // Wait for React to render og:image — up to 10s (primary image source, must succeed)
+            // Wait for React to render og:image (up to 8s)
             try {
               await page.waitForFunction(
-                () => {
-                  const m = document.querySelector('meta[property="og:image"]');
-                  const s = m?.getAttribute('content') || '';
-                  return s.startsWith('http') && s.length > 20 && !s.includes('/merchants/') && !s.includes('logo');
-                },
-                { timeout: 10000 }
+                () => !!document.querySelector('meta[property="og:image"]')?.getAttribute('content'),
+                { timeout: 8000 }
               );
             } catch(e) {}
-            await new Promise(r => setTimeout(r, 1500));
+            await new Promise(r => setTimeout(r, 800));
             itemPageMeta = await page.evaluate(() => {
               const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
               let img = '';
+              // Helper: is this a real product image URL? (rejects Flash promos, logos, banners)
+              const isRealProduct = (s) => {
+                if (!s || !s.startsWith('http')) return false;
+                const sl = s.toLowerCase();
+                if (sl.includes('/merchants/') || sl.includes('/favicon') || sl.includes('faviconv2') ||
+                    sl.includes('/icons/') || sl.includes('logo') || sl.includes('merchant')) return false;
+                // Flash promo/ad images — real product images only come via /plain/ proxy
+                if (/flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl)) return false;
+                if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/')) return false;
+                return true;
+              };
               const ogImg = document.querySelector('meta[property="og:image"]');
               if (ogImg) {
                 const s = (ogImg.getAttribute('content') || '').trim();
-                if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo') &&
-                    !s.includes('merchant') && !s.toLowerCase().includes('faviconv2') && !s.includes('/favicon')) {
-                  img = s;
-                }
+                if (isRealProduct(s)) img = s;
               }
               if (!img) {
                 for (const el of document.querySelectorAll('img')) {
                   const s = el.src || '';
-                  if (!s || s.includes('/merchants/') || s.includes('/favicon') ||
-                      s.toLowerCase().includes('faviconv2') || s.includes('/icons/') ||
-                      s.includes('logo') || s.includes('merchant')) continue;
+                  if (!isRealProduct(s)) continue;
                   if (/img\.flash\.co.*\/plain\//.test(s)) {
                     try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; }
                   }
                   if (/media-amazon\.com|images-amazon\.com|rukmini\d+\.flixcart|img\.flipkart|fireboltt\.com/.test(s)) { img = s; break; }
                 }
               }
-              // Largest square-ish image fallback
+              // Largest square-ish image fallback (skip banners and Flash promo images)
               if (!img) {
                 let best = '', bestScore = 0;
                 for (const el of document.querySelectorAll('img')) {
                   const s = el.src || '';
-                  if (!s || s.includes('/merchants/') || s.includes('/favicon') ||
-                      s.toLowerCase().includes('faviconv2') || s.includes('/icons/') ||
-                      s.includes('logo') || s.includes('merchant') || s.length < 30) continue;
+                  const sl = s.toLowerCase();
+                  if (!s || sl.includes('/merchants/') || sl.includes('/favicon') ||
+                      sl.includes('faviconv2') || sl.includes('/icons/') ||
+                      sl.includes('logo') || sl.includes('merchant') || s.length < 30) continue;
+                  // Skip Flash promo/ad images (only /plain/ proxy images are real products)
+                  if (/flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl)) continue;
+                  if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/')) continue;
                   const w = el.naturalWidth || el.width || 0, h = el.naturalHeight || el.height || 0;
                   if (w < 80 || h < 80) continue;
+                  // Skip landscape banners (width > 2.2x height)
+                  if (w > 0 && h > 0 && w / h > 2.2) continue;
                   const ratio = Math.max(w,h) / Math.min(w,h);
                   const score = w * h * (ratio < 1.5 ? 3 : ratio < 3 ? 1 : 0.1);
                   if (score > bestScore) { bestScore = score; best = s; }
@@ -3717,7 +3756,7 @@ app.get('/compare/search', async (req, res) => {
             const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
             let img = '';
             const ogImg = document.querySelector('meta[property="og:image"]');
-            if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo') && !s.includes('merchant') && !s.toLowerCase().includes('faviconv2') && !s.includes('/favicon')) img = s; }
+            if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); const sl = s.toLowerCase(); const _fp = /flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl) || (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/')); if (s.startsWith('http') && !sl.includes('/merchants/') && !sl.includes('logo') && !sl.includes('merchant') && !sl.includes('faviconv2') && !sl.includes('/favicon') && !_fp) img = s; }
             if (!img) {
               for (const el of document.querySelectorAll('img')) {
                 const s = el.src || '';
@@ -3748,7 +3787,7 @@ app.get('/compare/search', async (req, res) => {
             let img = '';
             // 1. og:image
             const ogImg = document.querySelector('meta[property="og:image"]');
-            if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo') && !s.includes('merchant') && !s.toLowerCase().includes('faviconv2') && !s.includes('/favicon')) img = s; }
+            if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); const sl = s.toLowerCase(); const _fp = /flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl) || (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/')); if (s.startsWith('http') && !sl.includes('/merchants/') && !sl.includes('logo') && !sl.includes('merchant') && !sl.includes('faviconv2') && !sl.includes('/favicon') && !_fp) img = s; }
             // 2. Flash CDN proxy images
             if (!img) {
               for (const el of document.querySelectorAll('img')) {
@@ -3765,14 +3804,18 @@ app.get('/compare/search', async (req, res) => {
                 if (/media-amazon\.com|images-amazon\.com|rukmini\d+\.flixcart|img\.flipkart|encrypted-tbn/.test(s)) { img = s; break; }
               }
             }
-            // 4. Largest non-logo image
+            // 4. Largest non-logo, non-banner image
             if (!img) {
               let best = '', bestScore = 0;
               for (const el of document.querySelectorAll('img')) {
                 const s = el.src || '';
-                if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.toLowerCase().includes('faviconv2') || s.includes('/icons/') || s.includes('logo') || s.includes('merchant') || s.length < 30) continue;
+                const sl = s.toLowerCase();
+                if (!s || sl.includes('/merchants/') || sl.includes('/favicon') || sl.includes('faviconv2') || sl.includes('/icons/') || sl.includes('logo') || sl.includes('merchant') || s.length < 30) continue;
+                if (/flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl)) continue;
+                if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/')) continue;
                 const w = el.naturalWidth || el.width || 0, h = el.naturalHeight || el.height || 0;
                 if (w < 60 || h < 60) continue;
+                if (w > 0 && h > 0 && w / h > 2.2) continue;
                 const ratio = Math.max(w,h)/Math.min(w,h);
                 const score = w * h * (ratio < 1.5 ? 3 : ratio < 3 ? 1 : 0.1);
                 if (score > bestScore) { bestScore = score; best = s; }
@@ -3803,7 +3846,7 @@ app.get('/compare/search', async (req, res) => {
                 const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
                 let img = '';
                 const ogImg = document.querySelector('meta[property="og:image"]');
-                if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo') && !s.includes('merchant') && !s.toLowerCase().includes('faviconv2') && !s.includes('/favicon')) img = s; }
+                if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); const sl = s.toLowerCase(); const _fp = /flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl) || (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/')); if (s.startsWith('http') && !sl.includes('/merchants/') && !sl.includes('logo') && !sl.includes('merchant') && !sl.includes('faviconv2') && !sl.includes('/favicon') && !_fp) img = s; }
                 if (!img) {
                   for (const el of document.querySelectorAll('img')) {
                     const s = el.src || '';
@@ -4489,14 +4532,16 @@ app.get('/compare/search', async (req, res) => {
           // Product image — try multiple sources
           let productImage = '';
 
-          // 1. og:image (most reliable)
+          // 1. og:image (most reliable) — reject Flash promo/banner images
           const ogImg = document.querySelector('meta[property="og:image"]');
           if (ogImg) {
             const src = (ogImg.getAttribute('content') || '').trim();
             const sl = src.toLowerCase();
+            const isFlashPromo = /flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl) ||
+                                 (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/'));
             if (src && src.startsWith('http') && !sl.includes('/merchants/') && !sl.includes('logo')
                 && !sl.includes('/favicon') && !sl.includes('merchant') && !sl.includes('faviconv2')
-                && !sl.includes('/icons/') && !sl.includes('clearbit')) productImage = src;
+                && !sl.includes('/icons/') && !sl.includes('clearbit') && !isFlashPromo) productImage = src;
           }
 
           // 2. Flash CDN proxy — img.flash.co/plain/<encoded-url>
@@ -4523,7 +4568,7 @@ app.get('/compare/search', async (req, res) => {
             }
           }
 
-          // 4. Largest square-ish non-logo image
+          // 4. Largest square-ish non-logo, non-banner image
           if (!productImage) {
             let best = '', bestScore = 0;
             for (const img of document.querySelectorAll('img')) {
@@ -4532,8 +4577,11 @@ app.get('/compare/search', async (req, res) => {
               if (!src || sl.includes('/merchants/') || sl.includes('/favicon') || sl.includes('logo')
                   || sl.includes('merchant') || sl.includes('faviconv2') || sl.includes('/icons/')
                   || src.length < 30) continue;
+              if (/flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl)) continue;
+              if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/')) continue;
               const w = img.naturalWidth || img.width || 0, h = img.naturalHeight || img.height || 0;
               if (w < 80 || h < 80) continue;
+              if (w > 0 && h > 0 && w / h > 2.2) continue;
               const ratio = Math.max(w,h)/Math.min(w,h);
               const score = w * h * (ratio < 1.5 ? 3 : ratio < 3 ? 1 : 0.1);
               if (score > bestScore) { bestScore = score; best = src; }
@@ -4652,8 +4700,7 @@ app.get('/compare/search', async (req, res) => {
           isSource:    isSrc,
           isBest,
           lowestPrice: s.lowestPrice || isBest,
-          // Only show savingsBadge on the best price store
-          savingsBadge: isBest ? (s.savingsBadge || '') : '',
+          savingsBadge: '',  // removed from UI — not shown in results
         };
       });
 
