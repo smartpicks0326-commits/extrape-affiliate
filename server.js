@@ -126,7 +126,8 @@ async function getStoreLogo(storeName, storeUrl) {
 function isProductImage(src) {
   if (!src || !src.startsWith('http')) return false;
   const s = src.toLowerCase();
-  // Reject logo / favicon patterns
+
+  // Always reject store logo / favicon patterns
   if (s.includes('/merchants/')) return false;
   if (s.includes('/favicon'))    return false;
   if (s.includes('faviconv2'))   return false;
@@ -134,23 +135,21 @@ function isProductImage(src) {
   if (s.includes('logo'))        return false;
   if (s.includes('merchant'))    return false;
   if (s.includes('clearbit'))    return false;
-  // Reject Flash promo / ad images — real product images ONLY come via img.flash.co/plain/<encoded>
-  // Flash serves banners/promos from flash.co/uploads, img.flash.co/banners, CDN paths without /plain/
-  if (/flash\.co\/(uploads?|banner|promo|ads?|campaign|quiz|win|reward)\//i.test(s)) return false;
-  if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(s) && !s.includes('/plain/')) return false;
-  // img.flash.co without /plain/ proxy = Flash UI asset (banner, promo, bg) — NOT product image
-  if (s.includes('img.flash.co') && !s.includes('/plain/')) return false;
-  // Flash storage / CDN asset paths used for banners and promotional UI
-  if (/flash\.co\/storage\//i.test(s)) return false;
-  if (/flash\.co\/assets\//i.test(s)) return false;
-  // Promo keywords in the URL path
-  if (/(quiz|smartwatch|win|reward|giveaway|offer-banner|deal-banner|contest|spin|scratch)/i.test(s)) return false;
-  // Reject Google's own CDN promo/ad images
   if (s.includes('googleadservices')) return false;
   if (s.includes('doubleclick'))      return false;
-  // Wide landscape images (aspect ratio > 2:1) are usually banners not product shots
-  // (checked via URL patterns — e.g. Flash uses dimensions in CDN query params)
-  if (/[?&](w|width)=([4-9]\d{2}|\d{4,})&(h|height)=([1-2]\d{2})/i.test(s)) return false;
+
+  // If this is a known real product CDN URL, accept immediately without further checks.
+  // These domains only serve actual product images (never promo banners).
+  if (/media-amazon\.com|images-amazon\.com|ssl-images-amazon|m\.media-amazon|rukmini\d+\.flixcart|img\.flipkart|assets\.myntassets|akamai\.netstorage|img\.tatacliq|assets\.croma|firebasestorage\.googleapis\.com|storage\.googleapis\.com/.test(s)) {
+    return true;
+  }
+
+  // Reject Flash.co own-domain non-product assets (promos, banners, UI elements)
+  // Real product images on Flash come via img.flash.co/plain/<encoded-product-url>
+  if (s.includes('img.flash.co') && !s.includes('/plain/')) return false;
+  if (/flash\.co\/(uploads?|banners?|promo|ads?|campaign|quiz|win|reward|storage|assets)\//i.test(s)) return false;
+  if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(s) && !s.includes('/plain/')) return false;
+
   return true;
 }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3607,61 +3606,37 @@ app.get('/compare/search', async (req, res) => {
             itemPageMeta = await page.evaluate(() => {
               const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
               let img = '';
-              // Helper: is this a real product image URL? (rejects Flash promos, logos, banners)
-              const isRealProduct = (s) => {
-                if (!s || !s.startsWith('http')) return false;
-                const sl = s.toLowerCase();
-                if (sl.includes('/merchants/') || sl.includes('/favicon') || sl.includes('faviconv2') ||
-                    sl.includes('/icons/') || sl.includes('logo') || sl.includes('merchant')) return false;
-                // Flash promo/ad images — real product images ONLY come via img.flash.co/plain/ proxy
-                if (/flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl)) return false;
-                if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/')) return false;
-                if (sl.includes('img.flash.co') && !sl.includes('/plain/')) return false;
-                if (/flash\.co\/storage\//i.test(sl)) return false;
-                if (/flash\.co\/assets\//i.test(sl)) return false;
-                if (/(quiz|smartwatch|win|reward|giveaway|offer-banner|deal-banner|contest|spin|scratch)/i.test(sl)) return false;
-                return true;
-              };
+
+              // ── STRATEGY: Trust og:image exclusively on the Flash item page ──
+              // Flash always sets og:image to the real product image (server-rendered).
+              // NEVER use the <img> loop here — the page contains promo banners (e.g.
+              // "Win a smartwatch") whose <img> src are Amazon CDN URLs, visually
+              // indistinguishable from real product images by URL pattern alone.
+
               const ogImg = document.querySelector('meta[property="og:image"]');
               if (ogImg) {
                 const s = (ogImg.getAttribute('content') || '').trim();
-                if (isRealProduct(s)) img = s;
+                const sl = s.toLowerCase();
+                // Only reject if it's clearly a Flash UI/logo asset — never reject CDN product URLs
+                const isFlashPromo = sl.includes('/merchants/') || sl.includes('/favicon') ||
+                  sl.includes('faviconv2') || sl.includes('/icons/') ||
+                  /flash\.co\/(uploads?|banner|promo|ads?|campaign|quiz|win|reward)\//i.test(sl) ||
+                  (sl.includes('flash.co') && !sl.includes('/plain/') && !sl.includes('/item/') &&
+                   /\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl));
+                if (s.startsWith('http') && !isFlashPromo) img = s;
               }
+
+              // Only if og:image is completely absent, try img.flash.co/plain/ proxy images
+              // (these are real product images proxied through Flash CDN — safe to use)
               if (!img) {
                 for (const el of document.querySelectorAll('img')) {
                   const s = el.src || '';
-                  if (!isRealProduct(s)) continue;
                   if (/img\.flash\.co.*\/plain\//.test(s)) {
                     try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; }
                   }
-                  if (/media-amazon\.com|images-amazon\.com|rukmini\d+\.flixcart|img\.flipkart|fireboltt\.com/.test(s)) { img = s; break; }
                 }
               }
-              // Largest square-ish image fallback (skip banners and Flash promo images)
-              if (!img) {
-                let best = '', bestScore = 0;
-                for (const el of document.querySelectorAll('img')) {
-                  const s = el.src || '';
-                  const sl = s.toLowerCase();
-                  if (!s || sl.includes('/merchants/') || sl.includes('/favicon') ||
-                      sl.includes('faviconv2') || sl.includes('/icons/') ||
-                      sl.includes('logo') || sl.includes('merchant') || s.length < 30) continue;
-                  // Skip Flash promo/ad images (only /plain/ proxy images are real products)
-                  if (/flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl)) continue;
-                  if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/')) continue;
-                  if (sl.includes('img.flash.co') && !sl.includes('/plain/')) continue;
-                  if (/flash\.co\/storage\//i.test(sl)) continue;
-                  if (/(quiz|smartwatch|win|reward|giveaway|offer-banner|deal-banner|contest)/i.test(sl)) continue;
-                  const w = el.naturalWidth || el.width || 0, h = el.naturalHeight || el.height || 0;
-                  if (w < 80 || h < 80) continue;
-                  // Skip landscape banners (width > 2.2x height)
-                  if (w > 0 && h > 0 && w / h > 2.2) continue;
-                  const ratio = Math.max(w,h) / Math.min(w,h);
-                  const score = w * h * (ratio < 1.5 ? 3 : ratio < 3 ? 1 : 0.1);
-                  if (score > bestScore) { bestScore = score; best = s; }
-                }
-                img = best;
-              }
+
               let name = '';
               const ogTitle = document.querySelector('meta[property="og:title"]');
               if (ogTitle) { const t = (ogTitle.getAttribute('content') || '').trim(); if (t.length > 8 && !JUNK.some(j => t.toLowerCase().includes(j))) name = t; }
@@ -4019,11 +3994,15 @@ app.get('/compare/search', async (req, res) => {
             const maxAmt = Math.max(...amounts);
             const price = (maxAmt / minAmt > 5) ? maxAmt : amounts[amounts.length - 1];
 
-            // Extract store logo from Flash card (Flash renders correct store logos)
+            // Extract store logo from Flash card (Flash renders correct store logos in /merchants/ path)
             let flashLogoUrl = '';
-            if (card) {
-              const logoImg = card.querySelector('img[src*="/merchants/"], img[src*="store-logo"], img[src*="logo"][src*="flash"], img[alt*="logo" i]');
-              if (logoImg && logoImg.src) flashLogoUrl = logoImg.src;
+            const logoSearch = card ? [card, card.parentElement, card.parentElement?.parentElement].filter(Boolean) : [];
+            for (const el of logoSearch) {
+              const logoImg = el.querySelector('img[src*="/merchants/"]');
+              if (logoImg && logoImg.src && logoImg.src.includes('/merchants/')) {
+                flashLogoUrl = logoImg.src;
+                break;
+              }
             }
             seen.add(name);
             result.push({
