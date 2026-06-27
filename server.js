@@ -55,8 +55,8 @@ const STORE_LOGOS = {
   'firstcry':            'https://www.firstcry.com/favicon.ico',
   'netmeds':             'https://www.netmeds.com/favicon.ico',
   'lenskart':            'https://www.lenskart.com/favicon.ico',
-  'reliance digital':    'https://www.reliancedigital.in/medias/Reliance-Digital-Logo.png?context=bWFzdGVyfGltYWdlc3w',
-  'reliancedigital':     'https://www.reliancedigital.in/medias/Reliance-Digital-Logo.png?context=bWFzdGVyfGltYWdlc3w',
+  'reliance digital':    'https://www.google.com/s2/favicons?domain=reliancedigital.in&sz=256',
+  'reliancedigital':     'https://www.google.com/s2/favicons?domain=reliancedigital.in&sz=256',
   'vijay sales':         'https://www.vijaysales.com/favicon.ico',
   'vijaysales':          'https://www.vijaysales.com/favicon.ico',
   'bajaj markets':       'https://www.bajajfinservmarkets.in/favicon.ico',
@@ -3749,12 +3749,14 @@ app.get('/compare/search', async (req, res) => {
             let img = '';
             const ogImg = document.querySelector('meta[property="og:image"]');
             if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); const sl = s.toLowerCase(); const _fp = /flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl) || (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/')); if (s.startsWith('http') && !sl.includes('/merchants/') && !sl.includes('logo') && !sl.includes('merchant') && !sl.includes('faviconv2') && !sl.includes('/favicon') && !_fp) img = s; }
+            // img.flash.co/plain/ only — do NOT use generic CDN img loops here.
+            // Promo banners (e.g. smartwatch quiz) use Amazon CDN URLs indistinguishable from products.
             if (!img) {
               for (const el of document.querySelectorAll('img')) {
                 const s = el.src || '';
-                if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.toLowerCase().includes('faviconv2') || s.includes('/icons/') || s.includes('logo') || s.includes('merchant')) continue;
-                if (/img\.flash\.co.*\/plain\//.test(s)) { try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; } }
-                if (/media-amazon\.com|rukmini\d+\.flixcart|img\.flipkart|fireboltt\.com/.test(s)) { img = s; break; }
+                if (/img\.flash\.co.*\/plain\//.test(s)) {
+                  try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; }
+                }
               }
             }
             let name = '';
@@ -3793,7 +3795,7 @@ app.get('/compare/search', async (req, res) => {
               for (const el of document.querySelectorAll('img')) {
                 const s = el.src || '';
                 if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.toLowerCase().includes('faviconv2') || s.includes('/icons/') || s.includes('logo') || s.includes('merchant')) continue;
-                if (/media-amazon\.com|images-amazon\.com|rukmini\d+\.flixcart|img\.flipkart|encrypted-tbn/.test(s)) { img = s; break; }
+                // Removed: CDN img loop — promo banners use same CDN, cannot distinguish
               }
             }
             // 4. Largest non-logo, non-banner image
@@ -3844,7 +3846,7 @@ app.get('/compare/search', async (req, res) => {
                     const s = el.src || '';
                     if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.toLowerCase().includes('faviconv2') || s.includes('/icons/') || s.includes('logo') || s.includes('merchant')) continue;
                     if (/img\.flash\.co.*\/plain\//.test(s)) { try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; } }
-                    if (/media-amazon\.com|rukmini\d+\.flixcart|img\.flipkart|fireboltt\.com|encrypted-tbn/.test(s)) { img = s; break; }
+                    // Removed: CDN img loop — promo banners use same CDN, cannot distinguish
                   }
                 }
                 let name = '';
@@ -3994,15 +3996,25 @@ app.get('/compare/search', async (req, res) => {
             const maxAmt = Math.max(...amounts);
             const price = (maxAmt / minAmt > 5) ? maxAmt : amounts[amounts.length - 1];
 
-            // Extract store logo from Flash card (Flash renders correct store logos in /merchants/ path)
+            // Extract store logo from Flash card DOM
+            // Flash renders store logos as <img> with src in /merchants/ or img.flash.co paths
             let flashLogoUrl = '';
-            const logoSearch = card ? [card, card.parentElement, card.parentElement?.parentElement].filter(Boolean) : [];
+            const logoSearch = card ? [card, card.parentElement, card.parentElement?.parentElement, card.closest('li, [class*="store"], [class*="card"], [class*="item"]')].filter(Boolean) : [];
             for (const el of logoSearch) {
-              const logoImg = el.querySelector('img[src*="/merchants/"]');
-              if (logoImg && logoImg.src && logoImg.src.includes('/merchants/')) {
-                flashLogoUrl = logoImg.src;
-                break;
-              }
+              // Try /merchants/ path first (most reliable — directly served logo files)
+              const m1 = el.querySelector('img[src*="/merchants/"]');
+              if (m1 && m1.src) { flashLogoUrl = m1.src; break; }
+              // Try any img.flash.co src (Flash CDN proxied logos)
+              const allImgs = Array.from(el.querySelectorAll('img[src]'));
+              const m2 = allImgs.find(i => i.src.includes('img.flash.co') || i.src.includes('flash.co/merchants'));
+              if (m2 && m2.src) { flashLogoUrl = m2.src; break; }
+              // Try first small img in the card (store logos are small, product images are large)
+              const m3 = allImgs.find(i => {
+                const w = i.naturalWidth || i.width || 0;
+                const h = i.naturalHeight || i.height || 0;
+                return w > 10 && w < 120 && h > 10 && h < 120;
+              });
+              if (m3 && m3.src && !m3.src.includes('data:')) { flashLogoUrl = m3.src; break; }
             }
             seen.add(name);
             result.push({
