@@ -55,8 +55,8 @@ const STORE_LOGOS = {
   'firstcry':            'https://www.firstcry.com/favicon.ico',
   'netmeds':             'https://www.netmeds.com/favicon.ico',
   'lenskart':            'https://www.lenskart.com/favicon.ico',
-  'reliance digital':    'https://www.google.com/s2/favicons?domain=reliancedigital.in&sz=128',
-  'reliancedigital':     'https://www.google.com/s2/favicons?domain=reliancedigital.in&sz=128',
+  'reliance digital':    'https://www.reliancedigital.in/medias/Reliance-Digital-Logo.png?context=bWFzdGVyfGltYWdlc3w',
+  'reliancedigital':     'https://www.reliancedigital.in/medias/Reliance-Digital-Logo.png?context=bWFzdGVyfGltYWdlc3w',
   'vijay sales':         'https://www.vijaysales.com/favicon.ico',
   'vijaysales':          'https://www.vijaysales.com/favicon.ico',
   'bajaj markets':       'https://www.bajajfinservmarkets.in/favicon.ico',
@@ -134,13 +134,23 @@ function isProductImage(src) {
   if (s.includes('logo'))        return false;
   if (s.includes('merchant'))    return false;
   if (s.includes('clearbit'))    return false;
-  // Reject Flash promo / ad images — these come from flash.co/uploads or flash.co/banners
-  // Real product images come via img.flash.co/plain/<encoded> proxy
+  // Reject Flash promo / ad images — real product images ONLY come via img.flash.co/plain/<encoded>
+  // Flash serves banners/promos from flash.co/uploads, img.flash.co/banners, CDN paths without /plain/
   if (/flash\.co\/(uploads?|banner|promo|ads?|campaign|quiz|win|reward)\//i.test(s)) return false;
   if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(s) && !s.includes('/plain/')) return false;
+  // img.flash.co without /plain/ proxy = Flash UI asset (banner, promo, bg) — NOT product image
+  if (s.includes('img.flash.co') && !s.includes('/plain/')) return false;
+  // Flash storage / CDN asset paths used for banners and promotional UI
+  if (/flash\.co\/storage\//i.test(s)) return false;
+  if (/flash\.co\/assets\//i.test(s)) return false;
+  // Promo keywords in the URL path
+  if (/(quiz|smartwatch|win|reward|giveaway|offer-banner|deal-banner|contest|spin|scratch)/i.test(s)) return false;
   // Reject Google's own CDN promo/ad images
   if (s.includes('googleadservices')) return false;
   if (s.includes('doubleclick'))      return false;
+  // Wide landscape images (aspect ratio > 2:1) are usually banners not product shots
+  // (checked via URL patterns — e.g. Flash uses dimensions in CDN query params)
+  if (/[?&](w|width)=([4-9]\d{2}|\d{4,})&(h|height)=([1-2]\d{2})/i.test(s)) return false;
   return true;
 }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3603,9 +3613,13 @@ app.get('/compare/search', async (req, res) => {
                 const sl = s.toLowerCase();
                 if (sl.includes('/merchants/') || sl.includes('/favicon') || sl.includes('faviconv2') ||
                     sl.includes('/icons/') || sl.includes('logo') || sl.includes('merchant')) return false;
-                // Flash promo/ad images — real product images only come via /plain/ proxy
+                // Flash promo/ad images — real product images ONLY come via img.flash.co/plain/ proxy
                 if (/flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl)) return false;
                 if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/')) return false;
+                if (sl.includes('img.flash.co') && !sl.includes('/plain/')) return false;
+                if (/flash\.co\/storage\//i.test(sl)) return false;
+                if (/flash\.co\/assets\//i.test(sl)) return false;
+                if (/(quiz|smartwatch|win|reward|giveaway|offer-banner|deal-banner|contest|spin|scratch)/i.test(sl)) return false;
                 return true;
               };
               const ogImg = document.querySelector('meta[property="og:image"]');
@@ -3635,6 +3649,9 @@ app.get('/compare/search', async (req, res) => {
                   // Skip Flash promo/ad images (only /plain/ proxy images are real products)
                   if (/flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl)) continue;
                   if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/')) continue;
+                  if (sl.includes('img.flash.co') && !sl.includes('/plain/')) continue;
+                  if (/flash\.co\/storage\//i.test(sl)) continue;
+                  if (/(quiz|smartwatch|win|reward|giveaway|offer-banner|deal-banner|contest)/i.test(sl)) continue;
                   const w = el.naturalWidth || el.width || 0, h = el.naturalHeight || el.height || 0;
                   if (w < 80 || h < 80) continue;
                   // Skip landscape banners (width > 2.2x height)
@@ -4002,9 +4019,15 @@ app.get('/compare/search', async (req, res) => {
             const maxAmt = Math.max(...amounts);
             const price = (maxAmt / minAmt > 5) ? maxAmt : amounts[amounts.length - 1];
 
+            // Extract store logo from Flash card (Flash renders correct store logos)
+            let flashLogoUrl = '';
+            if (card) {
+              const logoImg = card.querySelector('img[src*="/merchants/"], img[src*="store-logo"], img[src*="logo"][src*="flash"], img[alt*="logo" i]');
+              if (logoImg && logoImg.src) flashLogoUrl = logoImg.src;
+            }
             seen.add(name);
             result.push({
-              name, price, url: a.href,
+              name, price, url: a.href, flashLogoUrl,
               outOfStock:  /out of stock|unavailable|sold out/i.test(cardText),
               isSource:    /you came from here/i.test(cardText),
               lowestPrice: /lowest price|best price/i.test(cardText),
@@ -4608,7 +4631,12 @@ app.get('/compare/search', async (req, res) => {
       extracted.stores = quickStores;
     }
     // Use image/name from item page (price-compare page has no og:image)
-    if (itemPageMeta.img) extracted.productImage = itemPageMeta.img;
+    // Validate with isProductImage() — rejects promo/ad/banner images that slip through browser-side filters
+    if (itemPageMeta.img && isProductImage(itemPageMeta.img)) {
+      extracted.productImage = itemPageMeta.img;
+    } else if (itemPageMeta.img) {
+      console.log('[Compare] itemPageMeta.img rejected by isProductImage:', itemPageMeta.img.substring(0, 80));
+    }
     if (itemPageMeta.name && !extracted.productName) extracted.productName = itemPageMeta.name;
 
     // ── Stage 4 server-side image fallback ──
@@ -4785,8 +4813,15 @@ app.get('/compare/search', async (req, res) => {
       console.log('[Compare] Affiliated:', stores.map(s => s.name + ':' + (s.affiliateLink||'').substring(0,40)).join(' | '));
     }
 
-    // Attach store logos — hardcoded map first, Google Favicon API fallback for unknowns
+    // Attach store logos:
+    // Priority: 1) Flash card logo (extracted from DOM — Flash uses correct logos)
+    //           2) STORE_LOGOS hardcoded map
+    //           3) Google Favicon API fallback
     stores = await Promise.all(stores.map(async (s) => {
+      // Use Flash's own card logo if it's a real logo URL (from /merchants/ path)
+      if (s.flashLogoUrl && s.flashLogoUrl.includes('/merchants/')) {
+        return { ...s, logoUrl: s.flashLogoUrl };
+      }
       const storeUrl = s.affiliateLink || s.url || '';
       const logoUrl = await getStoreLogo(s.name, storeUrl);
       return { ...s, logoUrl };
