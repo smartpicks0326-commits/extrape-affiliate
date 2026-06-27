@@ -4793,30 +4793,28 @@ app.get('/compare/search', async (req, res) => {
 
         // Clean tracking params from the (possibly unwrapped) URL
         let cleanUrl = rawUrl;
+        // extrapeUrl = what we actually send to ExtraPe (may differ from cleanUrl)
+        let extrapeUrl = rawUrl;
         try {
           const u = new URL(rawUrl);
           const host = u.hostname.replace('www.','');
 
           if (host.includes('flipkart.com') || host.includes('dl.flipkart.com')) {
-            // Flipkart: keep only pid — all other params cause ExtraPe INVALID_URL
-            const pid = u.searchParams.get('pid');
+            // Flipkart: ExtraPe requires dl.flipkart.com deep-link format (rejects www.flipkart.com)
+            // Use raw s.url (dl.flipkart.com) directly for ExtraPe; clean only for display/isSupported
             u.hostname = 'www.flipkart.com';
             u.protocol = 'https:';
+            const pid = u.searchParams.get('pid');
             u.search = pid ? '?pid=' + pid : '';
-            cleanUrl = u.toString();
+            cleanUrl = u.toString(); // for isSupported check + display fallback
+            // extrapeUrl stays as raw dl.flipkart.com URL (what ExtraPe accepts)
+            extrapeUrl = rawUrl.replace(/^http:\/\//i, 'https://');
           } else if (host.includes('amazon.')) {
-            // Amazon: keep only ASIN path, no params needed (tag added by cleanLink)
-            const asinMatch = u.pathname.match(/\/dp\/([A-Z0-9]{10})/i) ||
-                              u.pathname.match(/\/([A-Z0-9]{10})(?:\/|$)/i);
-            if (asinMatch) {
-              u.search = '';
-              u.protocol = 'https:';
-              cleanUrl = u.toString();
-            } else {
-              u.search = '';
-              u.protocol = 'https:';
-              cleanUrl = u.toString();
-            }
+            // Amazon: strip all params — ASIN is in path, tag added by cleanLink
+            u.search = '';
+            u.protocol = 'https:';
+            cleanUrl = u.toString();
+            extrapeUrl = cleanUrl;
           } else {
             // Other stores: strip known tracking params
             ['ref', 'ref_', 'social_share', 'source', 'smid', 'psc', 'th', '_encoding',
@@ -4826,12 +4824,13 @@ app.get('/compare/search', async (req, res) => {
              'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'].forEach(p => u.searchParams.delete(p));
             u.protocol = 'https:';
             cleanUrl = u.toString();
+            extrapeUrl = cleanUrl;
           }
         } catch(e) {}
 
-        // Final safety: force https, fix dl.flipkart.com
-        cleanUrl = cleanUrl.replace(/^http:\/\//i, 'https://');
-        cleanUrl = cleanUrl.replace('://dl.flipkart.com', '://www.flipkart.com');
+        // Final safety: force https
+        cleanUrl   = cleanUrl.replace(/^http:\/\//i, 'https://');
+        extrapeUrl = extrapeUrl.replace(/^http:\/\//i, 'https://');
 
         // Skip ExtraPe if store not supported or token not set
         if (!isSupported(cleanUrl)) {
@@ -4846,7 +4845,7 @@ app.get('/compare/search', async (req, res) => {
 
         // Convert via ExtraPe — retry once on failure
         const tryConvert = async () => {
-          const result = await convertExtraPe(cleanUrl);
+          const result = await convertExtraPe(extrapeUrl);
           const affiliateLink = result.clickUrl || result;
           const displayLink = result.displayUrl || result.clickUrl || cleanUrl;
           if (!s.isSource) {
@@ -4880,15 +4879,20 @@ app.get('/compare/search', async (req, res) => {
     stores = await Promise.all(stores.map(async (s) => {
       const storeUrl = s.affiliateLink || s.url || '';
 
-      // Flash card logos (img.flash.co/plain/s3://flash-creatives/...) are CORRECT store logos
-      // The 64x64 size confirms these are logos not product images
+      // Check hardcoded/embedded STORE_LOGOS first
+      // data: URIs are always preferred (e.g. Reliance Digital embedded SVG — no network needed)
+      const hardcoded = await getStoreLogo(s.name, storeUrl);
+      if (hardcoded && hardcoded.startsWith('data:')) {
+        return { ...s, logoUrl: hardcoded };
+      }
+
+      // Flash card logos (img.flash.co/plain/s3://flash-creatives/...) — correct store logos
       if (s.flashLogoUrl && s.flashLogoUrl.includes('img.flash.co')) {
         return { ...s, logoUrl: s.flashLogoUrl };
       }
 
-      // Hardcoded/embedded logos (data URIs for stores whose Flash card logo wasn't captured)
-      const hardcoded = await getStoreLogo(s.name, storeUrl);
-      console.log('[Compare] Logo for', s.name, ':', (hardcoded||'').substring(0, 60));
+      // Hardcoded https:// URL or Google Favicon API fallback
+      console.log('[Compare] Logo fallback for', s.name, ':', (hardcoded||'').substring(0, 60));
       return { ...s, logoUrl: hardcoded };
     }));
 
