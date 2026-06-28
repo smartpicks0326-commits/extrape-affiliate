@@ -4798,97 +4798,41 @@ app.get('/compare/search', async (req, res) => {
 
     console.log('[Compare] ✅ FINAL:', stores.map(s => s.name + ':₹' + s.price + (s.isSource?'[src]':'') + (s.isBest?'[best]':'')).join(' | '));
 
-    // Affiliate links via ExtraPe
-    // Always run this block — even without a token we must unwrap linksredirect URLs
-    if (true) {
+    // Affiliate links via ExtraPe — pass s.url directly, no modifications (matches working behavior)
+    if (extrapeTokenCache.accessToken) {
       stores = await Promise.all(stores.map(async (s) => {
         if (!s.url || !s.url.startsWith('http')) return s;
 
-        // ── Unwrap redirect wrappers (linksredirect.com, tjzuh.com, etc.) ──
-        // Flash wraps some store links (e.g. Shopsy) in linksredirect.com?url=https://shopsy.in/...
-        // We must unwrap to get the real product URL before sending to ExtraPe.
-        let rawUrl = s.url;
+        // Unwrap linksredirect.com wrappers (e.g. Shopsy) — only unwrap, never modify otherwise
+        let urlForExtraPe = s.url;
         try {
           const wu = new URL(s.url);
           const ulp = wu.searchParams.get('ulp') || wu.searchParams.get('url') ||
                       wu.searchParams.get('dest') || wu.searchParams.get('target');
-          if (ulp) {
+          if (ulp && (wu.hostname.includes('linksredirect') || wu.hostname.includes('tjzuh'))) {
             const unwrapped = decodeURIComponent(ulp);
-            if (unwrapped.startsWith('http')) rawUrl = unwrapped;
+            if (unwrapped.startsWith('http')) urlForExtraPe = unwrapped;
           }
         } catch(e) {}
 
-        // Clean tracking params from the (possibly unwrapped) URL
-        let cleanUrl = rawUrl;
-        // extrapeUrl = what we actually send to ExtraPe (may differ from cleanUrl)
-        let extrapeUrl = rawUrl;
         try {
-          const u = new URL(rawUrl);
-          const host = u.hostname.replace('www.','');
-
-          if (host.includes('flipkart.com') || host.includes('dl.flipkart.com')) {
-            // Flipkart: send raw URL to ExtraPe with NO modifications — any change breaks it
-            u.hostname = 'www.flipkart.com';
-            u.protocol = 'https:';
-            cleanUrl   = u.toString();
-            extrapeUrl = s.url; // raw s.url exactly as Flash gave it — no param changes
-          } else if (host.includes('amazon.')) {
-            // Amazon: strip all params — ASIN is in path, tag added by cleanLink
-            u.search = '';
-            u.protocol = 'https:';
-            cleanUrl = u.toString();
-            extrapeUrl = cleanUrl;
-          } else {
-            // Other stores: strip known tracking params
-            ['ref', 'ref_', 'social_share', 'source', 'smid', 'psc', 'th', '_encoding',
-             'tag', 'linkCode', 'linkId', 'camp', 'creative', 'iid', 'fm', 'srno',
-             'otracker', 'otracker1', 'ssid', 'ctx', 'BU', 'ov_redirect',
-             'q', 'qH', 'spotlightTagId', 'store', 'affid', 'utm_source',
-             'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'].forEach(p => u.searchParams.delete(p));
-            u.protocol = 'https:';
-            cleanUrl = u.toString();
-            extrapeUrl = cleanUrl;
-          }
-        } catch(e) {}
-
-        // Final safety: force https
-        cleanUrl   = cleanUrl.replace(/^http:\/\//i, 'https://');
-        extrapeUrl = extrapeUrl.replace(/^http:\/\//i, 'https://');
-
-        // Skip ExtraPe if store not supported or token not set
-        if (!isSupported(cleanUrl)) {
-          console.log('[Compare] Not affiliatable (unsupported):', s.name, cleanUrl.substring(0, 60));
-          // Still clean the URL — replace linksredirect with actual store URL
-          return { ...s, url: cleanUrl, affiliateLink: cleanUrl, displayLink: cleanUrl };
-        }
-        if (!extrapeTokenCache.accessToken) {
-          console.log('[Compare] ExtraPe token not set — using clean URL for:', s.name);
-          return { ...s, url: cleanUrl, affiliateLink: cleanUrl, displayLink: cleanUrl };
-        }
-
-        // Convert via ExtraPe — retry once on failure
-        const tryConvert = async () => {
-          const result = await convertExtraPe(extrapeUrl);
+          const result = await convertExtraPe(urlForExtraPe);
           const affiliateLink = result.clickUrl || result;
-          const displayLink = result.displayUrl || result.clickUrl || cleanUrl;
-          if (!s.isSource) {
-            trackConversion(cleanUrl, s.name, 'done', affiliateLink).catch(() => {});
-          }
-          // Always overwrite s.url so the frontend never falls back to raw Flash redirect URL
+          const displayLink = result.displayUrl || result.clickUrl || s.url;
+          if (!s.isSource) trackConversion(urlForExtraPe, s.name, 'done', affiliateLink).catch(() => {});
           return { ...s, url: affiliateLink, affiliateLink, displayLink };
-        };
-
-        try {
-          return await tryConvert();
         } catch(e) {
           console.log('[Compare] ExtraPe failed for', s.name, '— retrying once:', e.message);
           await new Promise(r => setTimeout(r, 1500));
           try {
-            return await tryConvert();
+            const result = await convertExtraPe(urlForExtraPe);
+            const affiliateLink = result.clickUrl || result;
+            const displayLink = result.displayUrl || result.clickUrl || s.url;
+            if (!s.isSource) trackConversion(urlForExtraPe, s.name, 'done', affiliateLink).catch(() => {});
+            return { ...s, url: affiliateLink, affiliateLink, displayLink };
           } catch(e2) {
             console.log('[Compare] ExtraPe retry also failed for', s.name, ':', e2.message);
-            // Fall back to cleanUrl (unwrapped) — never expose raw Flash linksredirect URL
-            return { ...s, url: cleanUrl, affiliateLink: cleanUrl, displayLink: cleanUrl };
+            return { ...s, affiliateLink: urlForExtraPe, displayLink: urlForExtraPe };
           }
         }
       }));
