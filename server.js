@@ -4834,7 +4834,14 @@ app.get('/compare/search', async (req, res) => {
             return { ...s, url: affiliateLink, affiliateLink, displayLink };
           } catch(e2) {
             console.log('[Compare] ExtraPe retry also failed for', s.name, ':', e2.message);
-            return { ...s, affiliateLink: urlForExtraPe, displayLink: urlForExtraPe };
+            // ExtraPe can't convert this URL — use cleanLink() which builds a /go/ redirect
+            // with the affiliate tag embedded (same as Convert flow fallback)
+            try {
+              const fallback = cleanLink(urlForExtraPe);
+              return { ...s, url: fallback.clickUrl, affiliateLink: fallback.clickUrl, displayLink: fallback.displayUrl };
+            } catch(ef) {
+              return { ...s, affiliateLink: urlForExtraPe, displayLink: urlForExtraPe };
+            }
           }
         }
       }));
