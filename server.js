@@ -1557,6 +1557,19 @@ async function trackClick(dest, store) {
   pushDashboardUpdate();
 }
 
+// Decode /go/ base64 redirect URLs for dashboard display
+function decodeGoUrl(dest) {
+  if (!dest) return dest;
+  try {
+    const m = dest.match(/\/go\/([A-Za-z0-9+/=_-]+)$/);
+    if (m) {
+      const decoded = Buffer.from(m[1].replace(/-/g,'+').replace(/_/g,'/'), 'base64').toString();
+      if (decoded.startsWith('http')) return decoded;
+    }
+  } catch(e) {}
+  return dest;
+}
+
 async function trackCompare() {
   if (dbConnected) {
     await Counter.updateOne({ _id: 'main' }, { $inc: { compares: 1 } }).catch(e => console.error('[DB] trackCompare:', e.message));
@@ -3186,7 +3199,7 @@ app.post('/admin/sync-from', async (req, res) => {
     const events = [
       ...(d.recentVisits       || []).map(e => ({ type:'visit',      url:e.url,   ts:new Date(e.ts) })),
       ...(d.recentConversions  || []).map(e => ({ type:'conversion', url:e.url,   store:e.store, state:e.state, ts:new Date(e.ts) })),
-      ...(d.recentClicks       || []).map(e => ({ type:'click',      dest:e.dest, store:e.store || detectStoreFromUrl(e.dest||''), ts:new Date(e.ts) })),
+      ...(d.recentClicks       || []).map(e => ({ type:'click',      dest:decodeGoUrl(e.dest), store:e.store || detectStoreFromUrl(e.dest||''), ts:new Date(e.ts) })),
     ].filter(e => e.ts && !isNaN(e.ts));
 
     if (events.length > 0) {
@@ -3348,7 +3361,7 @@ app.get('/dashboard/stats', async (req, res) => {
         compares:     comparesCount,
         storeBreakdown,
         recentConversions: recentConversions.map(e => ({ url: e.url, store: e.store, state: e.state, ts: e.ts?.getTime() })),
-        recentClicks:      recentClicks.map(e => ({ dest: e.dest, store: e.store || detectStoreFromUrl(e.dest||'') || '', ts: e.ts?.getTime() })),
+        recentClicks:      recentClicks.map(e => ({ dest: decodeGoUrl(e.dest), store: e.store || detectStoreFromUrl(e.dest||'') || '', ts: e.ts?.getTime() })),
         recentVisits:      recentVisits.map(e => ({ url: e.url, ts: e.ts?.getTime() })),
         dbConnected:  true,
         dateRange:    { from: from.toISOString(), to: to.toISOString() },
@@ -3414,14 +3427,14 @@ app.get('/go/:code', (req, res) => {
       req.params.code.replace(/-/g,'+').replace(/_/g,'/'), 'base64'
     ).toString();
     if (decoded.startsWith('http')) {
-      trackClick(decoded); // full URL
+      // Do NOT track here — frontend already tracked the /go/ URL with the correct store name.
+      // Tracking again here creates duplicate rows in dashboard with missing store name.
       return res.redirect(302, decoded);
     }
   } catch(e) {}
   // Fall back to in-memory short code (old format)
   const url = shortLinks[req.params.code];
   if (url) {
-    trackClick(url.substring(0, 80));
     return res.redirect(301, url);
   }
   return res.status(404).send('Link not found.');
