@@ -3361,7 +3361,28 @@ app.get('/dashboard/stats', async (req, res) => {
         compares:     comparesCount,
         storeBreakdown,
         recentConversions: recentConversions.map(e => ({ url: e.url, store: e.store, state: e.state, ts: e.ts?.getTime() })),
-        recentClicks:      recentClicks.map(e => ({ dest: decodeGoUrl(e.dest), store: e.store || detectStoreFromUrl(e.dest||'') || '', ts: e.ts?.getTime() })),
+        recentClicks: (() => {
+          // Decode /go/ URLs and deduplicate: same dest within 5s → keep row with store name
+          const mapped = recentClicks.map(e => ({
+            dest:  decodeGoUrl(e.dest),
+            store: e.store || detectStoreFromUrl(e.dest||'') || '',
+            ts:    e.ts?.getTime()
+          }));
+          const seen = new Map(); // dest → best entry (prefer one with store)
+          for (const row of mapped) {
+            const key = row.dest;
+            const existing = seen.get(key);
+            if (!existing) { seen.set(key, row); continue; }
+            // Same dest: if within 5s, keep the one with store name
+            if (Math.abs((row.ts||0) - (existing.ts||0)) < 5000) {
+              if (!existing.store && row.store) seen.set(key, row);
+            } else {
+              // Different time — different click, add with composite key
+              seen.set(key + '|' + row.ts, row);
+            }
+          }
+          return Array.from(seen.values()).sort((a,b) => (b.ts||0) - (a.ts||0));
+        })(),
         recentVisits:      recentVisits.map(e => ({ url: e.url, ts: e.ts?.getTime() })),
         dbConnected:  true,
         dateRange:    { from: from.toISOString(), to: to.toISOString() },
