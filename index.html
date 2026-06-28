@@ -832,6 +832,25 @@ var STORE_DOMAIN_MAP = {
   Ixigo: 'ixigo.com', EaseMyTrip: 'easemytrip.com', Paytm: 'paytm.com',
   Reliance: 'reliancedigital.in', WOW: 'wowskinscience.com', Mivi: 'mivi.in',
   Noise: 'gonoise.com',
+  // Added stores
+  'Reliance Digital': 'reliancedigital.in',
+  'Vijay Sales': 'vijaysales.com',
+  'Bajaj Markets': 'bajajfinservmarkets.in',
+  'Sangeetha': 'sangeethamobiles.com',
+  'Zepto': 'zepto.com',
+  'Poorvika': 'poorvika.com',
+  'Shopsy': 'shopsy.in',
+  'Apple Store': 'apple.com',
+  'Samsung Shop': 'samsung.com',
+  'Mi Store': 'mi.com',
+  'OnePlus Store': 'oneplus.in',
+  'Realme Store': 'realme.com',
+  'Blinkit': 'blinkit.com',
+  'Nykaa Fashion': 'nykaafashion.com',
+  'Paytm Mall': 'paytmmall.com',
+  'Decathlon': 'decathlon.in',
+  'Boat Lifestyle': 'boat-lifestyle.com',
+  'Fire-Boltt': 'fireboltt.com',
 };
 
 function detectStore(url) {
@@ -865,14 +884,16 @@ function detectStoreName(url) {
   } catch(e){ return 'Unknown'; }
 }
 
-function logoHTML(name, size) {
+function logoHTML(name, size, logoUrl) {
   size = size || 26;
   var init = (name || '?')[0].toUpperCase();
   var domain = STORE_DOMAIN_MAP[name] || (name.toLowerCase().replace(/\s+/g,'') + '.com');
-  var src = 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(domain) + '&sz=32';
+  var fallbackSrc = 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(domain) + '&sz=128';
+  // Use logoUrl from API response when available — server sends correct logo for all stores
+  var src = (logoUrl && logoUrl.length > 4) ? logoUrl : fallbackSrc;
   return '<img src="' + src + '" width="' + size + '" height="' + size +
     '" style="object-fit:contain;border-radius:3px;"' +
-    ' onerror="this.replaceWith(document.createTextNode(\'' + init + '\'))">';
+    ' onerror="this.onerror=null;this.src=\'' + fallbackSrc + '\'">';
 }
 
 // Live store detection badge on input
@@ -1463,7 +1484,7 @@ function renderStoreList(id, stores) {
     div.id = 'card-' + id + '-' + idx;
     div.innerHTML =
       '<div class="store-main">' +
-        '<div class="store-logo-wrap">' + logoHTML(name, 26) + '</div>' +
+        '<div class="store-logo-wrap">' + logoHTML(name, 26, s.logoUrl) + '</div>' +
         '<div class="store-body"><div class="store-name">' + name + '</div><div class="store-tags">' + tags + '</div></div>' +
         '<div class="store-price">' + priceStr + '</div>' +
       '</div>' +
