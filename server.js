@@ -4814,6 +4814,8 @@ app.get('/compare/search', async (req, res) => {
             if (unwrapped.startsWith('http')) urlForExtraPe = unwrapped;
           }
         } catch(e) {}
+        // ExtraPe rejects http:// — force https:// (only change we make)
+        urlForExtraPe = urlForExtraPe.replace(/^http:\/\//i, 'https://');
 
         try {
           const result = await convertExtraPe(urlForExtraPe);
