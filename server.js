@@ -1606,6 +1606,15 @@ setInterval(() => {
 
 // ── ExtraPe API ──
 async function convertExtraPe(productUrl) {
+  // dl.flipkart.com: strip ALL params, keep only path + trailing '?'
+  // ExtraPe accepts: https://dl.flipkart.com/dl/<slug>/p/<itemId>?
+  try {
+    const fu = new URL(productUrl);
+    if (fu.hostname === 'dl.flipkart.com') {
+      productUrl = fu.protocol + '//' + fu.hostname + fu.pathname + '?';
+    }
+  } catch(e) {}
+
   const key = _epKey(productUrl);
   const hit = _epCache.get(key);
   if (hit && Date.now() - hit.ts < _EP_TTL) {
@@ -4814,8 +4823,15 @@ app.get('/compare/search', async (req, res) => {
             if (unwrapped.startsWith('http')) urlForExtraPe = unwrapped;
           }
         } catch(e) {}
-        // ExtraPe rejects http:// — force https:// (only change we make)
+        // Force https://
         urlForExtraPe = urlForExtraPe.replace(/^http:\/\//i, 'https://');
+        // dl.flipkart.com: strip ALL params, keep only path + trailing '?'
+        try {
+          const fu = new URL(urlForExtraPe);
+          if (fu.hostname === 'dl.flipkart.com') {
+            urlForExtraPe = fu.protocol + '//' + fu.hostname + fu.pathname + '?';
+          }
+        } catch(e) {}
 
         try {
           const result = await convertExtraPe(urlForExtraPe);
