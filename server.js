@@ -55,8 +55,8 @@ const STORE_LOGOS = {
   'firstcry':            'https://www.firstcry.com/favicon.ico',
   'netmeds':             'https://www.netmeds.com/favicon.ico',
   'lenskart':            'https://www.lenskart.com/favicon.ico',
-  'reliance digital':    'https://api.smartpickdeals.live/store-logo/reliance-digital',
-  'reliancedigital':     'https://api.smartpickdeals.live/store-logo/reliance-digital',
+  'reliance digital':    'https://api.smartpickdeals.live/store-logo/reliance-digital?v=2',
+  'reliancedigital':     'https://api.smartpickdeals.live/store-logo/reliance-digital?v=2',
   'vijay sales':         'https://www.vijaysales.com/favicon.ico',
   'vijaysales':          'https://www.vijaysales.com/favicon.ico',
   'bajaj markets':       'https://www.bajajfinservmarkets.in/favicon.ico',
@@ -2709,7 +2709,7 @@ app.get('/store-logo/:name', (req, res) => {
   const img = STORE_LOGO_IMAGES[key];
   if (img) {
     res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
     res.setHeader('Access-Control-Allow-Origin', '*');
     return res.send(img);
   }
