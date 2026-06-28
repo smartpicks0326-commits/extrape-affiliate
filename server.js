@@ -3674,14 +3674,14 @@ app.get('/compare/search', async (req, res) => {
           console.log('[Compare/Puppeteer] Fast path — fetching image from item page first:', `https://flash.co/item/${itemId}/h/${pageHash}`);
           try {
             await page.goto(`https://flash.co/item/${itemId}/h/${pageHash}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
-            // Wait for React to render og:image (up to 4s — usually ready in 1-2s)
+            // Wait for React to render og:image (up to 8s)
             try {
               await page.waitForFunction(
                 () => !!document.querySelector('meta[property="og:image"]')?.getAttribute('content'),
-                { timeout: 4000 }
+                { timeout: 8000 }
               );
             } catch(e) {}
-            await new Promise(r => setTimeout(r, 400));
+            await new Promise(r => setTimeout(r, 800));
             itemPageMeta = await page.evaluate(() => {
               const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
               let img = '';
@@ -3921,10 +3921,10 @@ app.get('/compare/search', async (req, res) => {
               try {
                 await page.waitForFunction(
                   () => !!document.querySelector('meta[property="og:image"]')?.getAttribute('content'),
-                  { timeout: 4000 }
+                  { timeout: 8000 }
                 );
               } catch(e) {}
-              await new Promise(r => setTimeout(r, 400));
+              await new Promise(r => setTimeout(r, 1000));
               const metaFromItem = await page.evaluate(() => {
                 const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
                 let img = '';
@@ -3957,12 +3957,12 @@ app.get('/compare/search', async (req, res) => {
           console.log('[Compare/Puppeteer] Page meta — image:', itemPageMeta.img.substring(0,60), '| name:', itemPageMeta.name.substring(0,40));
         }
 
-        // Wait for stores to appear — race between 3+ outbound links or 6s max
+        // Wait for stores to appear — race between 3+ outbound links or 10s timeout
         try {
           await page.waitForFunction(() =>
             [...document.querySelectorAll('a[href]')]
               .filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http')).length >= 3,
-            { timeout: 6000 }
+            { timeout: 10000 }
           );
         } catch(e) { console.log('[Compare/Puppeteer] Store links wait timed out'); }
 
@@ -3979,12 +3979,12 @@ app.get('/compare/search', async (req, res) => {
 
         if (clicked3) {
           console.log('[Compare/Puppeteer] Clicked expand:', clicked3);
-          await new Promise(r => setTimeout(r, 800));
+          await new Promise(r => setTimeout(r, 2000));
         }
 
-        await new Promise(r => setTimeout(r, 300));
+        await new Promise(r => setTimeout(r, 600));
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-        await new Promise(r => setTimeout(r, 300));
+        await new Promise(r => setTimeout(r, 500));
 
         const pageTitle2 = await page.title().catch(() => '');
         const pageUrl2 = page.url();
