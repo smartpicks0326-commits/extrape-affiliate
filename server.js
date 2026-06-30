@@ -15,6 +15,157 @@ const SERP_API_KEY = process.env.SERP_API_KEY || '';
 const FLASH_DEVICE_ID = process.env.FLASH_DEVICE_ID || 'web-spd-backend';
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'spd-admin-2024';
 
+// ── ExtraPe conversion cache — deduplicates calls within 10 min ──
+const _epCache = new Map();
+const _EP_TTL  = 10 * 60 * 1000;
+function _epKey(url) {
+  try {
+    const u = new URL(url);
+    const asin = u.pathname.match(/\/dp\/([A-Z0-9]{10})/i)?.[1];
+    if (asin) return 'amz:' + asin;
+    const itm = u.pathname.match(/\/(itm[a-z0-9]+)/i)?.[1] || u.searchParams.get('pid');
+    if (itm) return 'fk:' + itm;
+    return u.hostname + u.pathname;
+  } catch(e) { return url; }
+}
+
+// ── URLs currently being processed by Compare (block duplicate Convert queue) ──
+const _compareActive = new Set();
+
+// ── Store logo system ─────────────────────────────────────────────────────────
+// Hardcoded official favicons for known stores (overrides Google favicon fallback)
+const STORE_LOGOS = {
+  'amazon':              'https://www.amazon.in/favicon.ico',
+  'flipkart':            'https://static-assets-web.flixcart.com/batman-returns/batman-returns/p/images/favicon-36x36-40207b.png',
+  'myntra':              'https://constant.myntassets.com/web/assets/img/favicon.png',
+  'ajio':                'https://assets.ajio.com/static/icons/favicon-96x96.png',
+  'nykaa':               'https://www.nykaa.com/favicon.ico',
+  'nykaa fashion':       'https://www.nykaafashion.com/favicon.ico',
+  'nykaafashion':        'https://www.nykaafashion.com/favicon.ico',
+  'tatacliq':            'https://www.tatacliq.com/favicon.ico',
+  'croma':               'https://media.croma.com/image/upload/v1637759004/Croma%20Assets/CMS/Category%20icon%20and%20thumbnail/Favicon_nynlgc.png',
+  'snapdeal':            'https://akamai.netstorage.snapdeal.com/images/snap/favicon.ico',
+  'meesho':              'https://images.meesho.com/images/pow/favicon-new.ico',
+  'jiomart':             'https://www.jiomart.com/favicon.ico',
+  'bigbasket':           'https://www.bigbasket.com/favicon.ico',
+  'big basket':          'https://www.bigbasket.com/favicon.ico',
+  'zepto':               'https://zepto.app/favicon.ico',
+  'blinkit':             'https://blinkit.com/favicon.ico',
+  'swiggy':              'https://www.swiggy.com/favicon.ico',
+  'firstcry':            'https://www.firstcry.com/favicon.ico',
+  'netmeds':             'https://www.netmeds.com/favicon.ico',
+  'lenskart':            'https://www.lenskart.com/favicon.ico',
+  'reliance digital':    'https://api.smartpickdeals.live/store-logo/reliance-digital?v=2',
+  'reliancedigital':     'https://api.smartpickdeals.live/store-logo/reliance-digital?v=2',
+  'vijay sales':         'https://www.vijaysales.com/favicon.ico',
+  'vijaysales':          'https://www.vijaysales.com/favicon.ico',
+  'bajaj markets':       'https://www.bajajfinservmarkets.in/favicon.ico',
+  'bajajfinserv':        'https://www.bajajfinservmarkets.in/favicon.ico',
+  'bajajfinservmarkets': 'https://www.bajajfinservmarkets.in/favicon.ico',
+  'croma':               'https://media.croma.com/image/upload/v1637759004/Croma%20Assets/CMS/Category%20icon%20and%20thumbnail/Favicon_nynlgc.png',
+  'decathlon':           'https://www.decathlon.in/favicon.ico',
+  'pepperfry':           'https://www.pepperfry.com/favicon.ico',
+  'mamaearth':           'https://www.mamaearth.in/favicon.ico',
+  'purplle':             'https://www.purplle.com/favicon.ico',
+  'bewakoof':            'https://www.bewakoof.com/favicon.ico',
+  'shopsy':              'https://www.shopsy.in/favicon.ico',
+  'shopclues':           'https://www.shopclues.com/favicon.ico',
+  'infibeam':            'https://www.infibeam.com/favicon.ico',
+  'boat':                'https://www.boat-lifestyle.com/favicon.ico',
+  'boat-lifestyle':      'https://www.boat-lifestyle.com/favicon.ico',
+  'fire-boltt':          'https://www.fireboltt.com/favicon.ico',
+  'fireboltt':           'https://www.fireboltt.com/favicon.ico',
+  'noise':               'https://www.gonoise.com/favicon.ico',
+  'gonoise':             'https://www.gonoise.com/favicon.ico',
+  'samsung shop':        'https://www.samsung.com/favicon.ico',
+  'samsungshop':         'https://www.samsung.com/favicon.ico',
+  'oneplus store':       'https://www.oneplus.in/favicon.ico',
+  'oneplusstore':        'https://www.oneplus.in/favicon.ico',
+  'realme store':        'https://www.realme.com/favicon.ico',
+  'realme':              'https://www.realme.com/favicon.ico',
+  'mi store':            'https://www.mi.com/favicon.ico',
+  'apple store':         'https://www.apple.com/favicon.ico',
+  'poorvika':            'https://www.poorvika.com/favicon.ico',
+  'sangeetha':           'https://www.sangeetha.com/favicon.ico',
+  'zebrs':               'https://www.zebrs.com/favicon.ico',
+  'gadgetsnow':          'https://www.gadgetsnow.com/favicon.ico',
+  'vlebazaar':           'https://www.vlebazaar.in/favicon.ico',
+  'paytm mall':          'https://paytmmall.com/favicon.ico',
+  'paytmmall':           'https://paytmmall.com/favicon.ico',
+};
+
+// In-memory cache: storeName (lowercase) → resolved logo URL
+const _logoCache = new Map();
+// Pre-populate cache from STORE_LOGOS so it's never re-derived from Google Favicon
+// (runs after STORE_LOGOS is defined)
+setImmediate(() => {
+  for (const [k, v] of Object.entries(STORE_LOGOS)) {
+    if (!_logoCache.has(k)) _logoCache.set(k, v);
+  }
+});
+
+// Returns logo URL for a store — checks hardcoded map first, then Google Favicon API
+async function getStoreLogo(storeName, storeUrl) {
+  const key = (storeName || '').toLowerCase().trim();
+  if (_logoCache.has(key)) return _logoCache.get(key);
+
+  // Check hardcoded STORE_LOGOS map
+  for (const [k, v] of Object.entries(STORE_LOGOS)) {
+    if (key === k || key.includes(k) || k.includes(key)) {
+      _logoCache.set(key, v);
+      return v;
+    }
+  }
+
+  // Derive domain from storeUrl for Google Favicon API fallback
+  let domain = '';
+  try { domain = new URL(storeUrl || '').hostname.replace(/^www\./, ''); } catch {}
+  if (!domain) domain = key.replace(/\s+/g, '') + '.com';
+
+  const faviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`;
+  _logoCache.set(key, faviconUrl);
+  return faviconUrl;
+}
+
+// ── isProductImage: server-side check for image URLs returned from Puppeteer ──
+// Rejects Flash promo/ad images, banners, and anything that isn't a real product image.
+// Used AFTER Puppeteer extraction to validate the URL before storing it.
+function isProductImage(src) {
+  if (!src || !src.startsWith('http')) return false;
+  const s = src.toLowerCase();
+
+  // Always reject store logo / favicon patterns
+  if (s.includes('/merchants/')) return false;
+  if (s.includes('/favicon'))    return false;
+  if (s.includes('faviconv2'))   return false;
+  if (s.includes('/icons/'))     return false;
+  if (s.includes('logo'))        return false;
+  if (s.includes('merchant'))    return false;
+  if (s.includes('clearbit'))    return false;
+  if (s.includes('googleadservices')) return false;
+  if (s.includes('doubleclick'))      return false;
+
+  // If this is a known real product CDN URL, accept immediately without further checks.
+  // These domains only serve actual product images (never promo banners).
+  if (/media-amazon\.com|images-amazon\.com|ssl-images-amazon|m\.media-amazon|rukmini\d+\.flixcart|img\.flipkart|assets\.myntassets|akamai\.netstorage|img\.tatacliq|assets\.croma|firebasestorage\.googleapis\.com|storage\.googleapis\.com/.test(s)) {
+    return true;
+  }
+
+  // Reject Google Shopping thumbnail cache (low quality, sometimes wrong product)
+  if (s.includes('gstatic.com/shopping') || (s.includes('encrypted-tbn') && s.includes('gstatic'))) return false;
+
+  // Reject Flash.co own-domain non-product assets (promos, banners, UI elements)
+  // Real product images on Flash come via img.flash.co/plain/<encoded-product-url>
+  if (s.includes('img.flash.co') && !s.includes('/plain/')) return false;
+  if (/flash\.co\/(uploads?|banners?|promo|ads?|campaign|quiz|win|reward|storage|assets)\//i.test(s)) return false;
+  if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(s) && !s.includes('/plain/')) return false;
+  // Flash promo S3 assets appear via /plain/ proxy — reject by decoded path content
+  if (/flash-creatives|images\/games|images\/banners|images\/promos|quiz|giveaway|reward|spin|contest/i.test(s)) return false;
+
+  return true;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 // ── ExtraPe token — in-memory cache, loaded from .env at startup ──
 // Updated via the bookmarklet: visit https://api.smartpickdeals.live/extrape/token-page
 const extrapeTokenCache = {
@@ -389,108 +540,46 @@ app.get('/admin/token-status', (req, res) => {
 // Runs all Flash API calls from WITHIN a real headless Chrome browser.
 // Chrome's TLS fingerprint passes Flash.co WAF — server IP doesn't matter.
 
-// ── Browser Pool — 3 concurrent Chrome instances ──
-// Supports 3 parallel compare requests on this hardware (3.3GB RAM, 4 cores).
-// Each browser uses ~250-300MB RAM; 3 browsers = ~900MB, leaving headroom for Node + OS.
-const POOL_SIZE = parseInt(process.env.BROWSER_POOL_SIZE || '3');
+let flashBrowser     = null;
+let flashBrowserBusy = false;
+const flashWaitQueue = [];
 
-const browserPool   = [];   // { browser, busy: bool }
-const poolWaitQueue = [];   // pending tasks waiting for a free browser
-
-async function launchBrowser(index) {
-  console.log(`[Pool] Launching Chrome #${index}...`);
-  const browser = await puppeteer.launch({
+async function getFlashBrowser() {
+  if (flashBrowser && flashBrowser.isConnected()) return flashBrowser;
+  console.log('[Flash/Puppeteer] Launching Chrome...');
+  flashBrowser = await puppeteer.launch({
     headless: 'new',
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage',
-           '--disable-gpu','--single-process','--no-zygote',
-           '--disable-extensions','--mute-audio'],
+    args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu','--single-process','--no-zygote','--disable-extensions','--mute-audio'],
   });
-  browser.on('disconnected', () => {
-    console.log(`[Pool] Chrome #${index} disconnected — replacing`);
-    const slot = browserPool[index];
-    if (slot) { slot.browser = null; slot.busy = false; }
-    // Relaunch after short delay
-    setTimeout(() => launchBrowser(index).then(b => {
-      if (browserPool[index]) browserPool[index].browser = b;
-      drainPoolQueue();
-    }).catch(e => console.log(`[Pool] Relaunch #${index} failed:`, e.message)), 3000);
-    drainPoolQueue(); // let waiting tasks know a slot freed (even if null, next drain will retry)
+  flashBrowser.on('disconnected', () => {
+    console.log('[Flash/Puppeteer] Browser disconnected');
+    flashBrowser = null; flashBrowserBusy = false;
+    while (flashWaitQueue.length) flashWaitQueue.shift()();
   });
-  // Warm-up
   try {
-    const warm = await browser.newPage();
+    const warm = await flashBrowser.newPage();
     await warm.goto('https://flash.co', { waitUntil: 'domcontentloaded', timeout: 20000 });
     await warm.close();
-    console.log(`[Pool] ✅ Chrome #${index} ready`);
-  } catch(e) { console.log(`[Pool] Chrome #${index} warm-up skipped:`, e.message); }
-  return browser;
+    console.log('[Flash/Puppeteer] ✅ Chrome ready');
+  } catch(e) { console.log('[Flash/Puppeteer] Warm-up skipped:', e.message); }
+  return flashBrowser;
 }
 
-// Initialise pool on startup
-(async () => {
-  for (let i = 0; i < POOL_SIZE; i++) {
-    browserPool.push({ browser: null, busy: false });
-  }
-  for (let i = 0; i < POOL_SIZE; i++) {
-    try {
-      browserPool[i].browser = await launchBrowser(i);
-    } catch(e) {
-      console.log(`[Pool] Chrome #${i} initial launch failed:`, e.message);
-    }
-  }
-  console.log(`[Pool] Browser pool ready — ${POOL_SIZE} instances`);
-})();
-
-function drainPoolQueue() {
-  if (poolWaitQueue.length === 0) return;
-  const slot = browserPool.find(s => !s.busy && s.browser && s.browser.isConnected());
-  if (!slot) return;
-  const { resolve } = poolWaitQueue.shift();
-  slot.busy = true;
-  resolve(slot);
-}
-
-function acquireBrowser() {
+function withFlashBrowser(fn) {
   return new Promise((resolve, reject) => {
-    const slot = browserPool.find(s => !s.busy && s.browser && s.browser.isConnected());
-    if (slot) {
-      slot.busy = true;
-      return resolve(slot);
-    }
-    // All busy or not ready — queue this request
-    const timeoutId = setTimeout(() => {
-      const idx = poolWaitQueue.findIndex(w => w.resolve === resolve);
-      if (idx !== -1) poolWaitQueue.splice(idx, 1);
-      reject(new Error('Browser pool timeout — all 3 browsers busy for >120s'));
-    }, 120000);
-    poolWaitQueue.push({ resolve: (slot) => { clearTimeout(timeoutId); resolve(slot); }, reject });
+    const run = async () => {
+      flashBrowserBusy = true;
+      try { resolve(await fn()); } catch(e) { reject(e); }
+      finally { flashBrowserBusy = false; if (flashWaitQueue.length) flashWaitQueue.shift()(); }
+    };
+    if (!flashBrowserBusy) run(); else flashWaitQueue.push(run);
   });
-}
-
-function releaseBrowser(slot) {
-  slot.busy = false;
-  drainPoolQueue();
-}
-
-async function withFlashBrowser(fn) {
-  const slot = await acquireBrowser();
-  try {
-    return await fn(slot.browser);
-  } finally {
-    releaseBrowser(slot);
-  }
-}
-
-// Legacy compat — kept so existing code that calls getFlashBrowser() still works
-async function getFlashBrowser() {
-  const slot = browserPool.find(s => s.browser && s.browser.isConnected());
-  if (slot) return slot.browser;
-  throw new Error('No browser available in pool');
 }
 
 async function flashSearchPuppeteer(productUrl) {
-  return withFlashBrowser(async (browser) => {
+  return withFlashBrowser(async () => {
+    const browser = await getFlashBrowser();
     const page    = await browser.newPage();
     await page.setViewport({ width: 1280, height: 900 });
     await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
@@ -984,14 +1073,29 @@ async function flashSearchPuppeteer(productUrl) {
         const productImage = (() => {
           function isLogoOrIcon(src, alt) {
             if (!src) return true;
-            if (src.includes('/merchants/')) return true;
-            if (src.includes('/favicon'))    return true;
-            if (src.includes('/icons/'))     return true;
-            if (/logo|icon/i.test(alt || '')) return true;
-            if (src.includes('logo'))        return true;
-            // Flash store merchant logos are typically very small square PNGs
+            const s = src.toLowerCase();
+            const a = (alt || '').toLowerCase();
+            if (s.includes('/merchants/'))  return true;
+            if (s.includes('/favicon'))     return true;
+            if (s.includes('faviconv2'))    return true;  // Google favicon proxy (encrypted-tbn)
+            if (s.includes('/icons/'))      return true;
+            if (s.includes('logo'))         return true;
+            if (s.includes('clearbit.com')) return true;  // Clearbit logo service
+            if (s.includes('brandlogo'))    return true;
+            if (s.includes('brand_logo'))   return true;
+            if (s.includes('store-logo'))   return true;
+            if (s.includes('merchant'))     return true;
+            if (/logo|icon|brand/i.test(a)) return true;
+            // Reject tiny icon sizes hinted in URL
+            if (/[_\-](16|24|32|48)(x\1)?[_.\-]/i.test(s)) return true;
+            // Reject Flash promo / ad / banner images (quiz, campaign, win, reward etc.)
+            // Real product images on Flash come only via img.flash.co/plain/<encoded> proxy
+            if (/flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(s)) return true;
+            if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(s) && !s.includes('/plain/')) return true;
             return false;
           }
+          // Reject landscape banners — real product images are roughly square
+          function isBanner(w, h) { return w > 0 && h > 0 && (w / h) > 2.2; }
 
           // 1. Flash CDN proxy — always a real product image
           for (const img of document.querySelectorAll('img')) {
@@ -1018,7 +1122,7 @@ async function flashSearchPuppeteer(productUrl) {
             }
           }
 
-          // 3. Largest square-ish image that isn't a logo
+          // 3. Largest square-ish image that isn't a logo or banner
           let best = '', bestScore = 0;
           for (const img of document.querySelectorAll('img')) {
             const src = img.src || '';
@@ -1026,8 +1130,9 @@ async function flashSearchPuppeteer(productUrl) {
             const w = img.naturalWidth  || img.width  || 0;
             const h = img.naturalHeight || img.height || 0;
             if (w < 80 || h < 80) continue;           // skip tiny images
+            if (isBanner(w, h)) continue;              // skip wide landscape banners/ads
             const ratio = Math.max(w, h) / Math.min(w, h);
-            if (ratio > 4) continue;                   // skip banners/strips
+            if (ratio > 3) continue;                   // skip extreme aspect ratios
             const score = w * h * (ratio < 1.3 ? 4 : ratio < 2 ? 2 : 1);
             if (score > bestScore) { bestScore = score; best = src; }
           }
@@ -1106,12 +1211,20 @@ function makeGoLink(affiliateUrl) {
 const SUPPORTED = [
   'amazon.in','amazon.com','amzn.in','amzn.to',
   'flipkart.com','dl.flipkart.com','fkrt.co',
+  'shopsy.in',
   'myntra.com','ajio.com','nykaa.com','nykaafashion.com',
   'tatacliq.com','croma.com','snapdeal.com',
   'netmeds.com','lenskart.com','mamaearth.in',
   'boat-lifestyle.com','pepperfry.com','jiomart.com',
   'bigbasket.com','firstcry.com','meesho.com',
+  'vijaysales.com','reliancedigital.in',
+  'decathlon.in','purplle.com','bewakoof.com',
+  'paytmmall.com','infibeam.com',
   'makemytrip.com','cleartrip.com',
+  'sangeethamobiles.com','sangeetha.com',
+  'zepto.com','zeptonow.com',
+  'poorvika.com',
+  'vijaysales.com',
 ];
 
 function isSupported(url) {
@@ -1127,6 +1240,25 @@ function cleanLink(rawUrl) {
   try {
     const parsed = new URL(rawUrl);
     const host   = parsed.hostname;
+
+    // ── ExtraPe short links — return as-is (these ARE the affiliate links) ──
+    // ExtraPe generates store-specific short links; never wrap them in /go/
+    const EXTRAPE_SHORT_DOMAINS = [
+      'bilty.co',    // Croma, Shopsy, others
+      'ajiio.co',    // Ajio
+      'cliq.ly',     // TataCliq
+      'myntr.co',    // Myntra
+      'meesho.co',   // Meesho
+      'jio.com',     // JioMart (affiliate)
+      'nykaa.co',    // Nykaa
+      'bwkf.co',     // Bewakoof
+      'snapd.co',    // Snapdeal
+      'bgbt.co',     // BigBasket
+      'jmart.co',    // JioMart alt
+    ];
+    if (EXTRAPE_SHORT_DOMAINS.some(d => host === d || host.endsWith('.' + d))) {
+      return { displayUrl: rawUrl, clickUrl: rawUrl };
+    }
 
     // ── Flipkart native short (fkrt.co/xxxxx) ──
     // Clean already. Display & click are the same.
@@ -1425,6 +1557,19 @@ async function trackClick(dest, store) {
   pushDashboardUpdate();
 }
 
+// Decode /go/ base64 redirect URLs for dashboard display
+function decodeGoUrl(dest) {
+  if (!dest) return dest;
+  try {
+    const m = dest.match(/\/go\/([A-Za-z0-9+/=_-]+)$/);
+    if (m) {
+      const decoded = Buffer.from(m[1].replace(/-/g,'+').replace(/_/g,'/'), 'base64').toString();
+      if (decoded.startsWith('http')) return decoded;
+    }
+  } catch(e) {}
+  return dest;
+}
+
 async function trackCompare() {
   if (dbConnected) {
     await Counter.updateOne({ _id: 'main' }, { $inc: { compares: 1 } }).catch(e => console.error('[DB] trackCompare:', e.message));
@@ -1474,6 +1619,21 @@ setInterval(() => {
 
 // ── ExtraPe API ──
 async function convertExtraPe(productUrl) {
+  // dl.flipkart.com: strip ALL params, keep only path + trailing '?'
+  // ExtraPe accepts: https://dl.flipkart.com/dl/<slug>/p/<itemId>?
+  try {
+    const fu = new URL(productUrl);
+    if (fu.hostname === 'dl.flipkart.com') {
+      productUrl = fu.protocol + '//' + fu.hostname + fu.pathname + '?';
+    }
+  } catch(e) {}
+
+  const key = _epKey(productUrl);
+  const hit = _epCache.get(key);
+  if (hit && Date.now() - hit.ts < _EP_TTL) {
+    console.log('ExtraPe [cached]:', key);
+    return hit.result;
+  }
   const r = await fetch('https://www.extrape.com/handler/convertText', {
     method: 'POST',
     headers: {
@@ -1485,7 +1645,7 @@ async function convertExtraPe(productUrl) {
       'rememberMeToken': extrapeTokenCache.rememberToken,
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
     },
-    body: JSON.stringify({ inputText: encodeURIComponent(productUrl), bitlyConvert:false, advanceMode:false })
+    body: JSON.stringify({ inputText: encodeURIComponent(productUrl), bitlyConvert:false, advanceMode:true })
   });
   if (!r.ok) throw new Error('ExtraPe ' + r.status);
   const data = await r.json();
@@ -1494,7 +1654,13 @@ async function convertExtraPe(productUrl) {
   if (!raw) throw new Error('No link returned: ' + JSON.stringify(data).substring(0,100));
   const decoded = decodeURIComponent(raw.trim());
   console.log('ExtraPe raw:', decoded);
-  return cleanLink(decoded);
+  const result = cleanLink(decoded);
+  _epCache.set(key, { result, ts: Date.now() });
+  if (_epCache.size > 200) {
+    const oldest = [..._epCache.entries()].sort((a,b) => a[1].ts - b[1].ts)[0];
+    _epCache.delete(oldest[0]);
+  }
+  return result;
 }
 
 // ── Queue processor ──
@@ -1506,6 +1672,15 @@ async function processQueue() {
   const req = requests[id];
   if (!req) { processing = false; processQueue(); return; }
   req.state = 'processing';
+
+  // If Compare is actively processing the same URL, wait for it to finish
+  // so we get the cached result instead of making a duplicate ExtraPe call
+  const reqKey = _epKey(req.url);
+  if (_compareActive.has(reqKey) || _compareActive.has(req.url)) {
+    console.log('[Queue] Compare is running for same URL — waiting 8s for cache:', reqKey);
+    await new Promise(r => setTimeout(r, 8000));
+  }
+
   try {
     const result = await convertExtraPe(req.url);
     // cleanLink always returns an object now
@@ -1516,7 +1691,23 @@ async function processQueue() {
       req.affiliateLink = req.displayLink = result;
     }
     req.state = 'done';
-    trackConversion(req.url, req.store, 'done', req.affiliateLink);
+    // Ensure store is detected — use URL detection if store is still Unknown
+    const finalStore = (req.store && req.store !== 'Unknown')
+      ? req.store
+      : (detectStoreFromUrl(req.url) || detectStoreFromUrl(req.affiliateLink || '') || 'Unknown');
+    req.store = finalStore;
+    // Only track the affiliate link if it's meaningfully different from the input URL
+    // amzn.in short links return themselves — skip to avoid duplicate dashboard entries
+    const trackUrl = req.displayLink || req.affiliateLink || req.url;
+    const isDifferent = trackUrl !== req.url &&
+      !(req.url.includes('amzn.in') && trackUrl.includes('amzn.in')) &&
+      !(req.url.includes('fkrt.co') && trackUrl.includes('fkrt.co'));
+    if (isDifferent) {
+      trackConversion(trackUrl, finalStore, 'done', req.affiliateLink);
+    } else {
+      // Still track but with the affiliate link as the stored URL
+      trackConversion(req.affiliateLink || trackUrl, finalStore, 'done', req.affiliateLink);
+    }
   } catch(e) {
     req.state = 'error'; req.error = e.message;
     trackConversion(req.url, req.store, 'error', null);
@@ -2529,18 +2720,24 @@ async function searchViaSerpAPI(url, srcStore, knownProductName = '') {
 app.get('/', (req, res) => res.send('Smart Pick Deals ✅'));
 app.get('/ping', (req, res) => res.json({ status:'ok', time:new Date().toISOString() }));
 
-// Browser pool status
-app.get('/pool/status', (req, res) => {
-  res.json({
-    poolSize:    POOL_SIZE,
-    browsers:    browserPool.map((s, i) => ({
-      id:        i,
-      connected: !!(s.browser && s.browser.isConnected()),
-      busy:      s.busy,
-    })),
-    queueLength: poolWaitQueue.length,
-    available:   browserPool.filter(s => !s.busy && s.browser && s.browser.isConnected()).length,
-  });
+// ── Store logo endpoint — serves known store logos as images ──
+// Avoids CSP/CORS issues with inline data URIs from API responses
+const STORE_LOGO_IMAGES = {
+  'reliance-digital': Buffer.from('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/jL3jzvCw6emm9/rPvbyeF731JXxvfG59O8ra/YNN9pZymu8Aavvez7iytu+9+k13vmGp1an+XXXWr3SG876gX+uLkq898rAOpK76vtW7/e1l18b/2vPvf4R0mep8BDZIGOSlqYh7wZZcvR8bSubncxUto/0y5JfbV30GAegHdqYeTIyGZHAu5w+p1WnRoyF3ZH+jwbk/plXFh/87wONJebYntLqZ1wx4qt/4h7WPK7mbV5ag296T8edfNOz8NMAR3aO1Vl73Rmvk8Prnr28nX3PU50/0ljtynHlLt502SunvH6JXnkSGpaa5St3AUW8JE6EJGsdVx//WmdjpabajBgrvbs0R4Zn0galpDfkXrzQ8CYPbP3Hv9TYs+UVka2y2omzC2eQh41ZL+SA9o7L4sFi9qaCMibxy5//87nDaKVcCwAAA0dJREFUjyXnntvRk2GO7i1dGfHqnV9NbKuDuprwrsZsQPJ59Y1v+P/NN4/5wpGS1NY+1vb9O30GX9vn/g6Ft+oNAB1bczhXH/+apyPhmEoLRwopdL4xK2VvRRGjt8r9Q+dbdEHNxzu3MGNbBjbvrxQ318ZCAB1GhFZzfj4KsrXF5WcfO/fMExPnraFcrETzNDGYE7vx/ebd4x2bgXaaEAPXAFEE+Ax4gFQRFgbr53pRih7IrIeKypau6Xafy5QJv1hJAbDVI400u8c7OANKBEZZakBTsw0CCQxPWokCNl8ddUs0BNqK/kNoV4I+NSnFgMNeefl47dHlZ7q/f6wzoPhIAmPHALUKSGzn+3uwjUF4kY10IRKqaXkrCmpRaCwwNjhTYNFePrrCuzwT79DvDkaLzwZtp+M3X9phE/CuwZRMi3cgSdA+WVQQIuILldc5UF3hvUNCu/yxgP+heWCSp/rXwXvhjOJFcOQQCOJAqIlYE+kUmwHSH2vpi5eOrvAuz8Q79DtMi/kgOdBgIT1IJi0bwA6IWBClVR23tFPayCIoTLUQbdGujLQrvCtT8c48wDfGpIFfGkZAdkgSp/ALpMYhfQAI+3Kz2bQBO4i0qKjrxKOrY+0K752R2ZVPlTsROzQOvAH4LCmbHDqIdo3UR7kyShHS5FGUwmnoGIhal5oEhbx0dIV3eSbeod/grHc++QoUABMKIiz+XWIYp4W9EC0KmtDtAo8SeKeXju8Pp1w+q/t7Q85AV3gbUizrG1RXeOubpw15Vld4G1Is6xtUV3jrm6cNeVZXeBtSLOsbVFd465unDXlWV3gbUizrG1RXeOubpw15Vld4G1Is6xtUV3jrm6cNeVZXeBtSLOsbVFd465unDXlWV3gbUizrG1RXeOubpw15Vld4G1Is6xtUV3jrm6cNeVZXeBtSLOsbVFd465unDXlWV3gbUizrG1RXeOubpw15Vld4G1Is6xtUV3jrm6cNeVZXeBtSLOsbVFd465unDXlWV3gbUizrG1RXeOubpw15Vld4G1Is6xtUV3jrm6cNeVZXeBtSLOsbVFd465unDXlWV3gbUizrG1RXeOubpw15Vld4G1Is6xtUV3jrm6cNedb/D2WfRBmTnp2eAAAAAElFTkSuQmCC', 'base64'),
+  'reliancedigital':  Buffer.from('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/jL3jzvCw6emm9/rPvbyeF731JXxvfG59O8ra/YNN9pZymu8Aavvez7iytu+9+k13vmGp1an+XXXWr3SG876gX+uLkq898rAOpK76vtW7/e1l18b/2vPvf4R0mep8BDZIGOSlqYh7wZZcvR8bSubncxUto/0y5JfbV30GAegHdqYeTIyGZHAu5w+p1WnRoyF3ZH+jwbk/plXFh/87wONJebYntLqZ1wx4qt/4h7WPK7mbV5ag296T8edfNOz8NMAR3aO1Vl73Rmvk8Prnr28nX3PU50/0ljtynHlLt502SunvH6JXnkSGpaa5St3AUW8JE6EJGsdVx//WmdjpabajBgrvbs0R4Zn0galpDfkXrzQ8CYPbP3Hv9TYs+UVka2y2omzC2eQh41ZL+SA9o7L4sFi9qaCMibxy5//87nDaKVcCwAAA0dJREFUjyXnntvRk2GO7i1dGfHqnV9NbKuDuprwrsZsQPJ59Y1v+P/NN4/5wpGS1NY+1vb9O30GX9vn/g6Ft+oNAB1bczhXH/+apyPhmEoLRwopdL4xK2VvRRGjt8r9Q+dbdEHNxzu3MGNbBjbvrxQ318ZCAB1GhFZzfj4KsrXF5WcfO/fMExPnraFcrETzNDGYE7vx/ebd4x2bgXaaEAPXAFEE+Ax4gFQRFgbr53pRih7IrIeKypau6Xafy5QJv1hJAbDVI400u8c7OANKBEZZakBTsw0CCQxPWokCNl8ddUs0BNqK/kNoV4I+NSnFgMNeefl47dHlZ7q/f6wzoPhIAmPHALUKSGzn+3uwjUF4kY10IRKqaXkrCmpRaCwwNjhTYNFePrrCuzwT79DvDkaLzwZtp+M3X9phE/CuwZRMi3cgSdA+WVQQIuILldc5UF3hvUNCu/yxgP+heWCSp/rXwXvhjOJFcOQQCOJAqIlYE+kUmwHSH2vpi5eOrvAuz8Q79DtMi/kgOdBgIT1IJi0bwA6IWBClVR23tFPayCIoTLUQbdGujLQrvCtT8c48wDfGpIFfGkZAdkgSp/ALpMYhfQAI+3Kz2bQBO4i0qKjrxKOrY+0K752R2ZVPlTsROzQOvAH4LCmbHDqIdo3UR7kyShHS5FGUwmnoGIhal5oEhbx0dIV3eSbeod/grHc++QoUABMKIiz+XWIYp4W9EC0KmtDtAo8SeKeXju8Pp1w+q/t7Q85AV3gbUizrG1RXeOubpw15Vld4G1Is6xtUV3jrm6cNeVZXeBtSLOsbVFd465unDXlWV3gbUizrG1RXeOubpw15Vld4G1Is6xtUV3jrm6cNeVZXeBtSLOsbVFd465unDXlWV3gbUizrG1RXeOubpw15Vld4G1Is6xtUV3jrm6cNeVZXeBtSLOsbVFd465unDXlWV3gbUizrG1RXeOubpw15Vld4G1Is6xtUV3jrm6cNeVZXeBtSLOsbVFd465unDXlWV3gbUizrG1RXeOubpw15Vld4G1Is6xtUV3jrm6cNeVZXeBtSLOsbVFd465unDXlWV3gbUizrG1RXeOubpw15Vld4G1Is6xtUV3jrm6cNedb/D2WfRBmTnp2eAAAAAElFTkSuQmCC', 'base64'),
+};
+app.get('/store-logo/:name', (req, res) => {
+  const key = (req.params.name || '').toLowerCase().replace(/\s+/g, '-');
+  const img = STORE_LOGO_IMAGES[key];
+  if (img) {
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    return res.send(img);
+  }
+  // Fallback: redirect to Google Favicon API
+  const domain = key.replace(/-/g, '') + '.com';
+  res.redirect(`https://www.google.com/s2/favicons?domain=${domain}&sz=128`);
 });
 
 // Battery status endpoint — reads from Linux battery sys files
@@ -3002,7 +3199,7 @@ app.post('/admin/sync-from', async (req, res) => {
     const events = [
       ...(d.recentVisits       || []).map(e => ({ type:'visit',      url:e.url,   ts:new Date(e.ts) })),
       ...(d.recentConversions  || []).map(e => ({ type:'conversion', url:e.url,   store:e.store, state:e.state, ts:new Date(e.ts) })),
-      ...(d.recentClicks       || []).map(e => ({ type:'click',      dest:e.dest, store:e.store || detectStoreFromUrl(e.dest||''), ts:new Date(e.ts) })),
+      ...(d.recentClicks       || []).map(e => ({ type:'click',      dest:decodeGoUrl(e.dest), store:e.store || detectStoreFromUrl(e.dest||''), ts:new Date(e.ts) })),
     ].filter(e => e.ts && !isNaN(e.ts));
 
     if (events.length > 0) {
@@ -3017,8 +3214,23 @@ app.post('/admin/sync-from', async (req, res) => {
 
 // Track page visits
 app.post('/track/visit', async (req, res) => {
-  const page = req.body?.page || req.headers?.referer || '/';
-  await trackVisit(page).catch(() => {});
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+    || req.headers['x-real-ip']
+    || req.socket?.remoteAddress
+    || 'unknown';
+  // Resolve IP → location (country - region - city)
+  let location = ip;
+  try {
+    if (ip && ip !== 'unknown' && !ip.startsWith('127.') && !ip.startsWith('::1')) {
+      const geo = await fetch(`http://ip-api.com/json/${ip}?fields=countryCode,regionName,city`, {
+        signal: AbortSignal.timeout(2000)
+      }).then(r => r.json()).catch(() => null);
+      if (geo && geo.countryCode) {
+        location = [geo.city, geo.regionName, geo.countryCode].filter(Boolean).join(' - ');
+      }
+    }
+  } catch(e) {}
+  await trackVisit(location).catch(() => {});
   res.json({ ok: true });
 });
 
@@ -3080,11 +3292,7 @@ app.get('/dashboard/live', (req, res) => {
   const interval = setInterval(async () => {
     try {
       const now = new Date();
-      const IST_OFFSET = 5.5 * 60 * 60 * 1000;
-      const nowUTC = Date.now();
-      const midnightIST = new Date(nowUTC + IST_OFFSET);
-      midnightIST.setUTCHours(0,0,0,0);
-      const from = new Date(midnightIST.getTime() - IST_OFFSET);
+      const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // last 30 days
 
       if (dbConnected) {
         const dateFilter = { ts: { $gte: from, $lte: now } };
@@ -3111,13 +3319,10 @@ app.get('/dashboard/live', (req, res) => {
 
 // Dashboard stats — supports ?from=ISO&to=ISO date range
 app.get('/dashboard/stats', async (req, res) => {
-  // Default: today from midnight to now (IST = UTC+5:30)
-  const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+  // Default: last 30 days (today-only filter hides most data)
   const nowUTC = Date.now();
-  const nowIST = nowUTC + IST_OFFSET;
-  const midnightIST = nowIST - (nowIST % (24*60*60*1000));
-  const defaultFrom = new Date(midnightIST - IST_OFFSET); // back to UTC
   const defaultTo   = new Date(nowUTC);
+  const defaultFrom = new Date(nowUTC - 30 * 24 * 60 * 60 * 1000);
 
   const from = req.query.from ? new Date(req.query.from) : defaultFrom;
   const to   = req.query.to   ? new Date(req.query.to)   : defaultTo;
@@ -3156,7 +3361,28 @@ app.get('/dashboard/stats', async (req, res) => {
         compares:     comparesCount,
         storeBreakdown,
         recentConversions: recentConversions.map(e => ({ url: e.url, store: e.store, state: e.state, ts: e.ts?.getTime() })),
-        recentClicks:      recentClicks.map(e => ({ dest: e.dest, store: e.store || detectStoreFromUrl(e.dest||'') || '', ts: e.ts?.getTime() })),
+        recentClicks: (() => {
+          // Decode /go/ URLs and deduplicate: same dest within 5s → keep row with store name
+          const mapped = recentClicks.map(e => ({
+            dest:  decodeGoUrl(e.dest),
+            store: e.store || detectStoreFromUrl(e.dest||'') || '',
+            ts:    e.ts?.getTime()
+          }));
+          const seen = new Map(); // dest → best entry (prefer one with store)
+          for (const row of mapped) {
+            const key = row.dest;
+            const existing = seen.get(key);
+            if (!existing) { seen.set(key, row); continue; }
+            // Same dest: if within 5s, keep the one with store name
+            if (Math.abs((row.ts||0) - (existing.ts||0)) < 5000) {
+              if (!existing.store && row.store) seen.set(key, row);
+            } else {
+              // Different time — different click, add with composite key
+              seen.set(key + '|' + row.ts, row);
+            }
+          }
+          return Array.from(seen.values()).sort((a,b) => (b.ts||0) - (a.ts||0));
+        })(),
         recentVisits:      recentVisits.map(e => ({ url: e.url, ts: e.ts?.getTime() })),
         dbConnected:  true,
         dateRange:    { from: from.toISOString(), to: to.toISOString() },
@@ -3193,7 +3419,16 @@ app.post('/generate', (req, res) => {
   try { new URL(url); } catch { return res.status(400).json({ error:'Invalid URL.' }); }
   if (!isSupported(url)) return res.status(400).json({ error:'Store not supported by ExtraPe.' });
   if (!extrapeTokenCache.accessToken) return res.status(500).json({ error:'EXTRAPE_ACCESS_TOKEN not set. Visit https://api.smartpickdeals.live/extrape/token-page' });
-  const id = enqueue(url, store||'Unknown');
+
+  // Skip convert queue if this URL is currently being handled by Compare
+  const compareKey = _epKey(url);
+  if (_compareActive.has(compareKey)) {
+    console.log('[Generate] Skipped — Compare is handling this URL:', compareKey);
+    return res.json({ requestId: null, state: 'skipped', reason: 'compare_in_progress' });
+  }
+
+  const detectedStore = (store && store !== 'Unknown') ? store : (detectStoreFromUrl(url) || 'Unknown');
+  const id = enqueue(url, detectedStore);
   processQueue();
   return res.json({ requestId:id, ...getStatus(id) });
 });
@@ -3213,14 +3448,14 @@ app.get('/go/:code', (req, res) => {
       req.params.code.replace(/-/g,'+').replace(/_/g,'/'), 'base64'
     ).toString();
     if (decoded.startsWith('http')) {
-      trackClick(decoded); // full URL
+      // Do NOT track here — frontend already tracked the /go/ URL with the correct store name.
+      // Tracking again here creates duplicate rows in dashboard with missing store name.
       return res.redirect(302, decoded);
     }
   } catch(e) {}
   // Fall back to in-memory short code (old format)
   const url = shortLinks[req.params.code];
   if (url) {
-    trackClick(url.substring(0, 80));
     return res.redirect(301, url);
   }
   return res.status(404).send('Link not found.');
@@ -3254,6 +3489,9 @@ app.get('/compare/search', async (req, res) => {
   const deviceId = flashTokenCache.deviceId || process.env.FLASH_DEVICE_ID || 'web-spd';
   if (!token) return res.status(503).json({ error: 'Flash token not set. Visit https://api.smartpickdeals.live/flash/token-page' });
 
+  const _ck = _epKey(rawUrl); _compareActive.add(_ck);
+  _compareActive.add(rawUrl); // also add raw URL for short link matching
+  res.on('finish', () => { _compareActive.delete(_ck); _compareActive.delete(rawUrl); });
   try {
     // ── URL normalisation ──
     let url = rawUrl;
@@ -3275,7 +3513,7 @@ app.get('/compare/search', async (req, res) => {
     const STRIP_PARAMS = ['ref', 'ref_', 'social_share', 'iid', 'fm', 'hl_lid', 'lid',
       'srno', 'otracker', 'ssid', 'ov_redirect', '_refId', '_appId', 'ppt', 'ppn',
       'source', 'smid', 'psc', 'th', 'linkCode', 'tag', 'linkId', 'camp', 'creative',
-      'ctx', 'BU', 'marketplace'];
+      'ctx', 'BU', 'marketplace', '_encoding'];
     try {
       const pu2 = new URL(url);
       STRIP_PARAMS.forEach(p => pu2.searchParams.delete(p));
@@ -3322,9 +3560,11 @@ app.get('/compare/search', async (req, res) => {
     const streamText = await sr.text();
     console.log('[Compare] Stream sample:', streamText.substring(0, 300));
 
-    // Extract webapp URL from INT_NAVIGATION event — Flash uses two formats:
+    // Extract webapp URL from INT_NAVIGATION event — Flash uses multiple formats:
     // Format A: webapp.flash.co/item/273023/h/ce9vnppi
     // Format B: webapp.flash.co/product-search/MewW_YRY
+    // Format C: flash.co/product-details/FZBL5L7N
+    // Format D: flash.co/item/123/slug/h/hash
     let itemId    = null;
     let pageHash  = null;
     let webappUrl = null;
@@ -3340,6 +3580,18 @@ app.get('/compare/search', async (req, res) => {
     if (!webappUrl) {
       const navMatchB = streamText.match(/webapp\.flash\.co\/product-search\/([A-Za-z0-9_-]{4,})/);
       if (navMatchB) { pageHash = navMatchB[1]; webappUrl = `https://webapp.flash.co/product-search/${pageHash}`; }
+    }
+
+    // Format C: flash.co/product-details/{hash} — navigate directly, itemId resolved from page
+    if (!webappUrl) {
+      const navMatchC = streamText.match(/flash\.co\/product-details\/([A-Za-z0-9_-]{4,})/);
+      if (navMatchC) { pageHash = navMatchC[1]; webappUrl = `https://flash.co/product-details/${pageHash}`; }
+    }
+
+    // Format D: flash.co/item/{id}/...
+    if (!webappUrl) {
+      const navMatchD = streamText.match(/flash\.co\/item\/(\d+)\/[^/]+\/h\/([A-Za-z0-9_-]+)/);
+      if (navMatchD) { itemId = navMatchD[1]; pageHash = navMatchD[2]; webappUrl = `https://webapp.flash.co/item/${itemId}/h/${pageHash}`; }
     }
 
     // Fallback: any /h/{hash} pattern
@@ -3363,7 +3615,8 @@ app.get('/compare/search', async (req, res) => {
 
     let quickStores = [];
     let itemPageMeta = { img: '', name: '' };
-    const extracted = await withFlashBrowser(async (browser) => {
+    const extracted = await withFlashBrowser(async () => {
+      const browser = await getFlashBrowser();
       const page    = await browser.newPage();
       await page.setViewport({ width: 1280, height: 900 });
       await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
@@ -3388,73 +3641,363 @@ app.get('/compare/search', async (req, res) => {
       });
 
       try {
-        // Inject auth token
-        await page.goto('https://webapp.flash.co', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
-        await page.evaluate((tok) => {
-          try { localStorage.setItem('authToken',   tok); } catch(e) {}
-          try { localStorage.setItem('accessToken', tok); } catch(e) {}
-        }, token);
+        // ── Token injection — only visit flash.co homepage if not yet authenticated ──
+        let needsAuth = true;
+        try {
+          const existing = await page.evaluate(() => {
+            try { return !!localStorage.getItem('authToken'); } catch(e) { return false; }
+          }).catch(() => false);
+          if (existing) needsAuth = false;
+        } catch(e) {}
 
-        // Navigate directly to item page
-        await page.goto(webappUrl, { waitUntil: 'networkidle2', timeout: 40000 });
-        const loadedUrl = page.url();
+        if (needsAuth) {
+          await page.goto('https://flash.co', { waitUntil: 'domcontentloaded', timeout: 12000 }).catch(() => {});
+          await page.evaluate((tok) => {
+            try { localStorage.setItem('authToken', tok); } catch(e) {}
+            try { localStorage.setItem('accessToken', tok); } catch(e) {}
+          }, token);
+        } else {
+          await page.evaluate((tok) => {
+            try { localStorage.setItem('authToken', tok); } catch(e) {}
+            try { localStorage.setItem('accessToken', tok); } catch(e) {}
+          }, token);
+        }
+
+        // ── FAST PATH: Go directly to price-compare (has ALL stores, no expand needed) ──
+        const priceCompareUrl = itemId
+          ? `https://flash.co/price-compare/${itemId}/h/${pageHash}`
+          : null;
+
+        if (priceCompareUrl) {
+          // Fast path: fetch image from item page FIRST, then navigate to price-compare
+          // (price-compare page never has og:image — only the item page does)
+          console.log('[Compare/Puppeteer] Fast path — fetching image from item page first:', `https://flash.co/item/${itemId}/h/${pageHash}`);
+          try {
+            await page.goto(`https://flash.co/item/${itemId}/h/${pageHash}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+            // Wait for React to render og:image (up to 8s)
+            try {
+              await page.waitForFunction(
+                () => !!document.querySelector('meta[property="og:image"]')?.getAttribute('content'),
+                { timeout: 8000 }
+              );
+            } catch(e) {}
+            await new Promise(r => setTimeout(r, 800));
+            itemPageMeta = await page.evaluate(() => {
+              const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
+              let img = '';
+
+              // ── STRATEGY: Trust og:image exclusively on the Flash item page ──
+              // Flash always sets og:image to the real product image (server-rendered).
+              // NEVER use the <img> loop here — the page contains promo banners (e.g.
+              // "Win a smartwatch") whose <img> src are Amazon CDN URLs, visually
+              // indistinguishable from real product images by URL pattern alone.
+
+              // Helper: is this og:image URL a Flash promo/game asset?
+              const isFlashPromo = (s) => {
+                const sl = s.toLowerCase();
+                if (sl.includes('/merchants/') || sl.includes('/favicon') || sl.includes('faviconv2') || sl.includes('/icons/')) return true;
+                if (sl.includes('gstatic.com/shopping') || sl.includes('encrypted-tbn')) return true;  // Google Shopping thumbnail cache
+                // Flash promo S3 paths (games, creatives, banners) appear in /plain/ encoded URLs
+                if (/flash-creatives|images\/games|images\/banners|images\/promos|quiz|giveaway|reward|spin|contest/i.test(sl)) return true;
+                // Flash own-domain assets without /plain/ proxy (not product images)
+                if (sl.includes('flash.co') && !sl.includes('/plain/') && !sl.includes('/item/') && /\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl)) return true;
+                return false;
+              };
+
+              const ogImg = document.querySelector('meta[property="og:image"]');
+              if (ogImg) {
+                const s = (ogImg.getAttribute('content') || '').trim();
+                if (s.startsWith('http') && !isFlashPromo(s)) img = s;
+              }
+
+              // Only if og:image absent or rejected, try img.flash.co/plain/ — but decode and re-check
+              if (!img) {
+                for (const el of document.querySelectorAll('img')) {
+                  const s = el.src || '';
+                  if (/img\.flash\.co.*\/plain\//.test(s)) {
+                    try {
+                      const decoded = decodeURIComponent(s.split('/plain/')[1].split('?')[0]);
+                      const candidate = decoded.startsWith('http') ? decoded : s;
+                      if (!isFlashPromo(candidate)) { img = candidate; break; }
+                    } catch { /* skip */ }
+                  }
+                }
+              }
+
+              let name = '';
+              const ogTitle = document.querySelector('meta[property="og:title"]');
+              if (ogTitle) { const t = (ogTitle.getAttribute('content') || '').trim(); if (t.length > 8 && !JUNK.some(j => t.toLowerCase().includes(j))) name = t; }
+              if (!name) { for (const el of document.querySelectorAll('h1,h2')) { const t = el.textContent.trim(); if (t.length > 8 && t.length < 400 && !JUNK.some(j => t.toLowerCase().includes(j))) { name = t; break; } } }
+              return { img, name };
+            }).catch(() => ({ img: '', name: '' }));
+            console.log('[Compare/Puppeteer] Fast-path item page image:', itemPageMeta.img.substring(0, 80));
+          } catch(imgErr) {
+            console.log('[Compare/Puppeteer] Fast-path image fetch failed:', imgErr.message);
+          }
+
+          // Now navigate to price-compare for store prices
+          console.log('[Compare/Puppeteer] Fast path → price-compare:', priceCompareUrl);
+          await page.goto(priceCompareUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+        } else if (webappUrl && webappUrl.includes('product-details')) {
+          // Format C: flash.co/product-details/{hash} — click "Compare prices" to get to price-compare
+          console.log('[Compare/Puppeteer] Product-details path:', webappUrl);
+          await page.goto(webappUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+          await new Promise(r => setTimeout(r, 2000));
+          // Extract itemId from page URL or API calls
+          const pdUrl = page.url();
+          const pdM = pdUrl.match(/\/item\/(\d+)\//) || pdUrl.match(/product-details\/\d+\/h\//) ;
+          // Click "Compare prices" button
+          const clicked = await page.evaluate(() => {
+            for (const el of document.querySelectorAll('a, button, [role="button"]')) {
+              const t = (el.textContent || '').toLowerCase().trim();
+              if (/compare prices|view all stores|price compare|all \d+ stores/.test(t) && t.length < 60) {
+                if (el.tagName === 'A' && el.href) return el.href;
+                el.click(); return 'clicked';
+              }
+            }
+            return null;
+          }).catch(() => null);
+          if (clicked && clicked.startsWith('http')) {
+            await page.goto(clicked, { waitUntil: 'domcontentloaded', timeout: 20000 });
+          } else if (clicked === 'clicked') {
+            await new Promise(r => setTimeout(r, 2000));
+          }
+          // Try to extract itemId from current URL
+          const afterUrl = page.url();
+          const afterM = afterUrl.match(/\/item\/(\d+)\//) || afterUrl.match(/\/price-compare\/(\d+)\//);
+          if (afterM && !itemId) { itemId = afterM[1]; }
+          const afterH = afterUrl.match(/\/h\/([A-Za-z0-9_-]+)/);
+          if (afterH) { pageHash = afterH[1]; }
+          // If we now have itemId, navigate to price-compare
+          if (itemId && pageHash) {
+            const pc2 = `https://flash.co/price-compare/${itemId}/h/${pageHash}`;
+            console.log('[Compare/Puppeteer] Product-details → price-compare:', pc2);
+            await page.goto(pc2, { waitUntil: 'domcontentloaded', timeout: 20000 });
+          }
+        } else {
+          // No itemId — navigate to product-search and wait for redirect to item page
+          console.log('[Compare/Puppeteer] No itemId — navigating to:', webappUrl);
+          await page.goto(webappUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+          try {
+            await page.waitForFunction(
+              () => /\/item\/\d+\//.test(window.location.href) || /price-compare/.test(window.location.href),
+              { timeout: 15000 }
+            );
+          } catch(e) {}
+        }
+
+        let loadedUrl = page.url();
         console.log('[Compare/Puppeteer] Loaded:', loadedUrl);
 
-        // Extract itemId from page URL if not already set (product-search URLs redirect to item/ID/h/hash)
+        // Extract itemId/pageHash from URL if not already set
         if (!itemId) {
-          const m = loadedUrl.match(/\/item\/(\d+)\//);
+          const m = loadedUrl.match(/\/item\/(\d+)\//) || loadedUrl.match(/\/price-compare\/(\d+)\//);
           if (m) { itemId = m[1]; console.log('[Compare/Puppeteer] itemId from URL:', itemId); }
         }
-        // Also update pageHash if URL has a different one
         if (loadedUrl.includes('/h/')) {
           const m = loadedUrl.match(/\/h\/([A-Za-z0-9_-]+)/);
           if (m && m[1] !== pageHash) { pageHash = m[1]; console.log('[Compare/Puppeteer] pageHash updated:', pageHash); }
         }
 
-        // Wait until we see at least 3 distinct ₹ prices (all stores loaded)
-        try {
-          await page.waitForFunction(() => {
-            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-            const prices = new Set();
-            let node;
-            while ((node = walker.nextNode())) {
-              const t = node.textContent.trim();
-              if (/^₹[\d,]+$/.test(t)) prices.add(t);
+        // Handle product-details page — extract itemId from intercepted API calls
+        if (loadedUrl.includes('product-details') && !itemId) {
+          // Wait briefly for API calls to fire
+          await new Promise(r => setTimeout(r, 2000));
+          for (const { url: apiUrl } of interceptedData) {
+            const m = apiUrl.match(/\/item\/(\d+)/) || apiUrl.match(/itemId[=:](\d+)/);
+            if (m) { itemId = m[1]; console.log('[Compare/Puppeteer] itemId from API:', itemId); break; }
+          }
+          // Also try clicking "View all stores" / "Compare prices"
+          const clicked = await page.evaluate(() => {
+            for (const el of document.querySelectorAll('a, button, [role="button"]')) {
+              const t = (el.textContent || '').toLowerCase().trim();
+              if (/compare prices|view all|all stores|price compare/.test(t) && t.length < 50) {
+                el.click(); return t;
+              }
             }
-            return prices.size >= 3;
-          }, { timeout: 35000 });
-          console.log('[Compare/Puppeteer] 3+ distinct prices detected');
-        } catch(e) { console.log('[Compare/Puppeteer] Price wait timed out'); }
+            return null;
+          }).catch(() => null);
+          if (clicked) {
+            console.log('[Compare/Puppeteer] Clicked on product-details:', clicked);
+            await new Promise(r => setTimeout(r, 3000));
+            loadedUrl = page.url();
+            const m2 = loadedUrl.match(/\/item\/(\d+)\//) || loadedUrl.match(/\/price-compare\/(\d+)\//);
+            if (m2 && !itemId) { itemId = m2[1]; }
+            if (loadedUrl.includes('/h/')) { const m3 = loadedUrl.match(/\/h\/([A-Za-z0-9_-]+)/); if (m3) pageHash = m3[1]; }
+          }
+        }
 
-        // Wait for all store cards to render (outbound links present)
+        const isOnItemPage = /\/item\/\d+\//.test(loadedUrl) && !loadedUrl.includes('price-compare');
+
+        if (isOnItemPage) {
+          // Extract meta from item page then navigate to price-compare
+          itemPageMeta = await page.evaluate(() => {
+            const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
+            let img = '';
+            const _isFP = (s) => { const sl=s.toLowerCase(); return sl.includes('/merchants/')||sl.includes('/favicon')||sl.includes('faviconv2')||(sl.includes('gstatic.com/shopping')||sl.includes('encrypted-tbn'))||/flash-creatives|images\/games|quiz|giveaway|reward|spin|contest/i.test(sl)||(/flash\.co\/(uploads?|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl))||(/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl)&&!sl.includes('/plain/')); };
+            const ogImg = document.querySelector('meta[property="og:image"]');
+            if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !_isFP(s)) img = s; }
+            // img.flash.co/plain/ only — decode and re-check to catch flash-creatives S3 paths
+            if (!img) {
+              for (const el of document.querySelectorAll('img')) {
+                const s = el.src || '';
+                if (/img\.flash\.co.*\/plain\//.test(s)) {
+                  try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); const c = d.startsWith('http') ? d : s; if (!_isFP(c)) { img = c; break; } } catch {}
+                }
+              }
+            }
+            let name = '';
+            const ogTitle = document.querySelector('meta[property="og:title"]');
+            if (ogTitle) { const t = (ogTitle.getAttribute('content')||'').trim(); if (t.length > 8 && !JUNK.some(j => t.toLowerCase().includes(j))) name = t; }
+            if (!name) { for (const el of document.querySelectorAll('h1,h2')) { const t = el.textContent.trim(); if (t.length > 8 && t.length < 400 && !JUNK.some(j => t.toLowerCase().includes(j))) { name = t; break; } } }
+            return { img, name };
+          }).catch(() => ({ img: '', name: '' }));
+          console.log('[Compare/Puppeteer] Item meta:', itemPageMeta.name.substring(0,40));
+
+          // Navigate to price-compare
+          if (itemId && pageHash) {
+            const pc = `https://flash.co/price-compare/${itemId}/h/${pageHash}`;
+            await page.goto(pc, { waitUntil: 'domcontentloaded', timeout: 20000 });
+            console.log('[Compare/Puppeteer] Navigated to price-compare:', page.url());
+            loadedUrl = page.url();
+          }
+        } else {
+          // On price-compare or product-details — try og:image then product CDN images
+          itemPageMeta = await page.evaluate(() => {
+            const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
+            let img = '';
+            // 1. og:image — re-check decoded path for flash-creatives S3 game/promo assets
+            const _isFP3 = (s) => { const sl=s.toLowerCase(); return sl.includes('/merchants/')||sl.includes('/favicon')||sl.includes('faviconv2')||(sl.includes('gstatic.com/shopping')||sl.includes('encrypted-tbn'))||/flash-creatives|images\/games|quiz|giveaway|reward|spin|contest/i.test(sl)||(/flash\.co\/(uploads?|banner|promo|ads?|campaign|quiz|win|reward)\//i.test(sl))||(sl.includes('flash.co')&&!sl.includes('/plain/')&&!sl.includes('/item/')&&/\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl)); };
+            const ogImg = document.querySelector('meta[property="og:image"]');
+            if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !_isFP3(s)) img = s; }
+            // 2. img.flash.co/plain/ — decode and re-check decoded path
+            if (!img) {
+              for (const el of document.querySelectorAll('img')) {
+                const s = el.src || '';
+                if (/img\.flash\.co.*\/plain\//.test(s)) {
+                  try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); const c = d.startsWith('http') ? d : s; if (!_isFP3(c)) { img = c; break; } } catch {}
+                }
+              }
+            }
+            // 3. Known product CDN patterns
+            if (!img) {
+              for (const el of document.querySelectorAll('img')) {
+                const s = el.src || '';
+                if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.toLowerCase().includes('faviconv2') || s.includes('/icons/') || s.includes('logo') || s.includes('merchant')) continue;
+                // Removed: CDN img loop — promo banners use same CDN, cannot distinguish
+              }
+            }
+            // 4. Largest non-logo, non-banner image
+            if (!img) {
+              let best = '', bestScore = 0;
+              for (const el of document.querySelectorAll('img')) {
+                const s = el.src || '';
+                const sl = s.toLowerCase();
+                if (!s || sl.includes('/merchants/') || sl.includes('/favicon') || sl.includes('faviconv2') || sl.includes('/icons/') || sl.includes('logo') || sl.includes('merchant') || s.length < 30) continue;
+                if (/flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl)) continue;
+                if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/')) continue;
+                const w = el.naturalWidth || el.width || 0, h = el.naturalHeight || el.height || 0;
+                if (w < 60 || h < 60) continue;
+                if (w > 0 && h > 0 && w / h > 2.2) continue;
+                const ratio = Math.max(w,h)/Math.min(w,h);
+                const score = w * h * (ratio < 1.5 ? 3 : ratio < 3 ? 1 : 0.1);
+                if (score > bestScore) { bestScore = score; best = s; }
+              }
+              img = best;
+            }
+            let name = '';
+            const ogTitle = document.querySelector('meta[property="og:title"]');
+            if (ogTitle) { const t = (ogTitle.getAttribute('content')||'').trim(); if (t.length > 8 && !JUNK.some(j => t.toLowerCase().includes(j))) name = t; }
+            if (!name) { for (const el of document.querySelectorAll('h1,h2,[class*="product"],[class*="title"]')) { const t = el.textContent.trim(); if (t.length > 8 && t.length < 400 && !JUNK.some(j => t.toLowerCase().includes(j))) { name = t; break; } } }
+            return { img, name };
+          }).catch(() => ({ img: '', name: '' }));
+
+          // If no image from price-compare page, visit the item page briefly to get it
+          if (!itemPageMeta.img && itemId && pageHash) {
+            try {
+              const itemUrl = `https://flash.co/item/${itemId}/h/${pageHash}`;
+              await page.goto(itemUrl, { waitUntil: 'domcontentloaded', timeout: 12000 });
+              // Wait for og:image meta tag to be set (React renders it async)
+              try {
+                await page.waitForFunction(
+                  () => !!document.querySelector('meta[property="og:image"]')?.getAttribute('content'),
+                  { timeout: 8000 }
+                );
+              } catch(e) {}
+              await new Promise(r => setTimeout(r, 1000));
+              const metaFromItem = await page.evaluate(() => {
+                const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
+                let img = '';
+                const ogImg = document.querySelector('meta[property="og:image"]');
+                const _isFP4 = (s) => { const sl=s.toLowerCase(); return sl.includes('/merchants/')||sl.includes('/favicon')||sl.includes('faviconv2')||(sl.includes('gstatic.com/shopping')||sl.includes('encrypted-tbn'))||/flash-creatives|images\/games|quiz|giveaway|reward|spin|contest/i.test(sl)||(/flash\.co\/(uploads?|banner|promo|ads?|campaign|quiz|win|reward)\//i.test(sl))||(/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl)&&!sl.includes('/plain/')); };
+                if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !_isFP4(s)) img = s; }
+                if (!img) {
+                  for (const el of document.querySelectorAll('img')) {
+                    const s = el.src || '';
+                    if (/img\.flash\.co.*\/plain\//.test(s)) {
+                      try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); const c = d.startsWith('http') ? d : s; if (!_isFP4(c)) { img = c; break; } } catch {}
+                    }
+                  }
+                }
+                let name = '';
+                const ogTitle = document.querySelector('meta[property="og:title"]');
+                if (ogTitle) { const t = (ogTitle.getAttribute('content')||'').trim(); if (t.length > 8 && !JUNK.some(j => t.toLowerCase().includes(j))) name = t; }
+                if (!name) { for (const el of document.querySelectorAll('h1,h2')) { const t = el.textContent.trim(); if (t.length > 8 && t.length < 400 && !JUNK.some(j => t.toLowerCase().includes(j))) { name = t; break; } } }
+                return { img, name };
+              }).catch(() => ({ img: '', name: '' }));
+              if (metaFromItem.img) itemPageMeta.img = metaFromItem.img;
+              if (metaFromItem.name && !itemPageMeta.name) itemPageMeta.name = metaFromItem.name;
+              console.log('[Compare/Puppeteer] Image from item page:', itemPageMeta.img.substring(0,60));
+              // Navigate back to price-compare
+              const pcBack = `https://flash.co/price-compare/${itemId}/h/${pageHash}`;
+              await page.goto(pcBack, { waitUntil: 'domcontentloaded', timeout: 15000 });
+            } catch(e) { console.log('[Compare/Puppeteer] Item page image fetch failed:', e.message); }
+          }
+
+          console.log('[Compare/Puppeteer] Page meta — image:', itemPageMeta.img.substring(0,60), '| name:', itemPageMeta.name.substring(0,40));
+        }
+
+        // Wait for stores to appear — race between 3+ outbound links or 10s timeout
         try {
-          await page.waitForFunction(() => {
-            const links = document.querySelectorAll('a[href]');
-            let outbound = 0;
-            links.forEach(a => { if (a.href && !a.href.includes('flash.co') && a.href.startsWith('http')) outbound++; });
-            return outbound >= 3;
-          }, { timeout: 20000 });
-          console.log('[Compare/Puppeteer] 3+ outbound links detected');
-        } catch(e) { console.log('[Compare/Puppeteer] Link wait timed out'); }
+          await page.waitForFunction(() =>
+            [...document.querySelectorAll('a[href]')]
+              .filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http')).length >= 3,
+            { timeout: 10000 }
+          );
+        } catch(e) { console.log('[Compare/Puppeteer] Store links wait timed out'); }
 
-        // Extra settle time for all dynamic content
-        await new Promise(r => setTimeout(r, 4000));
+        // Click "view X more" / "view all" if present — some price-compare pages paginate
+        const clicked3 = await page.evaluate(() => {
+          for (const el of document.querySelectorAll('button, a, [role="button"], span, div, p')) {
+            const t = (el.textContent || '').replace(/\s+/g, ' ').toLowerCase().trim();
+            if (/view all|view \d+ more|show all|all stores|more stores/.test(t) && t.length < 60) {
+              el.click(); return t;
+            }
+          }
+          return null;
+        }).catch(() => null);
 
-        // Scroll to trigger lazy-loaded stores
+        if (clicked3) {
+          console.log('[Compare/Puppeteer] Clicked expand:', clicked3);
+          await new Promise(r => setTimeout(r, 2000));
+        }
+
+        await new Promise(r => setTimeout(r, 600));
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-        await new Promise(r => setTimeout(r, 2000));
-        await page.evaluate(() => window.scrollTo(0, 0));
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 500));
 
-        // Log page title and intercepted API calls
-        const pageTitle = await page.title().catch(() => '');
-        console.log('[Compare/Puppeteer] Page title:', pageTitle);
-        console.log('[Compare/Puppeteer] Intercepted API calls:', interceptedData.length,
-          interceptedData.map(d => d.url).join(' | ').substring(0, 200));
+        const pageTitle2 = await page.title().catch(() => '');
+        const pageUrl2 = page.url();
+        console.log('[Compare/Puppeteer] Title:', pageTitle2, '| URL:', pageUrl2.substring(0, 80));
 
-        // Check intercepted data for store prices first
-        let interceptedStores = [];
-        for (const { url: apiUrl, data } of interceptedData) {
+        const linkCount2 = await page.evaluate(() =>
+          [...document.querySelectorAll('a[href]')].filter(a => a.href && !a.href.includes('flash.co')).length
+        ).catch(() => 0);
+        console.log('[Compare/Puppeteer] Outbound links visible:', linkCount2);
+
+        // Intercepted stores from API calls
+        const interceptedStores = [];
+        for (const { data } of interceptedData) {
           function digIntercepted(o, d, acc) {
             if (!o || d > 10 || typeof o !== 'object') return;
             if (Array.isArray(o)) {
@@ -3465,104 +4008,10 @@ app.get('/compare/search', async (req, res) => {
               o.forEach(x => digIntercepted(x, d+1, acc));
             } else { Object.values(o).forEach(v => digIntercepted(v, d+1, acc)); }
           }
-          const items = []; digIntercepted(data, 0, items);
-          if (items.length > interceptedStores.length) interceptedStores = items;
+          digIntercepted(data, 0, interceptedStores);
         }
         console.log('[Compare/Puppeteer] Intercepted stores:', interceptedStores.length);
 
-        // ── Extract product image + name NOW on item page (before navigation) ──
-        itemPageMeta = await page.evaluate(() => {
-          let img = '';
-          const ogImg = document.querySelector('meta[property="og:image"]');
-          if (ogImg) { const s = (ogImg.getAttribute('content')||'').trim(); if (s.startsWith('http') && !s.includes('/merchants/') && !s.includes('logo')) img = s; }
-          if (!img) {
-            for (const el of document.querySelectorAll('img')) {
-              const s = el.src || '';
-              if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
-              if (/img\.flash\.co.*\/plain\//.test(s)) { try { const d = decodeURIComponent(s.split('/plain/')[1].split('?')[0]); img = d.startsWith('http') ? d : s; break; } catch { img = s; break; } }
-            }
-          }
-          if (!img) {
-            for (const el of document.querySelectorAll('img')) {
-              const s = el.src || '';
-              if (!s || s.includes('/merchants/') || s.includes('/favicon') || s.includes('logo')) continue;
-              if (/media-amazon\.com|images-amazon\.com|_SL\d+_|_AC_|rukmini\d+\.flixcart|img\.flipkart/.test(s)) { img = s; break; }
-            }
-          }
-          const JUNK = ['flash ai','compare prices','best price','loading','price compare'];
-          let name = '';
-          const ogTitle = document.querySelector('meta[property="og:title"]');
-          if (ogTitle) { const t = (ogTitle.getAttribute('content')||'').trim(); if (t.length > 8 && !JUNK.some(j => t.toLowerCase().includes(j))) name = t; }
-          if (!name) { for (const el of document.querySelectorAll('h1,h2')) { const t = el.textContent.trim(); if (t.length > 8 && t.length < 400 && !JUNK.some(j => t.toLowerCase().includes(j))) { name = t; break; } } }
-          return { img, name };
-        }).catch(() => ({ img: '', name: '' }));
-        console.log('[Compare/Puppeteer] Item page meta — image:', itemPageMeta.img.substring(0,80), '| name:', itemPageMeta.name.substring(0,50));
-
-        // ── Wait for prices + store links ──
-        try {
-          await page.waitForFunction(() =>
-            (document.body.innerText.match(/₹[\d,]{3,}/g) || []).length >= 3,
-            { timeout: 35000 }
-          );
-          console.log('[Compare/Puppeteer] Prices detected');
-        } catch(e) { console.log('[Compare/Puppeteer] Price wait timed out'); }
-
-        try {
-          await page.waitForFunction(() =>
-            [...document.querySelectorAll('a[href]')]
-              .filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http')).length >= 3,
-            { timeout: 25000 }
-          );
-          console.log('[Compare/Puppeteer] Store links detected');
-        } catch(e) { console.log('[Compare/Puppeteer] Store links wait timed out'); }
-
-        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-        await new Promise(r => setTimeout(r, 3000));
-        await page.evaluate(() => window.scrollTo(0, 0));
-        await new Promise(r => setTimeout(r, 1000));
-
-        // ── Click "View all N stores" → navigate to price-compare page ──
-        const clicked2 = await page.evaluate(() => {
-          const els = [...document.querySelectorAll('button, a, [role="button"], span, div, p')];
-          for (const el of els) {
-            const t = (el.textContent || '').replace(/\s+/g, ' ').toLowerCase().trim();
-            if (/view all|show all|all stores|more stores|view \d+|show \d+/.test(t) && t.length < 60) {
-              el.click(); return t;
-            }
-          }
-          return null;
-        }).catch(() => null);
-
-        if (clicked2) {
-          console.log('[Compare/Puppeteer] Clicked expand button:', clicked2);
-          // Always navigate directly — click navigation is unreliable
-          const pcUrl = `https://flash.co/price-compare/${itemId}/h/${pageHash}`;
-          try {
-            await page.goto(pcUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-            console.log('[Compare/Puppeteer] Navigated to price-compare:', page.url());
-            await page.waitForFunction(() =>
-              [...document.querySelectorAll('a[href]')]
-                .filter(a => a.href && !a.href.includes('flash.co') && a.href.startsWith('http')).length >= 5,
-              { timeout: 12000 }
-            ).catch(() => {});
-            await new Promise(r => setTimeout(r, 1500));
-            await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-            await new Promise(r => setTimeout(r, 1000));
-          } catch(e) {
-            console.log('[Compare/Puppeteer] price-compare nav failed:', e.message);
-          }
-        } else {
-          console.log('[Compare/Puppeteer] No expand button found');
-        }
-
-        const pageTitle2 = await page.title().catch(() => '');
-        const pageUrl2 = page.url();
-        console.log('[Compare/Puppeteer] Title:', pageTitle2, '| URL:', pageUrl2.substring(0, 80));
-
-        const linkCount2 = await page.evaluate(() =>
-          [...document.querySelectorAll('a[href]')].filter(a => a.href && !a.href.includes('flash.co')).length
-        ).catch(() => 0);
-        console.log('[Compare/Puppeteer] Outbound links visible:', linkCount2);
 
         // ── Quick per-link card extraction (price-compare page) ──
         quickStores = await page.evaluate(() => {
@@ -3578,17 +4027,54 @@ app.get('/compare/search', async (req, res) => {
             'fireboltt': 'Fire-Boltt', 'fire-boltt': 'Fire-Boltt',
             'boat-lifestyle': 'Boat', 'vlebazaar': 'VleBazaar',
             'gadgetsnow': 'GadgetsNow', 'bajajfinserv': 'Bajaj Markets',
-            'dailydeals365': 'DailyDeals365',
+            'dailydeals365': 'DailyDeals365', 'shopclues': 'ShopClues',
+            'pepperfry': 'Pepperfry', 'decathlon': 'Decathlon',
+            'mamaearth': 'Mamaearth', 'purplle': 'Purplle',
+            'nykaafashion': 'Nykaa Fashion', 'bewakoof': 'Bewakoof',
+            'paytmmall': 'Paytm Mall', 'tatadigital': 'Tata Digital',
+            'infibeam': 'Infibeam', 'shopsy': 'Shopsy',
+            'samsungshop': 'Samsung Shop', 'oneplusstore': 'OnePlus Store',
+            'realme': 'Realme Store', 'mi.com': 'Mi Store', 'mi store': 'Mi Store',
+            'apple': 'Apple Store', 'gonoise': 'Noise',
           };
+
+          // Store domain whitelist — only accept URLs from the store's own domain
+          const STORE_DOMAINS = {
+            'Apple Store': ['apple.com'],
+            'Samsung Shop': ['samsung.com'],
+            'OnePlus Store': ['oneplus.in','oneplus.com'],
+            'Realme Store': ['realme.com'],
+            'Mi Store': ['mi.com'],
+          };
+
+          // Unwrap redirect URLs to find the real store
+          function unwrapUrl(href) {
+            try {
+              const u = new URL(href);
+              const ulp = u.searchParams.get('ulp') || u.searchParams.get('url') ||
+                          u.searchParams.get('dest') || u.searchParams.get('target');
+              return ulp ? decodeURIComponent(ulp) : href;
+            } catch(e) { return href; }
+          }
           const seen = new Set();
           const result = [];
           document.querySelectorAll('a[href]').forEach(a => {
             if (!a.href || a.href.includes('flash.co') || !a.href.startsWith('http')) return;
-            const hl = a.href.toLowerCase();
+            // Unwrap redirect wrappers (linksredirect.com, tjzuh.com etc.)
+            const checkUrl = unwrapUrl(a.href);
+            const hl = checkUrl.toLowerCase();
             const storeKey = Object.keys(STORE_MAP).find(k => hl.includes(k));
             if (!storeKey) return;
             const name = STORE_MAP[storeKey];
             if (seen.has(name)) return;
+            // Validate URL domain matches store — prevents cashify.in appearing as Apple Store
+            const allowedDomains = STORE_DOMAINS[name];
+            if (allowedDomains) {
+              try {
+                const host = new URL(checkUrl).hostname.replace('www.','');
+                if (!allowedDomains.some(d => host.includes(d))) return;
+              } catch(e) { return; }
+            }
 
             // Individual store card on Flash price-compare is ~50-150 chars
             let card = a.closest('.block.cursor-pointer') || a.closest('[class*="cursor-pointer"]');
@@ -3617,9 +4103,29 @@ app.get('/compare/search', async (req, res) => {
             const maxAmt = Math.max(...amounts);
             const price = (maxAmt / minAmt > 5) ? maxAmt : amounts[amounts.length - 1];
 
+            // Extract store logo from Flash card DOM
+            // Flash renders store logos as <img> with src in /merchants/ or img.flash.co paths
+            let flashLogoUrl = '';
+            const logoSearch = card ? [card, card.parentElement, card.parentElement?.parentElement, card.closest('li, [class*="store"], [class*="card"], [class*="item"]')].filter(Boolean) : [];
+            for (const el of logoSearch) {
+              // Try /merchants/ path first (most reliable — directly served logo files)
+              const m1 = el.querySelector('img[src*="/merchants/"]');
+              if (m1 && m1.src) { flashLogoUrl = m1.src; break; }
+              // Try any img.flash.co src (Flash CDN proxied logos)
+              const allImgs = Array.from(el.querySelectorAll('img[src]'));
+              const m2 = allImgs.find(i => i.src.includes('img.flash.co') || i.src.includes('flash.co/merchants'));
+              if (m2 && m2.src) { flashLogoUrl = m2.src; break; }
+              // Try first small img in the card (store logos are small, product images are large)
+              const m3 = allImgs.find(i => {
+                const w = i.naturalWidth || i.width || 0;
+                const h = i.naturalHeight || i.height || 0;
+                return w > 10 && w < 120 && h > 10 && h < 120;
+              });
+              if (m3 && m3.src && !m3.src.includes('data:')) { flashLogoUrl = m3.src; break; }
+            }
             seen.add(name);
             result.push({
-              name, price, url: a.href,
+              name, price, url: a.href, flashLogoUrl,
               outOfStock:  /out of stock|unavailable|sold out/i.test(cardText),
               isSource:    /you came from here/i.test(cardText),
               lowestPrice: /lowest price|best price/i.test(cardText),
@@ -4147,18 +4653,25 @@ app.get('/compare/search', async (req, res) => {
           // Product image — try multiple sources
           let productImage = '';
 
-          // 1. og:image (most reliable)
+          // 1. og:image (most reliable) — reject Flash promo/banner images
           const ogImg = document.querySelector('meta[property="og:image"]');
           if (ogImg) {
             const src = (ogImg.getAttribute('content') || '').trim();
-            if (src && src.startsWith('http') && !src.includes('/merchants/') && !src.includes('logo')) productImage = src;
+            const sl = src.toLowerCase();
+            const isFlashPromo = /flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl) ||
+                                 (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/'));
+            if (src && src.startsWith('http') && !sl.includes('/merchants/') && !sl.includes('logo')
+                && !sl.includes('/favicon') && !sl.includes('merchant') && !sl.includes('faviconv2')
+                && !sl.includes('/icons/') && !sl.includes('clearbit') && !isFlashPromo) productImage = src;
           }
 
           // 2. Flash CDN proxy — img.flash.co/plain/<encoded-url>
           if (!productImage) {
             for (const img of document.querySelectorAll('img')) {
               const src = img.src || '';
-              if (!src || src.includes('/merchants/') || src.includes('/favicon') || src.includes('logo')) continue;
+              const sl = src.toLowerCase();
+              if (!src || sl.includes('/merchants/') || sl.includes('/favicon') || sl.includes('logo')
+                  || sl.includes('merchant') || sl.includes('faviconv2') || sl.includes('/icons/')) continue;
               if (/img\.flash\.co.*\/plain\//.test(src)) {
                 try { const d = decodeURIComponent(src.split('/plain/')[1].split('?')[0]); if (d.startsWith('http')) { productImage = d; break; } } catch { productImage = src; break; }
               }
@@ -4169,19 +4682,27 @@ app.get('/compare/search', async (req, res) => {
           if (!productImage) {
             for (const img of document.querySelectorAll('img')) {
               const src = img.src || '';
-              if (!src || src.includes('/merchants/') || src.includes('/favicon') || src.includes('logo')) continue;
+              const sl = src.toLowerCase();
+              if (!src || sl.includes('/merchants/') || sl.includes('/favicon') || sl.includes('logo')
+                  || sl.includes('merchant') || sl.includes('faviconv2') || sl.includes('/icons/')) continue;
               if (/media-amazon\.com|images-amazon\.com|_SL\d+_|_AC_|rukmini\d+\.flixcart|img\.flipkart/.test(src)) { productImage = src; break; }
             }
           }
 
-          // 4. Largest square-ish non-logo image
+          // 4. Largest square-ish non-logo, non-banner image
           if (!productImage) {
             let best = '', bestScore = 0;
             for (const img of document.querySelectorAll('img')) {
               const src = img.src || '';
-              if (!src || src.includes('/merchants/') || src.includes('/favicon') || src.includes('logo') || src.length < 30) continue;
+              const sl = src.toLowerCase();
+              if (!src || sl.includes('/merchants/') || sl.includes('/favicon') || sl.includes('logo')
+                  || sl.includes('merchant') || sl.includes('faviconv2') || sl.includes('/icons/')
+                  || src.length < 30) continue;
+              if (/flash\.co\/(upload|banner|promo|ad|campaign|quiz|win|reward)/i.test(sl)) continue;
+              if (/flash\.co\/[^/]+\.(png|jpg|jpeg|webp)(\?|$)/i.test(sl) && !sl.includes('/plain/')) continue;
               const w = img.naturalWidth || img.width || 0, h = img.naturalHeight || img.height || 0;
-              if (w < 60 || h < 60) continue;
+              if (w < 80 || h < 80) continue;
+              if (w > 0 && h > 0 && w / h > 2.2) continue;
               const ratio = Math.max(w,h)/Math.min(w,h);
               const score = w * h * (ratio < 1.5 ? 3 : ratio < 3 ? 1 : 0.1);
               if (score > bestScore) { bestScore = score; best = src; }
@@ -4208,8 +4729,79 @@ app.get('/compare/search', async (req, res) => {
       extracted.stores = quickStores;
     }
     // Use image/name from item page (price-compare page has no og:image)
-    if (itemPageMeta.img) extracted.productImage = itemPageMeta.img;
+    // Validate with isProductImage() — rejects promo/ad/banner images that slip through browser-side filters
+    if (itemPageMeta.img && isProductImage(itemPageMeta.img)) {
+      extracted.productImage = itemPageMeta.img;
+    } else if (itemPageMeta.img) {
+      console.log('[Compare] itemPageMeta.img rejected by isProductImage:', itemPageMeta.img.substring(0, 80));
+    }
     if (itemPageMeta.name && !extracted.productName) extracted.productName = itemPageMeta.name;
+
+    // ── Stage 4 server-side image fallback ──
+    // If Puppeteer stages all failed to get a product image, try fetching it from
+    // the Flash item page og:image via a plain HTTP request (no browser needed).
+    if (!extracted.productImage && itemId && pageHash) {
+      try {
+        const itemPageUrl = `https://flash.co/item/${itemId}/h/${pageHash}`;
+        console.log('[Compare] Stage 4 image fetch (HTTP):', itemPageUrl);
+        const imgRes = await fetch(itemPageUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+            'Accept': 'text/html,application/xhtml+xml',
+          },
+          signal: AbortSignal.timeout(8000),
+        }).catch(() => null);
+        if (imgRes && imgRes.ok) {
+          const html = await imgRes.text().catch(() => '');
+          // og:image
+          const ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
+                       || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+          if (ogMatch && ogMatch[1]) {
+            const src = ogMatch[1].trim();
+            const sl = src.toLowerCase();
+            if (src.startsWith('http') && !sl.includes('/merchants/') && !sl.includes('logo')
+                && !sl.includes('/favicon') && !sl.includes('merchant') && !sl.includes('faviconv2')) {
+              extracted.productImage = src;
+              console.log('[Compare] Stage 4 image found:', src.substring(0, 60));
+            }
+          }
+          // img.flash.co/plain/<encoded> CDN pattern
+          if (!extracted.productImage) {
+            const cdnMatch = html.match(/https:\/\/img\.flash\.co[^"'\s]+\/plain\/([^"'\s?]+)/);
+            if (cdnMatch) {
+              try {
+                const decoded = decodeURIComponent(cdnMatch[1]);
+                if (decoded.startsWith('http')) {
+                  extracted.productImage = decoded;
+                  console.log('[Compare] Stage 4 CDN image found:', decoded.substring(0, 60));
+                }
+              } catch {}
+            }
+          }
+        }
+      } catch(e) { console.log('[Compare] Stage 4 image fetch failed:', e.message); }
+    }
+
+    // ── Stage 5: derive product image from source store URL ──
+    // As absolute last resort, use the Amazon/Flipkart product URL pattern to construct image URL
+    if (!extracted.productImage) {
+      const srcStoreEntry = (quickStores.length > 0 ? quickStores : extracted.stores).find(s => s.isSource);
+      const anyStore = srcStoreEntry || (quickStores.length > 0 ? quickStores[0] : extracted.stores[0]);
+      if (anyStore && anyStore.url) {
+        try {
+          const su = new URL(anyStore.url);
+          const sh = su.hostname;
+          // Amazon: construct image from ASIN
+          if (sh.includes('amazon')) {
+            const asin = su.pathname.match(/\/dp\/([A-Z0-9]{10})/i)?.[1];
+            if (asin) {
+              extracted.productImage = `https://images-na.ssl-images-amazon.com/images/P/${asin}.01._SL500_.jpg`;
+              console.log('[Compare] Stage 5 Amazon image from ASIN:', asin);
+            }
+          }
+        } catch {}
+      }
+    }
 
     if (extracted.stores.length === 0) {
       return res.status(404).json({
@@ -4234,8 +4826,7 @@ app.get('/compare/search', async (req, res) => {
           isSource:    isSrc,
           isBest,
           lowestPrice: s.lowestPrice || isBest,
-          // Only show savingsBadge on the best price store
-          savingsBadge: isBest ? (s.savingsBadge || '') : '',
+          savingsBadge: '',  // removed from UI — not shown in results
         };
       });
 
@@ -4250,17 +4841,86 @@ app.get('/compare/search', async (req, res) => {
 
     console.log('[Compare] ✅ FINAL:', stores.map(s => s.name + ':₹' + s.price + (s.isSource?'[src]':'') + (s.isBest?'[best]':'')).join(' | '));
 
-    // Affiliate links via ExtraPe
+    // Affiliate links via ExtraPe — pass s.url directly, no modifications (matches working behavior)
     if (extrapeTokenCache.accessToken) {
       stores = await Promise.all(stores.map(async (s) => {
         if (!s.url || !s.url.startsWith('http')) return s;
+
+        // Unwrap linksredirect.com wrappers (e.g. Shopsy) — only unwrap, never modify otherwise
+        let urlForExtraPe = s.url;
         try {
-          const result = await convertExtraPe(s.url);
-          return { ...s, affiliateLink: result.clickUrl || result, displayLink: result.displayUrl || result.clickUrl || s.url };
-        } catch(e) { return { ...s, affiliateLink: s.url, displayLink: s.url }; }
+          const wu = new URL(s.url);
+          const ulp = wu.searchParams.get('ulp') || wu.searchParams.get('url') ||
+                      wu.searchParams.get('dest') || wu.searchParams.get('target');
+          if (ulp && (wu.hostname.includes('linksredirect') || wu.hostname.includes('tjzuh'))) {
+            const unwrapped = decodeURIComponent(ulp);
+            if (unwrapped.startsWith('http')) urlForExtraPe = unwrapped;
+          }
+        } catch(e) {}
+        // Force https://
+        urlForExtraPe = urlForExtraPe.replace(/^http:\/\//i, 'https://');
+        // dl.flipkart.com: strip ALL params, keep only path + trailing '?'
+        try {
+          const fu = new URL(urlForExtraPe);
+          if (fu.hostname === 'dl.flipkart.com') {
+            urlForExtraPe = fu.protocol + '//' + fu.hostname + fu.pathname + '?';
+          }
+        } catch(e) {}
+
+        try {
+          const result = await convertExtraPe(urlForExtraPe);
+          const affiliateLink = result.clickUrl || result;
+          const displayLink = result.displayUrl || result.clickUrl || s.url;
+          if (!s.isSource) trackConversion(urlForExtraPe, s.name, 'done', affiliateLink).catch(() => {});
+          return { ...s, url: affiliateLink, affiliateLink, displayLink };
+        } catch(e) {
+          console.log('[Compare] ExtraPe failed for', s.name, '— retrying once:', e.message);
+          await new Promise(r => setTimeout(r, 1500));
+          try {
+            const result = await convertExtraPe(urlForExtraPe);
+            const affiliateLink = result.clickUrl || result;
+            const displayLink = result.displayUrl || result.clickUrl || s.url;
+            if (!s.isSource) trackConversion(urlForExtraPe, s.name, 'done', affiliateLink).catch(() => {});
+            return { ...s, url: affiliateLink, affiliateLink, displayLink };
+          } catch(e2) {
+            console.log('[Compare] ExtraPe retry also failed for', s.name, ':', e2.message);
+            // ExtraPe can't convert this URL — use cleanLink() which builds a /go/ redirect
+            // with the affiliate tag embedded (same as Convert flow fallback)
+            try {
+              const fallback = cleanLink(urlForExtraPe);
+              return { ...s, url: fallback.clickUrl, affiliateLink: fallback.clickUrl, displayLink: fallback.displayUrl };
+            } catch(ef) {
+              return { ...s, affiliateLink: urlForExtraPe, displayLink: urlForExtraPe };
+            }
+          }
+        }
       }));
       console.log('[Compare] Affiliated:', stores.map(s => s.name + ':' + (s.affiliateLink||'').substring(0,40)).join(' | '));
     }
+
+    // Attach store logos:
+    // Priority: 1) Flash card DOM logo from img.flash.co (Flash's own correct logos — 64x64)
+    //           2) STORE_LOGOS hardcoded/embedded data URIs (for stores not in Flash card)
+    //           3) Google Favicon API fallback
+    stores = await Promise.all(stores.map(async (s) => {
+      const storeUrl = s.affiliateLink || s.url || '';
+
+      // Check hardcoded/embedded STORE_LOGOS first
+      // data: URIs are always preferred (e.g. Reliance Digital embedded SVG — no network needed)
+      const hardcoded = await getStoreLogo(s.name, storeUrl);
+      if (hardcoded && hardcoded.startsWith('data:')) {
+        return { ...s, logoUrl: hardcoded };
+      }
+
+      // Flash card logos (img.flash.co/plain/s3://flash-creatives/...) — correct store logos
+      if (s.flashLogoUrl && s.flashLogoUrl.includes('img.flash.co')) {
+        return { ...s, logoUrl: s.flashLogoUrl };
+      }
+
+      // Hardcoded https:// URL or Google Favicon API fallback
+      console.log('[Compare] Logo fallback for', s.name, ':', (hardcoded||'').substring(0, 60));
+      return { ...s, logoUrl: hardcoded };
+    }));
 
     return res.json({
       stores, productName,
@@ -4313,7 +4973,8 @@ app.get('/compare/rawdata', async (req, res) => {
     const webappUrl = `https://webapp.flash.co/item/${itemId}/h/${pageHash}`;
 
     // Open in Puppeteer and dump __NEXT_DATA__
-    const rawData = await withFlashBrowser(async (browser) => {
+    const rawData = await withFlashBrowser(async () => {
+      const browser = await getFlashBrowser();
       const page = await browser.newPage();
       await page.setViewport({ width: 1280, height: 900 });
       await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36');
@@ -4394,7 +5055,8 @@ app.get('/compare/dump', async (req, res) => {
     const webappUrl = `https://webapp.flash.co/item/${itemId}/h/${pageHash}`;
 
     // Step 2: Open in Puppeteer and dump __NEXT_DATA__ + all price text
-    const dump = await withFlashBrowser(async (browser) => {
+    const dump = await withFlashBrowser(async () => {
+      const browser = await getFlashBrowser();
       const page = await browser.newPage();
       await page.setViewport({ width: 1280, height: 900 });
       await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36');
