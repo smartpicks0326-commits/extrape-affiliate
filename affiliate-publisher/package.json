@@ -1,0 +1,26 @@
+{
+  "name": "smartpickdeals-ai-publisher",
+  "version": "1.0.0",
+  "description": "SmartPickDeals AI Publisher - automated affiliate content pipeline for Pinterest",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "pm2:start": "pm2 start app.js --name smartpickdeals-publisher",
+    "pm2:restart": "pm2 restart smartpickdeals-publisher",
+    "pm2:logs": "pm2 logs smartpickdeals-publisher",
+    "migrate": "node database/migrate.js",
+    "backup": "node jobs/backupDatabase.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.12.0",
+    "dotenv": "^16.4.5",
+    "node-cron": "^3.0.3",
+    "sharp": "^0.33.4",
+    "axios": "^1.7.2",
+    "@anthropic-ai/sdk": "^0.27.0",
+    "@aws-sdk/client-s3": "^3.600.0",
+    "ejs": "^3.1.10",
+    "morgan": "^1.10.0"
+  }
+}
