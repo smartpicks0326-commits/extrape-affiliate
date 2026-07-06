@@ -535,6 +535,58 @@
       .tag { font-size: 9px; padding: 2px 6px; }
       #productUrl { font-size: 16px !important; }
     }
+
+    /* ===== Override Header ===== */
+    header{
+    position:sticky !important;
+    top:0;
+    left:0;
+    width:100%;
+    background:rgba(13,17,23,.95) !important;
+    backdrop-filter:blur(15px);
+    padding:0 !important;
+    margin:0 !important;
+    display:block;
+    border-bottom:1px solid rgba(255,255,255,.08);
+    z-index:9999;
+    text-align:left !important;
+    }
+
+    .navbar{
+    max-width:1200px;
+    margin:auto;
+    display:flex !important;
+    justify-content:space-between;
+    align-items:center;
+    padding:18px 25px;
+    } 
+
+    .logo{
+    font-size:28px;
+    font-weight:800;
+    text-decoration:none;
+    color:#fff;
+    }
+
+    .logo span{
+    color:#ff6b35;
+    }
+
+    .nav{
+    display:flex !important;
+    gap:24px;
+    align-items:center;
+    }
+
+    .nav a{
+    color:#d1d5db;
+    text-decoration:none;
+    font-weight:500;
+    }
+
+    .nav a:hover{
+    color:#ff6b35;
+    }
   </style>
 </head>
 <body>
