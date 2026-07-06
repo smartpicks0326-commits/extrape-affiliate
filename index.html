@@ -567,13 +567,146 @@
       .tag { font-size: 9px; padding: 2px 6px; }
       #productUrl { font-size: 16px !important; }
     }
+
+    /* ══════════════════════════════════════
+       SITE NAV HEADER (added — matches about.html)
+       Scoped under .spd- classes; does not touch
+       any existing selectors, vars, or IDs.
+    ══════════════════════════════════════ */
+    .spd-topnav {
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      width: 100%;
+      background: rgba(10,10,15,.92);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+    }
+    .spd-topnav-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+    }
+    .spd-logo {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--text);
+      text-decoration: none;
+      letter-spacing: -0.01em;
+    }
+    .spd-logo span {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .spd-navlinks { display: flex; gap: 24px; }
+    .spd-navlinks a {
+      text-decoration: none;
+      color: #d1d5db;
+      font-size: 14px;
+      font-weight: 500;
+      transition: color .2s;
+    }
+    .spd-navlinks a:hover { color: var(--accent2); }
+
+    @media (max-width: 768px) {
+      .spd-navlinks { display: none; }
+      .spd-topnav-inner { padding: 14px 16px; }
+    }
+
+    /* ══════════════════════════════════════
+       SITE FOOTER (replaces prior minimal footer)
+       footer.spd-site-footer has higher specificity
+       than the legacy bare `footer{}` rule above,
+       so it fully overrides it — nothing removed.
+    ══════════════════════════════════════ */
+    footer.spd-site-footer {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 40px 24px 20px;
+      text-align: left;
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+    .spd-footer-inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 24px;
+    }
+    .spd-footer-logo {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+    .spd-footer-logo span {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .spd-footer-tagline { font-size: 13px; color: var(--muted); max-width: 320px; }
+    .spd-footer-email {
+      display: inline-block;
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      text-decoration: none;
+      transition: color .2s;
+    }
+    .spd-footer-email:hover { color: var(--accent2); }
+    .spd-footer-links {
+      display: flex;
+      gap: 18px;
+      flex-wrap: wrap;
+      max-width: 480px;
+    }
+    .spd-footer-links a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 13px;
+      transition: color .2s;
+    }
+    .spd-footer-links a:hover { color: var(--accent2); }
+    .spd-footer-divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 28px auto 16px;
+      max-width: 1200px;
+      width: 100%;
+    }
+    .spd-footer-copy { text-align: center; font-size: 12px; color: var(--muted); }
+
+    @media (max-width: 768px) {
+      footer.spd-site-footer { padding: 28px 16px 20px; text-align: center; }
+      .spd-footer-inner { flex-direction: column; align-items: center; text-align: center; }
+      .spd-footer-links { justify-content: center; }
+    }
   </style>
 </head>
 <body>
 
-<!-- LOGO BAR -->
-<div class="logo-bar">
-  <span class="logo-text">Smart Pick <span>Deals</span></span>
+<!-- SITE NAV HEADER -->
+<div class="spd-topnav">
+  <div class="spd-topnav-inner">
+    <a href="/" class="spd-logo">Smart Pick<span>Deals</span></a>
+    <nav class="spd-navlinks">
+      <a href="/about">About</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+      <a href="/contact">Contact</a>
+    </nav>
+  </div>
 </div>
 
 <!-- HERO HEADER -->
@@ -744,8 +877,25 @@
   </div>
 </div>
 
-<footer>Exciting deals from 200+ stores, find &amp; generate instantly &nbsp;·&nbsp; &copy; Smart Pick Deals<br/>
-<a href="mailto:support@smartpickdeals.live" style="color:var(--muted);font-size:12px;text-decoration:none;display:inline-block;margin-top:5px;letter-spacing:.01em;transition:color .2s;" onmouseover="this.style.color='var(--accent2)'" onmouseout="this.style.color='var(--muted)'">✉ support@smartpickdeals.live</a>
+<footer class="spd-site-footer">
+  <div class="spd-footer-inner">
+    <div class="spd-footer-brand">
+      <div class="spd-footer-logo">Smart Pick<span>Deals</span></div>
+      <p class="spd-footer-tagline">Exciting deals from 200+ stores — find &amp; generate instantly.</p>
+      <a href="mailto:support@smartpickdeals.live" class="spd-footer-email">✉ support@smartpickdeals.live</a>
+    </div>
+    <nav class="spd-footer-links">
+      <a href="/about">About</a>
+      <a href="/privacy">Privacy Policy</a>
+      <a href="/terms">Terms &amp; Conditions</a>
+      <a href="/contact">Contact</a>
+      <a href="/affiliate-disclosure">Affiliate Disclosure</a>
+      <a href="/disclaimer">Disclaimer</a>
+      <a href="/cookie-policy">Cookie Policy</a>
+    </nav>
+  </div>
+  <hr class="spd-footer-divider" />
+  <p class="spd-footer-copy">&copy; 2026 Smart Pick Deals. All Rights Reserved.</p>
 </footer>
 
 <script>
