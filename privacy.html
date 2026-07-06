@@ -1,400 +1,903 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>Privacy Policy | Smart Pick Deals</title>
+    <title>Privacy Policy | SmartPickDeals</title>
 
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <meta name="description"
+        content="Read the SmartPickDeals Privacy Policy to understand how we collect, use and protect your information.">
 
-<style>
-:root{
-  --bg:#0a0a0f;
-  --surface:#13131a;
-  --border:#1e1e2e;
-  --accent:#ff6b2b;
-  --accent2:#ff9a5c;
-  --text:#f0ede8;
-  --muted:#6b6878;
-}
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 
-*{
-  margin:0;
-  padding:0;
-  box-sizing:border-box;
-}
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
 
-body{
-  font-family:'Inter',sans-serif;
-  background:var(--bg);
-  color:var(--text);
-  min-height:100vh;
-  overflow-x:hidden;
-}
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-body::before{
-  content:'';
-  position:fixed;
-  inset:0;
-  background-image:
-    linear-gradient(var(--border) 1px, transparent 1px),
-    linear-gradient(90deg,var(--border) 1px,transparent 1px);
-  background-size:48px 48px;
-  opacity:.35;
-  pointer-events:none;
-}
+        :root {
 
-body::after{
-  content:'';
-  position:fixed;
-  top:-200px;
-  left:50%;
-  transform:translateX(-50%);
-  width:700px;
-  height:500px;
-  background:radial-gradient(
-      ellipse,
-      rgba(255,107,43,.12) 0%,
-      transparent 70%
-  );
-  pointer-events:none;
-}
+            --primary: #ff6b35;
+            --secondary: #ff8c42;
+            --dark: #0d1117;
+            --surface: #161b22;
+            --surface-light: #1f2937;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+            --border: rgba(255,255,255,.08);
 
-/* HEADER */
+        }
 
-.logo-bar{
-  position:sticky;
-  top:0;
-  z-index:100;
-  display:flex;
-  align-items:center;
-  padding:14px 24px;
-  border-bottom:1px solid var(--border);
-  background:rgba(10,10,15,.9);
-  backdrop-filter:blur(12px);
-}
+        body {
 
-.logo-text{
-  font-size:16px;
-  font-weight:800;
-}
+            font-family: 'Inter', sans-serif;
+            background: var(--dark);
+            color: var(--text);
+            line-height: 1.7;
+            overflow-x: hidden;
 
-.logo-text span{
-  background:linear-gradient(
-      135deg,
-      var(--accent),
-      var(--accent2)
-  );
-  -webkit-background-clip:text;
-  -webkit-text-fill-color:transparent;
-}
+        }
 
-/* PAGE */
+        body::before {
 
-.container{
-  max-width:900px;
-  margin:auto;
-  padding:50px 20px;
-  position:relative;
-  z-index:1;
-}
+            content: "";
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
 
-.badge{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  padding:6px 14px;
-  border-radius:999px;
-  background:rgba(255,107,43,.1);
-  border:1px solid rgba(255,107,43,.2);
-  color:var(--accent2);
-  font-size:11px;
-  font-weight:700;
-  text-transform:uppercase;
-  letter-spacing:.1em;
-}
+            background-size:40px 40px;
+            z-index:-2;
 
-h1{
-  margin-top:24px;
-  font-size:48px;
-  font-weight:800;
-  text-align:center;
-  line-height:1.1;
-}
+        }
 
-h1 span{
-  background:linear-gradient(
-      135deg,
-      var(--accent),
-      var(--accent2)
-  );
-  -webkit-background-clip:text;
-  -webkit-text-fill-color:transparent;
-}
+        body::after{
 
-.subtitle{
-  text-align:center;
-  color:var(--muted);
-  margin-top:12px;
-  margin-bottom:40px;
-}
+            content:"";
+            position:fixed;
+            top:-150px;
+            left:50%;
+            transform:translateX(-50%);
+            width:700px;
+            height:350px;
 
-/* CARD */
+            background:radial-gradient(circle,
+                    rgba(255,107,53,.20),
+                    transparent 70%);
 
-.card{
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:24px;
-  padding:35px;
-  box-shadow:
-      0 24px 64px rgba(0,0,0,.4),
-      0 0 0 1px rgba(255,255,255,.03);
-}
+            z-index:-1;
 
-.section{
-  margin-bottom:32px;
-}
+        }
 
-.section:last-child{
-  margin-bottom:0;
-}
+        header{
 
-.section h2{
-  font-size:20px;
-  margin-bottom:14px;
-  color:var(--accent2);
-}
+            position:sticky;
+            top:0;
 
-.section p{
-  line-height:1.8;
-  color:#d7d4ce;
-}
+            background:rgba(13,17,23,.9);
 
-.section ul{
-  margin-top:12px;
-  padding-left:20px;
-}
+            backdrop-filter:blur(20px);
 
-.section li{
-  margin-bottom:10px;
-  line-height:1.7;
-  color:#d7d4ce;
-}
+            border-bottom:1px solid var(--border);
 
-.divider{
-  height:1px;
-  background:var(--border);
-  margin:28px 0;
-}
+            z-index:999;
 
-/* FOOTER */
+        }
 
-footer{
-  text-align:center;
-  padding:40px 20px;
-  color:var(--muted);
-  font-size:13px;
-}
+        .navbar{
 
-footer a{
-  color:var(--accent2);
-  text-decoration:none;
-}
+            max-width:1200px;
 
-@media(max-width:768px){
+            margin:auto;
 
-  h1{
-    font-size:34px;
-  }
+            display:flex;
 
-  .card{
-    padding:24px;
-  }
+            justify-content:space-between;
 
-  .section h2{
-    font-size:18px;
-  }
-}
-</style>
+            align-items:center;
+
+            padding:18px 24px;
+
+        }
+
+        .logo{
+
+            font-size:24px;
+
+            font-weight:800;
+
+            color:#fff;
+
+            text-decoration:none;
+
+        }
+
+        .logo span{
+
+            color:var(--primary);
+
+        }
+
+        .nav-links{
+
+            display:flex;
+
+            gap:24px;
+
+        }
+
+        .nav-links a{
+
+            text-decoration:none;
+
+            color:#ddd;
+
+            font-size:15px;
+
+            transition:.3s;
+
+        }
+
+        .nav-links a:hover{
+
+            color:var(--primary);
+
+        }
+
+        .hero{
+
+            padding:80px 20px;
+
+            text-align:center;
+
+        }
+
+        .hero h1{
+
+            font-size:52px;
+
+            font-weight:800;
+
+            margin-bottom:18px;
+
+        }
+
+        .hero p{
+
+            max-width:750px;
+
+            margin:auto;
+
+            color:var(--muted);
+
+            font-size:18px;
+
+        }
+
+        .container{
+
+            max-width:950px;
+
+            margin:auto;
+
+            padding:0 20px 80px;
+
+        }
+
+        .card{
+
+            background:var(--surface);
+
+            border:1px solid var(--border);
+
+            border-radius:20px;
+
+            padding:40px;
+
+            box-shadow:0 20px 50px rgba(0,0,0,.35);
+
+        }
+
+        h2{
+
+            margin-top:40px;
+
+            margin-bottom:15px;
+
+            font-size:28px;
+
+            color:var(--primary);
+
+        }
+
+        h3{
+
+            margin-top:28px;
+
+            margin-bottom:12px;
+
+            font-size:22px;
+
+            color:#fff;
+
+        }
+
+        p{
+
+            margin-bottom:18px;
+
+            color:#d5d9e0;
+
+        }
+
+        ul{
+
+            padding-left:25px;
+
+            margin-bottom:20px;
+
+        }
+
+        li{
+
+            margin-bottom:10px;
+
+            color:#d5d9e0;
+
+        }
+
+        .highlight{
+
+            padding:20px;
+
+            border-left:4px solid var(--primary);
+
+            background:#1d2430;
+
+            border-radius:10px;
+
+            margin:25px 0;
+
+        }
+
+        footer{
+
+            border-top:1px solid var(--border);
+
+            padding:30px;
+
+            text-align:center;
+
+            color:var(--muted);
+
+            font-size:14px;
+
+        }
+
+        @media(max-width:768px){
+
+            .hero h1{
+
+                font-size:36px;
+
+            }
+
+            .card{
+
+                padding:25px;
+
+            }
+
+            .nav-links{
+
+                display:none;
+
+            }
+
+        }
+
+    </style>
+
 </head>
+
 <body>
 
-<div class="logo-bar">
-  <div class="logo-text">
-    Smart Pick <span>Deals</span>
-  </div>
+<header>
+
+<div class="navbar">
+
+<a href="/" class="logo">
+
+SmartPick<span>Deals</span>
+
+</a>
+
+<div class="nav-links">
+
+<a href="/">Home</a>
+
+<a href="/about">About</a>
+
+<a href="/contact">Contact</a>
+
+<a href="/terms">Terms</a>
+
 </div>
+
+</div>
+
+</header>
+
+<section class="hero">
+
+<h1>Privacy Policy</h1>
+
+<p>
+
+Your privacy is important to us. This Privacy Policy explains how SmartPickDeals
+collects, uses, stores and protects your information while you use our website.
+
+</p>
+
+</section>
 
 <div class="container">
 
-  <div style="text-align:center">
-    <span class="badge">Privacy Policy</span>
-  </div>
+<div class="card">
 
-  <h1>
-    Privacy <span>Policy</span>
-  </h1>
+<p><strong>Last Updated:</strong> July 6, 2026</p>
 
-  <p class="subtitle">
-  </p>
+<h2>Introduction</h2>
 
-  <div class="card">
+<p>
 
-    <div class="section">
-      <p>
-        Welcome to SmartPickDeals (“we”, “our”, or “us”).
-        This Privacy Policy explains how we collect, use,
-        and protect your information when you use our website
-        and related services.
-      </p>
-    </div>
+SmartPickDeals ("SmartPickDeals", "we", "our", or "us") operates the website
+<strong>https://www.smartpickdeals.live</strong> from Chennai, Tamil Nadu, India.
 
-    <div class="divider"></div>
+We are committed to protecting your privacy and maintaining transparency about
+how information is collected and used while you browse our platform.
 
-    <div class="section">
-      <h2>1. Information We Collect</h2>
+</p>
 
-      <ul>
-        <li>Information voluntarily submitted through forms or email.</li>
-        <li>Website analytics such as browser type, device information, IP address and pages visited.</li>
-        <li>Cookies and similar technologies used to improve website performance.</li>
-      </ul>
+<p>
 
-      <p style="margin-top:15px">
-        We do not collect payment information or sensitive personal information through our website.
-      </p>
-    </div>
+SmartPickDeals is a deal discovery platform that helps users discover discounts,
+offers, coupons and promotional deals from trusted online retailers. We do not
+sell products directly. Purchases are completed on the respective retailer's
+website.
 
-    <div class="divider"></div>
+</p>
 
-    <div class="section">
-      <h2>2. How We Use Your Information</h2>
+<h2>Privacy Policy</h2>
 
-      <ul>
-        <li>Improve our website and services.</li>
-        <li>Respond to enquiries.</li>
-        <li>Monitor website performance.</li>
-        <li>Prevent abuse and maintain security.</li>
-      </ul>
-    </div>
+<p>
 
-    <div class="divider"></div>
+This Privacy Policy explains how we collect, use, disclose and safeguard your
+information whenever you visit our website.
 
-    <div class="section">
-      <h2>3. Affiliate Links</h2>
+By using SmartPickDeals, you consent to this Privacy Policy and our Terms &
+Conditions.
 
-      <p>
-        SmartPickDeals displays shopping deals from various online retailers.
-        Some links are affiliate links. If you purchase through these links,
-        we may earn a commission at no additional cost to you.
-      </p>
-    </div>
+</p>
 
-    <div class="divider"></div>
+<h2>Information We Collect</h2>
 
-    <div class="section">
-      <h2>4. Pinterest API Usage</h2>
+<h3>Information You Provide</h3>
 
-      <p>
-        SmartPickDeals uses the Pinterest API to publish shopping deals
-        and promotional content to our official Pinterest account.
-      </p>
+<p>
 
-      <p style="margin-top:12px">
-        We do not access, store or share personal Pinterest account information.
-      </p>
+Most of SmartPickDeals can be used without creating an account.
 
-      <p style="margin-top:12px">
-        The Pinterest integration is used solely for publishing content
-        to our own Pinterest business account.
-      </p>
-    </div>
+However, you may voluntarily provide information when you:
 
-    <div class="divider"></div>
+</p>
 
-    <div class="section">
-      <h2>5. Third-Party Services</h2>
+<ul>
 
-      <ul>
-        <li>Google Analytics</li>
-        <li>Amazon Associates</li>
-        <li>Affiliate Networks</li>
-        <li>Pinterest API</li>
-      </ul>
+<li>Contact us by email.</li>
 
-      <p style="margin-top:12px">
-        These services may collect information according to their own privacy policies.
-      </p>
-    </div>
+<li>Send feedback.</li>
 
-    <div class="divider"></div>
+<li>Report an issue.</li>
 
-    <div class="section">
-      <h2>6. Cookies</h2>
+<li>Request support.</li>
 
-      <p>
-        Our website may use cookies to improve user experience
-        and analyse website traffic.
-      </p>
+<li>Communicate with us regarding partnerships.</li>
 
-      <p style="margin-top:12px">
-        You can disable cookies through your browser settings.
-      </p>
-    </div>
+</ul>
 
-    <div class="divider"></div>
+<p>
 
-    <div class="section">
-      <h2>7. Data Security</h2>
+This information may include your name, email address and the contents of your
+message.
 
-      <p>
-        We take reasonable measures to protect information stored
-        on our systems against unauthorized access, disclosure or misuse.
-      </p>
-    </div>
+</p>
 
-    <div class="divider"></div>
+<h3>Automatically Collected Information</h3>
 
-    <div class="section">
-      <h2>8. Children's Privacy</h2>
+<p>
 
-      <p>
-        SmartPickDeals is not intended for children under 13 years of age.
-      </p>
-    </div>
+When you browse SmartPickDeals, certain information may be collected
+automatically.
 
-    <div class="divider"></div>
+</p>
 
-    <div class="section">
-      <h2>9. Changes to This Policy</h2>
+<ul>
 
-      <p>
-        We may update this Privacy Policy from time to time.
-        Changes will be posted on this page with the updated effective date.
-      </p>
-    </div>
+<li>IP Address</li>
 
-    <div class="divider"></div>
+<li>Browser Type</li>
 
-    <div class="section">
-      <h2>10. Contact Us</h2>
+<li>Device Information</li>
 
-      <p>
-        Email: support@smartpickdeals.live
-      </p>
+<li>Operating System</li>
 
-      <p style="margin-top:12px">
-        Website: https://www.smartpickdeals.live
-      </p>
-    </div>
+<li>Visited Pages</li>
 
-  </div>
+<li>Referral URLs</li>
+
+<li>Date & Time of Visit</li>
+
+<li>Anonymous Analytics</li>
+
+</ul>
+<h2>Cookies and Tracking Technologies</h2>
+
+<p>
+
+SmartPickDeals may use cookies and similar technologies to improve your browsing
+experience, remember your preferences, understand website traffic, and enhance
+overall website performance.
+
+</p>
+
+<p>
+
+Cookies are small text files stored on your device by your web browser. They help
+us recognize returning visitors and understand how users interact with our
+website.
+
+</p>
+
+<p>
+
+You may disable cookies through your browser settings. However, some features of
+the website may not function properly if cookies are disabled.
+
+</p>
+
+<h3>Types of Cookies We May Use</h3>
+
+<ul>
+
+<li><strong>Essential Cookies</strong> – Required for website functionality.</li>
+
+<li><strong>Analytics Cookies</strong> – Help us understand website usage.</li>
+
+<li><strong>Preference Cookies</strong> – Remember user preferences.</li>
+
+<li><strong>Performance Cookies</strong> – Improve loading speed and user experience.</li>
+
+</ul>
+
+<h2>How We Use Your Information</h2>
+
+<p>
+
+We use the information collected for legitimate business purposes, including:
+
+</p>
+
+<ul>
+
+<li>Operating and maintaining SmartPickDeals.</li>
+
+<li>Improving website performance and user experience.</li>
+
+<li>Responding to enquiries and support requests.</li>
+
+<li>Monitoring website usage and analytics.</li>
+
+<li>Preventing abuse, spam and fraudulent activity.</li>
+
+<li>Complying with applicable laws and legal obligations.</li>
+
+<li>Improving the quality of deals and content displayed on the platform.</li>
+
+</ul>
+
+<p>
+
+We do not sell your personal information to third parties.
+
+</p>
+
+<h2>Affiliate Links and Third-Party Retailers</h2>
+
+<p>
+
+SmartPickDeals participates in affiliate marketing programs with various online
+retailers.
+
+</p>
+
+<p>
+
+Some links displayed on our website are affiliate links. If you click an
+affiliate link and complete a purchase, SmartPickDeals may earn a commission at
+no additional cost to you.
+
+</p>
+
+<p>
+
+Affiliate commissions help support the continued operation and development of
+SmartPickDeals.
+
+</p>
+
+<p>
+
+The prices, offers, availability and product information shown on our website
+may change without notice. Please verify all information on the retailer's
+website before making a purchase.
+
+</p>
+
+<h2>Pinterest API Usage</h2>
+
+<p>
+
+SmartPickDeals uses the Pinterest API to publish product deals, promotional
+content and curated shopping collections to our official Pinterest Business
+Account.
+
+</p>
+
+<p>
+
+Our Pinterest integration is solely intended for publishing content owned by
+SmartPickDeals.
+
+</p>
+
+<p>
+
+We do not collect, access, store or manage personal Pinterest account
+information belonging to our visitors.
+
+</p>
+
+<h2>Third-Party Services</h2>
+
+<p>
+
+To operate SmartPickDeals efficiently, we may use trusted third-party services
+including but not limited to:
+
+</p>
+
+<ul>
+
+<li>Google Analytics</li>
+
+<li>Pinterest API</li>
+
+<li>Amazon Associates Program</li>
+
+<li>Affiliate Networks</li>
+
+<li>Cloud Hosting Providers</li>
+
+<li>Content Delivery Networks (CDNs)</li>
+
+<li>Email Service Providers</li>
+
+</ul>
+
+<p>
+
+Each third-party provider maintains its own privacy practices. We encourage you
+to review their privacy policies before interacting with their services.
+
+</p>
+
+<h2>Sharing of Information</h2>
+
+<p>
+
+We respect your privacy and do not sell, rent or trade your personal information.
+
+</p>
+
+<p>
+
+We may disclose limited information only when required:
+
+</p>
+
+<ul>
+
+<li>To comply with applicable laws or legal requests.</li>
+
+<li>To protect our legal rights.</li>
+
+<li>To investigate fraudulent or illegal activities.</li>
+
+<li>To protect the security of SmartPickDeals and its users.</li>
+
+<li>To trusted service providers assisting us in operating the website.</li>
+
+</ul>
+
+<p>
+
+Any third-party service providers engaged by us are expected to protect your
+information and use it only for the services they provide to SmartPickDeals.
+
+</p>
+
+<h2>Data Security</h2>
+
+<p>
+
+We implement reasonable technical and organizational security measures designed
+to protect the information under our control.
+
+</p>
+
+<ul>
+
+<li>Secure HTTPS encryption.</li>
+
+<li>Restricted administrative access.</li>
+
+<li>Server monitoring and maintenance.</li>
+
+<li>Regular software updates.</li>
+
+<li>Security best practices to reduce unauthorized access.</li>
+
+</ul>
+
+<p>
+
+While we strive to protect your information, no internet transmission or storage
+system can be guaranteed to be 100% secure.
+
+</p>
+
+<h2>Data Retention</h2>
+
+<p>
+
+We retain information only for as long as necessary to:
+
+</p>
+
+<ul>
+
+<li>Provide our services.</li>
+
+<li>Maintain website functionality.</li>
+
+<li>Comply with legal obligations.</li>
+
+<li>Resolve disputes.</li>
+
+<li>Enforce our policies.</li>
+
+</ul>
+
+<p>
+
+Anonymous analytical information may be retained for longer periods to help us
+understand website performance and improve SmartPickDeals.
+
+</p>
+<h2>Your Rights</h2>
+
+<p>
+
+Depending on applicable laws, you may have certain rights regarding your
+personal information.
+
+</p>
+
+<ul>
+
+<li>Request access to the information we hold about you.</li>
+
+<li>Request correction of inaccurate or incomplete information.</li>
+
+<li>Request deletion of personal information where legally applicable.</li>
+
+<li>Withdraw consent where processing is based on your consent.</li>
+
+<li>Object to certain types of processing permitted under applicable law.</li>
+
+</ul>
+
+<p>
+
+To exercise any of these rights, please contact us using the details provided
+below.
+
+</p>
+
+<h2>Children's Privacy</h2>
+
+<p>
+
+SmartPickDeals is intended for a general audience and is not specifically
+directed towards children under the age of 13.
+
+</p>
+
+<p>
+
+We do not knowingly collect personal information from children. If you believe a
+child has provided us with personal information, please contact us and we will
+take reasonable steps to remove such information.
+
+</p>
+
+<h2>Third-Party Websites</h2>
+
+<p>
+
+SmartPickDeals contains links to third-party websites, including online
+retailers, affiliate partners and external services.
+
+</p>
+
+<p>
+
+We do not control these websites and are not responsible for their content,
+privacy practices or security policies.
+
+</p>
+
+<p>
+
+We encourage you to review the privacy policies of every third-party website you
+visit before sharing any personal information.
+
+</p>
+
+<h2>International Users</h2>
+
+<p>
+
+Although SmartPickDeals is operated from India, visitors may access the website
+from other countries.
+
+</p>
+
+<p>
+
+By using our website, you understand that your information may be processed in
+India in accordance with this Privacy Policy and applicable laws.
+
+</p>
+
+<h2>Changes to this Privacy Policy</h2>
+
+<p>
+
+We may update this Privacy Policy from time to time to reflect changes in our
+services, legal requirements or operational practices.
+
+</p>
+
+<p>
+
+Any updates will be published on this page together with the revised "Last
+Updated" date.
+
+</p>
+
+<p>
+
+Your continued use of SmartPickDeals after changes become effective constitutes
+your acceptance of the updated Privacy Policy.
+
+</p>
+
+<h2>Contact Information</h2>
+
+<p>
+
+If you have any questions regarding this Privacy Policy or your personal
+information, please contact us.
+
+</p>
+
+<div class="highlight">
+
+<p><strong>SmartPickDeals</strong></p>
+
+<p><strong>Registered Location</strong><br>
+Chennai, Tamil Nadu, India</p>
+
+<p><strong>Website</strong><br>
+https://www.smartpickdeals.live</p>
+
+<p><strong>Support Email</strong><br>
+support@smartpickdeals.live</p>
+
+<p><strong>Privacy Email</strong><br>
+contact@smartpickdeals.live</p>
+
+</div>
+
+<h2>Consent</h2>
+
+<p>
+
+By accessing and using SmartPickDeals, you acknowledge that you have read,
+understood and agreed to this Privacy Policy.
+
+</p>
+
+<p>
+
+If you do not agree with this Privacy Policy, please discontinue use of the
+website.
+
+</p>
+
+</div>
+
 </div>
 
 <footer>
-  © 2026 Smart Pick Deals · All Rights Reserved
+
+<div style="max-width:1200px;margin:auto;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:20px;">
+
+<div>
+
+<strong style="font-size:18px;">SmartPick<span style="color:#ff6b35;">Deals</span></strong>
+
+<p style="margin-top:8px;color:#94a3b8;font-size:14px;">
+Helping shoppers discover the best deals across trusted online retailers.
+</p>
+
+</div>
+
+<div style="display:flex;gap:18px;flex-wrap:wrap;">
+
+<a href="/" style="color:#94a3b8;text-decoration:none;">Home</a>
+
+<a href="/about" style="color:#94a3b8;text-decoration:none;">About</a>
+
+<a href="/contact" style="color:#94a3b8;text-decoration:none;">Contact</a>
+
+<a href="/terms" style="color:#94a3b8;text-decoration:none;">Terms</a>
+
+<a href="/privacy" style="color:#94a3b8;text-decoration:none;">Privacy</a>
+
+</div>
+
+</div>
+
+<hr style="margin:30px 0;border:none;border-top:1px solid rgba(255,255,255,.08);">
+
+<p style="text-align:center;color:#94a3b8;font-size:14px;">
+
+© 2026 SmartPickDeals. All Rights Reserved.
+
+</p>
+
 </footer>
 
 </body>
