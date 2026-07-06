@@ -526,7 +526,7 @@
     }
 
     @media (max-width: 480px) {
-      header { padding: 24px 12px 0; }
+      header { padding:0; }
       h1 { font-size: 1.7rem; }
       .card { padding: 14px 12px; }
       .action-btn { font-size: 12px; padding: 12px 10px; }
@@ -537,21 +537,6 @@
     }
 
     /* ===== Override Header ===== */
-    header{
-    position:sticky !important;
-    top:0;
-    left:0;
-    width:100%;
-    background:rgba(13,17,23,.95) !important;
-    backdrop-filter:blur(15px);
-    padding:0 !important;
-    margin:0 !important;
-    display:block;
-    border-bottom:1px solid rgba(255,255,255,.08);
-    z-index:9999;
-    text-align:left !important;
-    }
-
     header{
     width:100%;
     background:#111827;
@@ -625,7 +610,7 @@
 </head>
 <body>
 
-<header>
+<header id="heroHeader">
 
 <div class="navbar">
 
