@@ -61,6 +61,27 @@
       z-index: 0;
     }
 
+    /* ── LOGO BAR ── */
+    .logo-bar {
+      position: relative;
+      z-index: 10;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(10,10,15,.9);
+      backdrop-filter: blur(12px);
+    }
+    .logo-text { font-size: 16px; font-weight: 800; color: var(--text); }
+    .logo-text span {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
     /* ── HERO HEADER ── */
     header {
       position: relative;
@@ -324,7 +345,7 @@
 
     /* ── HOW IT WORKS ── */
     .how-it-works {
-      margin-top: 28px; padding-top: 40px; border-top: 1px solid var(--border);
+      margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--border);
       display: grid; grid-template-columns: repeat(3,1fr); gap: 16px;
     }
     .hiw-step { text-align: center; }
@@ -492,6 +513,17 @@
     .view-more-btn:hover { border-color: rgba(255,107,43,.3); color: var(--text); }
     #otherSec { display: none; margin-top: 12px; }
 
+    /* ── FOOTER ── */
+    footer {
+      position: relative;
+      z-index: 1;
+      padding: 24px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.8;
+    }
+
     /* ── RESPONSIVE ── */
     @media (max-width: 768px) {
       button, a, input[type=text], input[type=url] { min-height: 44px; }
@@ -526,7 +558,7 @@
     }
 
     @media (max-width: 480px) {
-      header { padding:0; }
+      header { padding: 24px 12px 0; }
       h1 { font-size: 1.7rem; }
       .card { padding: 14px 12px; }
       .action-btn { font-size: 12px; padding: 12px 10px; }
@@ -535,105 +567,20 @@
       .tag { font-size: 9px; padding: 2px 6px; }
       #productUrl { font-size: 16px !important; }
     }
-
-    /* ===== Override Header ===== */
-    header{
-    width:100%;
-    background:#111827;
-    border-bottom:1px solid rgba(255,255,255,.08);
-    position:sticky;
-    top:0;
-    z-index:1000;
-  }
-
-    .navbar{
-    width:100%;
-    max-width:1400px;
-    margin:0 auto;
-    padding:18px 40px;
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-}
-
-    .logo{
-    font-size:28px;
-    font-weight:800;
-    text-decoration:none;
-    color:#fff;
-    }
-
-    .logo span{
-    color:#ff6b35;
-    }
-
-    .nav{
-    display:flex !important;
-    gap:24px;
-    align-items:center;
-    }
-
-    .nav a{
-    color:#d1d5db;
-    text-decoration:none;
-    font-weight:500;
-    }
-
-    .nav a:hover{
-    color:#ff6b35;
-    }
-
-    .footer-links{
-    display:flex;
-    flex-wrap:wrap;
-    gap:18px;
-    margin-top:15px;
-    }
-
-    .footer-links a{
-    color:#94a3b8;
-    text-decoration:none;
-    transition:.3s;
-    }
-
-    .footer-links a:hover{
-    color:#ff6b35;
-    }
-
-    footer{
-    margin-top:80px;
-    padding:50px 30px;
-    border-top:1px solid rgba(255,255,255,.08);
-    background:#0d1117;
-}
   </style>
 </head>
 <body>
 
+<!-- LOGO BAR -->
+<div class="logo-bar">
+  <span class="logo-text">Smart Pick <span>Deals</span></span>
+</div>
+
+<!-- HERO HEADER -->
 <header id="heroHeader">
-
-<div class="navbar">
-
-<a href="/" class="logo">
-SmartPick<span>Deals</span>
-</a>
-
-<div class="nav">
-
-<a href="/">Home</a>
-
-<a href="/about">About</a>
-
-<a href="/privacy">Privacy</a>
-
-<a href="/terms">Terms</a>
-
-<a href="/contact">Contact</a>
-
-</div>
-
-</div>
-
+  <div class="badge">200+ Stores · Best Deals Handpicked</div>
+  <h1 id="heroTitle">Shop Smart.<br/><span id="heroAccent">Save Smarter.</span></h1>
+  <p class="subtitle" id="heroSubtitle">Paste any product link from your favourite store and get the best deal — instantly.</p>
 </header>
 
 <!-- TICKER -->
@@ -797,39 +744,8 @@ SmartPick<span>Deals</span>
   </div>
 </div>
 
-<footer>
-
-<div class="footer-container">
-
-<div class="footer-brand">
-
-<h3>
-SmartPick<span>Deals</span>
-</h3>
-
-<p>
-Helping shoppers discover the best online deals every day.
-</p>
-
-<div class="footer-links">
-    <a href="/">Home</a>
-    <a href="/about">About</a>
-    <a href="/contact">Contact</a>
-    <a href="/privacy">Privacy</a>
-    <a href="/terms">Terms</a>
-    <a href="/affiliate-disclosure">Affiliate Disclosure</a>
-    <a href="/cookies">Cookie Policy</a>
-    <a href="/disclaimer">Disclaimer</a>
-</div>
-
-</div>
-
-<hr>
-
-<p class="copyright">
-© 2026 SmartPickDeals. All Rights Reserved.
-</p>
-
+<footer>Exciting deals from 200+ stores, find &amp; generate instantly &nbsp;·&nbsp; &copy; Smart Pick Deals<br/>
+<a href="mailto:support@smartpickdeals.live" style="color:var(--muted);font-size:12px;text-decoration:none;display:inline-block;margin-top:5px;letter-spacing:.01em;transition:color .2s;" onmouseover="this.style.color='var(--accent2)'" onmouseout="this.style.color='var(--muted)'">✉ support@smartpickdeals.live</a>
 </footer>
 
 <script>
