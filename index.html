@@ -324,7 +324,7 @@
 
     /* ── HOW IT WORKS ── */
     .how-it-works {
-      margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--border);
+      margin-top: 28px; padding-top: 40px; border-top: 1px solid var(--border);
       display: grid; grid-template-columns: repeat(3,1fr); gap: 16px;
     }
     .hiw-step { text-align: center; }
@@ -552,14 +552,24 @@
     text-align:left !important;
     }
 
+    header{
+    width:100%;
+    background:#111827;
+    border-bottom:1px solid rgba(255,255,255,.08);
+    position:sticky;
+    top:0;
+    z-index:1000;
+  }
+
     .navbar{
-    max-width:1200px;
-    margin:auto;
-    display:flex !important;
+    width:100%;
+    max-width:1400px;
+    margin:0 auto;
+    padding:18px 40px;
+    display:flex;
     justify-content:space-between;
     align-items:center;
-    padding:18px 25px;
-    } 
+}
 
     .logo{
     font-size:28px;
@@ -587,6 +597,30 @@
     .nav a:hover{
     color:#ff6b35;
     }
+
+    .footer-links{
+    display:flex;
+    flex-wrap:wrap;
+    gap:18px;
+    margin-top:15px;
+    }
+
+    .footer-links a{
+    color:#94a3b8;
+    text-decoration:none;
+    transition:.3s;
+    }
+
+    .footer-links a:hover{
+    color:#ff6b35;
+    }
+
+    footer{
+    margin-top:80px;
+    padding:50px 30px;
+    border-top:1px solid rgba(255,255,255,.08);
+    background:#0d1117;
+}
   </style>
 </head>
 <body>
@@ -792,26 +826,15 @@ SmartPick<span>Deals</span>
 Helping shoppers discover the best online deals every day.
 </p>
 
-</div>
-
 <div class="footer-links">
-
-<a href="/">Home</a>
-
-<a href="/about">About</a>
-
-<a href="/contact">Contact</a>
-
-<a href="/privacy">Privacy</a>
-
-<a href="/terms">Terms</a>
-
-<a href="/affiliate-disclosure">Affiliate Disclosure</a>
-
-<a href="/cookies">Cookie Policy</a>
-
-<a href="/disclaimer">Disclaimer</a>
-
+    <a href="/">Home</a>
+    <a href="/about">About</a>
+    <a href="/contact">Contact</a>
+    <a href="/privacy">Privacy</a>
+    <a href="/terms">Terms</a>
+    <a href="/affiliate-disclosure">Affiliate Disclosure</a>
+    <a href="/cookies">Cookie Policy</a>
+    <a href="/disclaimer">Disclaimer</a>
 </div>
 
 </div>
