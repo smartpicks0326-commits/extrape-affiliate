@@ -622,17 +622,22 @@
       flex-shrink: 0;
     }
     .spd-nav-social a {
-      width: 32px;
-      height: 32px;
-      aspect-ratio: 1 / 1;
-      box-sizing: border-box;
-      border-radius: 50%;
+      width: 32px !important;
+      height: 32px !important;
+      min-width: 32px !important;
+      min-height: 32px !important;
+      max-width: 32px !important;
+      max-height: 32px !important;
+      box-sizing: border-box !important;
+      border-radius: 50% !important;
+      padding: 0 !important;
       display: flex;
       align-items: center;
       justify-content: center;
       transition: transform .2s ease, opacity .2s ease;
       opacity: 0.9;
       flex-shrink: 0;
+      overflow: hidden;
     }
     .spd-nav-social a:hover { transform: scale(1.1); opacity: 1; }
     .spd-nav-social a.pinterest { background: #E60023; }
@@ -815,7 +820,7 @@
 <!-- SITE NAV HEADER -->
 <div class="spd-topnav">
   <div class="spd-topnav-inner">
-    <a href="/" class="spd-logo">SmartPick<span>Deals</span></a>
+    <a href="/" class="spd-logo">Smart Pick<span>Deals</span></a>
     <nav class="spd-navlinks">
       <a href="/about">About</a>
       <a href="/privacy">Privacy</a>
@@ -1032,7 +1037,7 @@
 <footer class="spd-site-footer">
   <div class="spd-footer-inner">
     <div class="spd-footer-brand">
-      <div class="spd-footer-logo">SmartPick<span>Deals</span></div>
+      <div class="spd-footer-logo">Smart Pick<span>Deals</span></div>
       <p class="spd-footer-tagline">Exciting deals from 200+ stores — find &amp; generate instantly.</p>
       <a href="mailto:support@smartpickdeals.live" class="spd-footer-email">✉ support@smartpickdeals.live</a>
     </div>
