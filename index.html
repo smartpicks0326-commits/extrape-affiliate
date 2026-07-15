@@ -603,7 +603,7 @@
       -webkit-text-fill-color: transparent;
       background-clip: text;
     }
-    .spd-navlinks { display: flex; gap: 24px; }
+    .spd-navlinks { display: flex; gap: 24px; align-items: center; }
     .spd-navlinks a {
       text-decoration: none;
       color: #d1d5db;
@@ -612,9 +612,32 @@
       transition: color .2s;
     }
     .spd-navlinks a:hover { color: var(--accent2); }
+    .spd-nav-social {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding-left: 16px;
+      margin-left: 4px;
+      border-left: 1px solid var(--border);
+    }
+    .spd-nav-social a {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform .2s ease, opacity .2s ease;
+      opacity: 0.9;
+    }
+    .spd-nav-social a:hover { transform: scale(1.1); opacity: 1; }
+    .spd-nav-social a.pinterest { background: #E60023; }
+    .spd-nav-social a.telegram { background: #26A5E4; }
+    .spd-nav-social svg { width: 17px; height: 17px; fill: white; }
 
     @media (max-width: 768px) {
-      .spd-navlinks { display: none; }
+      .spd-navlinks > a { display: none; }
+      .spd-nav-social { padding-left: 0; margin-left: 0; border-left: none; }
       .spd-topnav-inner { padding: 14px 16px; }
     }
 
@@ -702,9 +725,11 @@
       margin: 48px auto 0;
       padding: 40px 24px;
       text-align: center;
-      background: linear-gradient(145deg, rgba(255,107,43,0.08), rgba(255,154,92,0.04));
+      background: linear-gradient(145deg, rgba(255,107,43,0.10), rgba(255,154,92,0.05)), var(--surface);
       border: 1px solid var(--border);
       border-radius: 24px;
+      position: relative;
+      z-index: 2;
     }
     .spd-follow-heading {
       font-size: 26px;
@@ -788,6 +813,14 @@
       <a href="/privacy">Privacy</a>
       <a href="/terms">Terms</a>
       <a href="/contact">Contact</a>
+      <div class="spd-nav-social">
+        <a href="https://www.pinterest.com/Smart_Pick_Deals" target="_blank" rel="noopener noreferrer" class="pinterest" aria-label="Follow on Pinterest">
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 0C5.373 0 0 5.372 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738a.36.36 0 0 1 .083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.632-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.349-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12 0-6.628-5.373-12-12-12z"/></svg>
+        </a>
+        <a href="https://t.me/Smart_Pick_Deals" target="_blank" rel="noopener noreferrer" class="telegram" aria-label="Join on Telegram">
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.568 8.16c-.169 1.858-.896 6.728-1.266 8.928-.156.925-.464 1.234-.763 1.264-.648.06-1.14-.43-1.766-.842-.981-.646-1.535-1.048-2.487-1.673-1.101-.723-.387-1.12.24-1.77.164-.171 3.017-2.764 3.073-3 .007-.03.014-.14-.052-.199-.066-.058-.163-.038-.234-.022-.099.023-1.68 1.067-4.742 3.133-.449.309-.856.46-1.22.452-.402-.009-1.174-.227-1.749-.414-.705-.23-1.266-.352-1.217-.744.026-.204.307-.413.842-.626 3.301-1.437 5.502-2.384 6.602-2.84 3.144-1.308 3.797-1.535 4.222-1.542.094-.001.302.021.437.129.113.09.144.213.159.298.014.086.033.281.019.433z"/></svg>
+        </a>
+      </div>
     </nav>
   </div>
 </div>
