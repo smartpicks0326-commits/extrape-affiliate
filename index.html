@@ -619,16 +619,20 @@
       padding-left: 16px;
       margin-left: 4px;
       border-left: 1px solid var(--border);
+      flex-shrink: 0;
     }
     .spd-nav-social a {
       width: 32px;
       height: 32px;
+      aspect-ratio: 1 / 1;
+      box-sizing: border-box;
       border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
       transition: transform .2s ease, opacity .2s ease;
       opacity: 0.9;
+      flex-shrink: 0;
     }
     .spd-nav-social a:hover { transform: scale(1.1); opacity: 1; }
     .spd-nav-social a.pinterest { background: #E60023; }
@@ -639,8 +643,8 @@
       .spd-navlinks > a { display: none; }
       .spd-nav-social { padding-left: 0; margin-left: 0; border-left: none; }
       .spd-topnav-inner { padding: 14px 16px; align-items: center; }
-      .spd-logo { line-height: 1; padding-top: 8px; display: inline-block; }
-      .spd-nav-social a { width: 30px; height: 30px; }
+      .spd-logo { line-height: 1; padding-top: 13px; display: inline-block; }
+      .spd-nav-social a { width: 30px; height: 30px; aspect-ratio: 1 / 1; flex-shrink: 0; }
     }
 
     /* ══════════════════════════════════════
@@ -774,6 +778,8 @@
     .spd-follow-icon-circle {
       width: 48px;
       height: 48px;
+      aspect-ratio: 1 / 1;
+      box-sizing: border-box;
       border-radius: 50%;
       display: flex;
       align-items: center;
